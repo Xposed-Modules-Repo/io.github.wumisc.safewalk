@@ -47,6 +47,10 @@ JAVA_HOME=<jdk17路径> ANDROID_HOME=<sdk路径> gradle assembleDebug --no-daemo
 
 如果觉得好用，请作者喝杯奶茶。微信扫一扫即可，作者：@酷安锦无名。
 
+<p align="center">
+  <img src="donate_qr.webp" alt="微信捐赠二维码" width="240" />
+</p>
+
 ## 🎖️ 致敬
 
 本模块建立在 **LSPosed / Xposed** 框架之上，致敬并感谢这些伟大的开源项目，以及整个 Xposed / LSPosed 社区——正是他们让安卓模块生态生生不息。
