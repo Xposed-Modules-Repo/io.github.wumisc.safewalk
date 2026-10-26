@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色模式配色：系统深色时自动覆盖同 key 的浅色 -->
+    <color name="primary">#81C784</color>
+    <color name="bg">#121212</color>
+    <color name="card_bg">#1E1E1E</color>
+    <color name="card_stroke">#2E2E2E</color>
+    <color name="text_primary">#E6E6E6</color>
+    <color name="text_body">#CCCCCC</color>
+    <color name="text_hint">#9E9E9E</color>
+    <color name="text_secondary">#AAAAAA</color>
+    <color name="text_muted">#757575</color>
+    <color name="accent_walk">#81C784</color>
+    <color name="accent_camera">#64B5F6</color>
+</resources>

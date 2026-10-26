@@ -1,0 +1,19 @@
+# 构建产物
+*.apk
+*.aab
+*.ap_
+*.dex
+/build/
+/app/build/
+
+# Gradle
+.gradle/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 日志与本地配置
+*.log

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 状态栏图标深浅：浅色模式深色图标(true)，深色模式浅色图标(false) -->
+    <bool name="light_statusbar">true</bool>
+</resources>

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 权限：与 Pixel 数字健康"看路提醒"对齐（身体活动/通知/位置/相机） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <application
+        android:label="安全出行"
+        android:icon="@drawable/ic_launcher"
+        android:theme="@style/Theme.Safewalk">
+
+        <!-- 配置界面：桌面图标入口 + LSPosed 设置入口（独立 filter，规范无歧义） -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="安全出行"
+            android:theme="@style/Theme.Safewalk">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
+        </activity>
+
+        <!-- 快捷开关磁贴 -->
+        <service
+            android:name=".SafeWalkTile"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            android:label="安全出行"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- LSPosed 模块声明 -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="行走模式：后置摄像头实时路况，支持角落小窗与全屏半透明叠加；自动检测步行开启/静止关闭；低头看手机过久弹看路提醒。适配 HyperOS4 / Android 15。" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
+    </application>
+
+</manifest>
