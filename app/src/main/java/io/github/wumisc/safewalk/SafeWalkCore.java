@@ -73,10 +73,11 @@ public final class SafeWalkCore {
         }
         initRetry++;
         SafeWalkInit.diag("init: app not ready (retry " + initRetry + ")");
-        new Handler(Looper.getMainLooper()).postDelayed(() -> init(), 200);
+        INIT_HANDLER.postDelayed(() -> init(), 200);
     }
 
     private static int initRetry = 0;
+    private static final Handler INIT_HANDLER = new Handler(Looper.getMainLooper());
 
     /** 供配置界面等直接传入上下文初始化 */
     public static void init(Context context) {
@@ -103,6 +104,7 @@ public final class SafeWalkCore {
             return;
         }
         app = c;
+        initRetry = 0; // 初始化成功后重置重试计数
         try {
             sensorManager = (SensorManager) app.getSystemService(Context.SENSOR_SERVICE);
             SafeWalkInit.diag("init: sensorManager=" + (sensorManager == null ? "null" : "ok"));

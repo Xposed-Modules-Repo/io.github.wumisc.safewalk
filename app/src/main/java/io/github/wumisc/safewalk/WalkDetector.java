@@ -9,7 +9,7 @@ import android.os.Looper;
 
 /**
  * 行走检测：用加速度计模量识别步行节奏（周期性垂直冲击）。
- * 4 秒窗口内步数 >=5 判定为行走中；<2 判定为静止。
+ * 4 秒窗口内步数 >=8 判定为行走中；连续 2 个窗口 <2 步判定为静止（防抖）。
  */
 public final class WalkDetector implements SensorEventListener {
 
@@ -25,7 +25,8 @@ public final class WalkDetector implements SensorEventListener {
     private int stepCount;
     private long lastStepTime;
     private boolean lastHigh;
-    // 重力低通滤波（用于"低头看手机"判断）：屏幕接近水平朝上 = 低头
+    private int idleWindows; // 连续静止窗口计数（防抖）
+    // 重力低通滤波（用于"低头看手机"判断）
     private float gx, gy, gz;
     private boolean haveGravity;
 
@@ -40,26 +41,20 @@ public final class WalkDetector implements SensorEventListener {
         }
     }
 
-    /** 自动行走检测开关：开启时注册加速度计 */
     public static void setAutoEnabled(boolean on) {
-        if (inst == null) {
-            return;
-        }
-        if (on == inst.enabled) {
-            return;
-        }
+        if (inst == null) return;
+        if (on == inst.enabled) return;
         inst.enabled = on;
         inst.walking = false;
         inst.stepCount = 0;
         inst.windowStart = 0;
+        inst.idleWindows = 0;
         if (on) {
             if (inst.accel != null && inst.sm != null) {
                 inst.sm.registerListener(inst, inst.accel, SensorManager.SENSOR_DELAY_NORMAL, inst.main);
             }
         } else {
-            if (inst.sm != null) {
-                inst.sm.unregisterListener(inst);
-            }
+            if (inst.sm != null) inst.sm.unregisterListener(inst);
         }
     }
 
@@ -69,9 +64,9 @@ public final class WalkDetector implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent e) {
-        long now = e.timestamp / 1000000L; // 毫秒
+        long now = e.timestamp / 1000000L;
         float ax = e.values[0], ay = e.values[1], az = e.values[2];
-        // 低通滤波重力（静止时≈重力向量）
+        // 低通滤波重力
         if (!haveGravity) {
             gx = ax; gy = ay; gz = az; haveGravity = true;
         } else {
@@ -80,9 +75,10 @@ public final class WalkDetector implements SensorEventListener {
             gz = gz * 0.8f + az * 0.2f;
         }
         float mag = (float) Math.sqrt(ax * ax + ay * ay + az * az);
-        boolean high = mag - 9.8f > 1.5f; // 一次明显的垂直冲击（抬脚/落脚）
+        // 提高冲击阈值：2.5g 偏差才算一次落脚（减少床上轻微移动误触）
+        boolean high = mag - 9.8f > 2.5f;
         if (high && !lastHigh) {
-            if (now - lastStepTime > 300) {
+            if (now - lastStepTime > 350) { // 步间最小间隔 350ms
                 stepCount++;
                 lastStepTime = now;
             }
@@ -95,31 +91,27 @@ public final class WalkDetector implements SensorEventListener {
         }
         long windowMs = now - windowStart;
         if (windowMs >= 4000) {
-            int perSec = (int) (stepCount * 1000L / windowMs);
-            if (perSec >= 1) {
-                walking = perSec >= 2 || stepCount >= 6; // 步行节奏：4s 内 >=6 步
-            } else if (perSec == 0) {
-                walking = false;
+            // 4 秒窗口内 >=8 步才算行走（约 2 步/秒，真实步行节奏）
+            if (stepCount >= 8) {
+                walking = true;
+                idleWindows = 0;
+            } else if (stepCount < 2) {
+                idleWindows++;
+                // 连续 2 个窗口几乎无步才判定静止（防抖）
+                if (idleWindows >= 2) walking = false;
             }
-            // 重置窗口
             windowStart = now;
             stepCount = 0;
         }
     }
 
-    /**
-     * 是否"低头看手机"：屏幕接近水平朝上（重力主要由 Z 轴承担）。
-     * 立着用摄像头看前方时重力在 X/Y 轴，此值为 false。
-     */
+    /** 是否"低头看手机"：屏幕接近水平朝上 */
     public static boolean isHeadDown() {
-        if (inst == null || !inst.haveGravity) {
-            return false;
-        }
+        if (inst == null || !inst.haveGravity) return false;
         float ax = Math.abs(inst.gx), ay = Math.abs(inst.gy), az = Math.abs(inst.gz);
         return az > 6.5f && az > ax && az > ay;
     }
 
     @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {
-    }
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 }

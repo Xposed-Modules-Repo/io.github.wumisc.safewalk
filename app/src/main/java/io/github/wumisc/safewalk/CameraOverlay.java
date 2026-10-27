@@ -1,6 +1,7 @@
 package io.github.wumisc.safewalk;
 
 import android.content.Context;
+import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraCaptureSession;
@@ -14,16 +15,14 @@ import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
 
 import java.util.Collections;
 
 /**
  * 后置摄像头路况悬浮窗。
- * form=1：全屏半透明叠加；form=0：角落小窗。
- * 使用 TextureView 渲染（不创建独立 Surface 层），配合窗口 NOT_TOUCHABLE，
- * 保证触摸完全穿透下层应用，不会遮挡操作。
- * SystemUI 为系统进程，可直接叠加 TYPE_APPLICATION_OVERLAY，无需悬浮窗权限。
+ * form=1：全屏半透明叠加；form=0：角落圆角小窗。
  */
 public final class CameraOverlay {
 
@@ -47,12 +46,8 @@ public final class CameraOverlay {
     }
 
     public static void show(Context c, int form, int alpha, int corner) {
-        if (inst == null) {
-            inst = new CameraOverlay(c);
-        }
-        if (inst.shown && inst.lastForm == form && inst.lastAlpha == alpha && inst.lastCorner == corner) {
-            return;
-        }
+        if (inst == null) inst = new CameraOverlay(c);
+        if (inst.shown && inst.lastForm == form && inst.lastAlpha == alpha && inst.lastCorner == corner) return;
         inst.shown = true;
         inst.lastForm = form;
         inst.lastAlpha = alpha;
@@ -67,7 +62,6 @@ public final class CameraOverlay {
         }
     }
 
-    /** 摄像头路况是否正在显示 */
     public static boolean isShown() {
         return inst != null && inst.shown;
     }
@@ -81,26 +75,33 @@ public final class CameraOverlay {
                     surfaceTexture = st;
                     openCamera();
                 }
-
-                @Override
-                public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) {
-                }
-
+                @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) {}
                 @Override
                 public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
                     closeCamera();
                     return true;
                 }
-
-                @Override
-                public void onSurfaceTextureUpdated(SurfaceTexture st) {
-                }
+                @Override public void onSurfaceTextureUpdated(SurfaceTexture st) {}
             });
             tv.setOpaque(false);
             tv.setFocusable(false);
             tv.setClickable(false);
+            // 圆角裁剪：小窗 20dp 圆角，全屏不加
+            tv.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    if (lastForm == 0) {
+                        int r = dp(20);
+                        outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), r);
+                    } else {
+                        outline.setRect(0, 0, view.getWidth(), view.getHeight());
+                    }
+                }
+            });
+            tv.setClipToOutline(true);
         }
         tv.setAlpha(clampAlpha(lastAlpha, lastForm) / 100f);
+        tv.invalidateOutline(); // 切换 form 后刷新圆角
         WindowManager.LayoutParams lp = buildParams(lastForm, lastCorner);
         try {
             if (tv.getParent() == null) {
@@ -115,8 +116,6 @@ public final class CameraOverlay {
 
     private WindowManager.LayoutParams buildParams(int form, int corner) {
         int type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-        // 触摸完全穿透（NOT_TOUCHABLE + NOT_TOUCH_MODAL），不拦截下层应用操作；
-        // 全屏不加 LAYOUT_NO_LIMITS，避免越过系统栏区域。
         int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
@@ -126,7 +125,7 @@ public final class CameraOverlay {
                     WindowManager.LayoutParams.MATCH_PARENT,
                     type, flags, PixelFormat.TRANSLUCENT);
         }
-        // 角落小窗：固定尺寸，按 corner 对齐
+        // 角落小窗：固定尺寸 + 圆角
         int w = dp(150), h = dp(260);
         int gravity;
         switch (corner) {
@@ -136,8 +135,7 @@ public final class CameraOverlay {
             default: gravity = Gravity.TOP | Gravity.END; break;
         }
         int margin = dp(12);
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                w, h, type, flags, PixelFormat.TRANSLUCENT);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(w, h, type, flags, PixelFormat.TRANSLUCENT);
         lp.gravity = gravity;
         lp.x = margin;
         lp.y = margin;
@@ -175,9 +173,7 @@ public final class CameraOverlay {
     private void openCamera() {
         try {
             SurfaceTexture st = tv.getSurfaceTexture();
-            if (st == null) {
-                return;
-            }
+            if (st == null) return;
             st.setDefaultBufferSize(tv.getWidth(), tv.getHeight());
             Surface s = new Surface(st);
             String id = backCameraId();
@@ -220,12 +216,9 @@ public final class CameraOverlay {
             for (String id : cm.getCameraIdList()) {
                 CameraCharacteristics cc = cm.getCameraCharacteristics(id);
                 Integer facing = cc.get(CameraCharacteristics.LENS_FACING);
-                if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
-                    return id;
-                }
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) return id;
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) {}
         return null;
     }
 }

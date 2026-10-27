@@ -53,11 +53,10 @@ public final class SafeWalkInit implements IXposedHookLoadPackage {
             return;
         }
         String line = System.currentTimeMillis() + " [safe] " + msg + "\n";
-        for (String path : new String[]{"/sdcard/Download/safewalk_diag.log", "/data/local/tmp/safewalk_diag.log"}) {
-            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(path, true)) {
-                fos.write(line.getBytes());
-            } catch (Throwable ignored) {
-            }
+        // 只写 /data/local/tmp（SystemUI 进程有权限），避免重复写两个文件
+        try (java.io.FileOutputStream fos = new java.io.FileOutputStream("/data/local/tmp/safewalk_diag.log", true)) {
+            fos.write(line.getBytes());
+        } catch (Throwable ignored) {
         }
     }
 }

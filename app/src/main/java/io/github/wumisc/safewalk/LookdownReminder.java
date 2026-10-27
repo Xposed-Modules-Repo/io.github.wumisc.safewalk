@@ -73,7 +73,6 @@ public final class LookdownReminder {
             if (satisfyStart < 0) {
                 satisfyStart = now;
             }
-            Config.reload();
             if (now - satisfyStart >= (long) Config.lookdownSec * 1000L) {
                 showReminder();
                 satisfyStart = -1; // 本次已提醒，重新累计

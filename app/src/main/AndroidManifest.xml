@@ -10,7 +10,7 @@
 
     <application
         android:label="安全出行"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Safewalk">
 
         <!-- 配置界面：桌面图标入口 + LSPosed 设置入口（独立 filter，规范无歧义） -->
@@ -33,7 +33,7 @@
         <service
             android:name=".SafeWalkTile"
             android:exported="true"
-            android:icon="@drawable/ic_launcher"
+            android:icon="@mipmap/ic_launcher"
             android:label="安全出行"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
