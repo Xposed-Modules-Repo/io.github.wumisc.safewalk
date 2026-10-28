@@ -86,12 +86,12 @@ public final class CameraOverlay {
             tv.setOpaque(false);
             tv.setFocusable(false);
             tv.setClickable(false);
-            // 圆角裁剪：小窗 20dp 圆角，全屏不加
+            // 圆角裁剪：小窗 24dp 大圆角，全屏不加
             tv.setOutlineProvider(new ViewOutlineProvider() {
                 @Override
                 public void getOutline(View view, Outline outline) {
                     if (lastForm == 0) {
-                        int r = dp(20);
+                        int r = dp(24);
                         outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), r);
                     } else {
                         outline.setRect(0, 0, view.getWidth(), view.getHeight());

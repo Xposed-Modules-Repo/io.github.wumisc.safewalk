@@ -8,8 +8,12 @@ import android.os.Handler;
 import android.os.Looper;
 
 /**
- * 行走检测：用加速度计模量识别步行节奏（周期性垂直冲击）。
- * 4 秒窗口内步数 >=8 判定为行走中；连续 2 个窗口 <2 步判定为静止（防抖）。
+ * 行走检测：加速度计模量识别步行节奏。
+ *
+ * 动态步数状态机：
+ *  - 静止状态下累计 100 步才判定为行走（防误触）
+ *  - 行走中连续 4 秒窗口 <2 步判定静止，立即关闭
+ *  - 从静止恢复时只需 15 步即重新开启（快速响应）
  */
 public final class WalkDetector implements SensorEventListener {
 
@@ -25,10 +29,15 @@ public final class WalkDetector implements SensorEventListener {
     private int stepCount;
     private long lastStepTime;
     private boolean lastHigh;
-    private int idleWindows; // 连续静止窗口计数（防抖）
-    // 重力低通滤波（用于"低头看手机"判断）
+    private int idleWindows;
+    // 重力低通滤波（低头判断用）
     private float gx, gy, gz;
     private boolean haveGravity;
+
+    // 动态步数阈值：首次 100 步，恢复 15 步
+    private static final int STEPS_TO_START = 100;
+    private static final int STEPS_TO_RESTART = 15;
+    private int pendingSteps; // 待累计步数（未达到开启阈值）
 
     private WalkDetector(SensorManager sensorManager) {
         this.sm = sensorManager;
@@ -49,6 +58,7 @@ public final class WalkDetector implements SensorEventListener {
         inst.stepCount = 0;
         inst.windowStart = 0;
         inst.idleWindows = 0;
+        inst.pendingSteps = 0;
         if (on) {
             if (inst.accel != null && inst.sm != null) {
                 inst.sm.registerListener(inst, inst.accel, SensorManager.SENSOR_DELAY_NORMAL, inst.main);
@@ -75,11 +85,12 @@ public final class WalkDetector implements SensorEventListener {
             gz = gz * 0.8f + az * 0.2f;
         }
         float mag = (float) Math.sqrt(ax * ax + ay * ay + az * az);
-        // 提高冲击阈值：2.5g 偏差才算一次落脚（减少床上轻微移动误触）
+        // 落脚冲击：偏差 >2.5g 算一步
         boolean high = mag - 9.8f > 2.5f;
         if (high && !lastHigh) {
-            if (now - lastStepTime > 350) { // 步间最小间隔 350ms
+            if (now - lastStepTime > 350) {
                 stepCount++;
+                pendingSteps++;
                 lastStepTime = now;
             }
         }
@@ -91,14 +102,26 @@ public final class WalkDetector implements SensorEventListener {
         }
         long windowMs = now - windowStart;
         if (windowMs >= 4000) {
-            // 4 秒窗口内 >=8 步才算行走（约 2 步/秒，真实步行节奏）
-            if (stepCount >= 8) {
-                walking = true;
-                idleWindows = 0;
-            } else if (stepCount < 2) {
-                idleWindows++;
-                // 连续 2 个窗口几乎无步才判定静止（防抖）
-                if (idleWindows >= 2) walking = false;
+            if (walking) {
+                // 行走中：4秒窗口步数 <2 即判定静止
+                if (stepCount < 2) {
+                    idleWindows++;
+                    if (idleWindows >= 2) {
+                        walking = false;
+                        pendingSteps = 0;
+                    }
+                } else {
+                    idleWindows = 0;
+                }
+            } else {
+                // 静止中：累计步数达到阈值才开启
+                int threshold = (idleWindows == 0 && pendingSteps < STEPS_TO_RESTART)
+                        ? STEPS_TO_START : STEPS_TO_RESTART;
+                if (pendingSteps >= threshold) {
+                    walking = true;
+                    pendingSteps = 0;
+                    idleWindows = 0;
+                }
             }
             windowStart = now;
             stepCount = 0;

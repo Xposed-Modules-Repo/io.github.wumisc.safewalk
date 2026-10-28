@@ -30,6 +30,8 @@ public final class Config {
     public static boolean lookdown = true;
     /** 低头触发提醒的持续时长（秒） */
     public static int lookdownSec = 3;
+    /** 夜间手电筒提醒开关 */
+    public static boolean nightFlash = true;
     /** 磁贴开关状态 */
     public static boolean tileState = false;
     /** 诊断日志总闸：默认关闭（省电省存储），排查问题时再开 */
@@ -69,6 +71,7 @@ public final class Config {
         corner = clamp(parseInt(kv.get("corner"), 2), 1, 4);
         lookdown = kv.getOrDefault("lookdown", "true").equals("true");
         lookdownSec = Math.max(1, parseInt(kv.get("lookdown_sec"), 3));
+        nightFlash = kv.getOrDefault("night_flash", "true").equals("true");
         tileState = kv.getOrDefault("tile_state", "false").equals("true");
         debug = kv.getOrDefault("debug", "false").equals("true");
     }

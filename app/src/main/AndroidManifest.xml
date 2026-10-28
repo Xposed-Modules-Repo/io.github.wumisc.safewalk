@@ -3,6 +3,7 @@
 
     <!-- 权限：与 Pixel 数字健康"看路提醒"对齐（身体活动/通知/位置/相机） -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -40,6 +41,15 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- 夜间手电筒通知按钮接收器 -->
+        <receiver
+            android:name=".NightFlashlight$TorchReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.wumisc.safewalk.TORCH_ON" />
+            </intent-filter>
+        </receiver>
 
         <!-- LSPosed 模块声明 -->
         <meta-data

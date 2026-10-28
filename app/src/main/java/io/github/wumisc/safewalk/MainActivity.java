@@ -21,7 +21,7 @@ import android.widget.Toast;
  */
 public final class MainActivity extends Activity {
 
-    private Switch swEnable, swWalk, swAuto, swLookdown;
+    private Switch swEnable, swWalk, swAuto, swLookdown, swNightFlash;
     private RadioGroup rgForm, rgCorner;
     private SeekBar seekAlpha;
     private TextView tvAlpha;
@@ -58,6 +58,7 @@ public final class MainActivity extends Activity {
         swWalk = findViewById(R.id.sw_walk);
         swAuto = findViewById(R.id.sw_auto);
         swLookdown = findViewById(R.id.sw_lookdown);
+        swNightFlash = findViewById(R.id.sw_night_flash);
         rgForm = findViewById(R.id.rg_form);
         rgCorner = findViewById(R.id.rg_corner);
         seekAlpha = findViewById(R.id.seek_alpha);
@@ -83,6 +84,7 @@ public final class MainActivity extends Activity {
         swWalk.setChecked(Config.walkMode);
         swAuto.setChecked(Config.autoWalk);
         swLookdown.setChecked(Config.lookdown);
+        swNightFlash.setChecked(Config.nightFlash);
         rgForm.check(Config.overlayForm == 1 ? R.id.rb_full : R.id.rb_corner);
         rgCorner.check(cornerToId(Config.corner));
         seekAlpha.setProgress(Config.alpha);
@@ -163,6 +165,7 @@ public final class MainActivity extends Activity {
         Config.walkMode = swWalk.isChecked();
         Config.autoWalk = swAuto.isChecked();
         Config.lookdown = swLookdown.isChecked();
+        Config.nightFlash = swNightFlash.isChecked();
         Config.overlayForm = rgForm.getCheckedRadioButtonId() == R.id.rb_full ? 1 : 0;
         Config.corner = idToCorner();
         Config.alpha = seekAlpha.getProgress();

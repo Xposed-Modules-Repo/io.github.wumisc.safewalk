@@ -110,6 +110,7 @@ public final class SafeWalkCore {
             SafeWalkInit.diag("init: sensorManager=" + (sensorManager == null ? "null" : "ok"));
             WalkDetector.init(sensorManager);
             LookdownReminder.init(app, sensorManager);
+            NightFlashlight.init(app);
         } catch (Throwable t) {
             SafeWalkInit.diag("init: sensors err " + t);
         }
@@ -169,6 +170,7 @@ public final class SafeWalkCore {
                             handler.removeCallbacks(tickRunnable);
                             WalkDetector.setAutoEnabled(false);
                             LookdownReminder.setEnabled(false);
+                            NightFlashlight.setEnabled(false);
                             CameraOverlay.hide();
                             SafeWalkInit.diag("screen off -> all paused");
                         } else if (Intent.ACTION_SCREEN_ON.equals(i.getAction())) {
@@ -202,9 +204,10 @@ public final class SafeWalkCore {
                     Config.reload();
                 }
                 // 行走检测被"自动开摄像头"与"看路提醒"共用
-                boolean needDetector = Config.enable && (Config.autoWalk || Config.lookdown);
+                boolean needDetector = Config.enable && (Config.autoWalk || Config.lookdown || Config.nightFlash);
                 WalkDetector.setAutoEnabled(needDetector);
                 LookdownReminder.setEnabled(Config.enable && Config.lookdown);
+                NightFlashlight.setEnabled(Config.enable && Config.nightFlash);
                 applyForegroundAvoid();
                 updateOverlay();
             } catch (Throwable t) {
@@ -295,6 +298,7 @@ public final class SafeWalkCore {
                 + "corner=" + Config.corner + "\n"
                 + "lookdown=" + Config.lookdown + "\n"
                 + "lookdown_sec=" + Config.lookdownSec + "\n"
+                + "night_flash=" + Config.nightFlash + "\n"
                 + "tile_state=" + Config.tileState + "\n"
                 + "debug=" + Config.debug + "\n";
     }
