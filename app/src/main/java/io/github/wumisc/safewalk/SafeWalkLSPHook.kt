@@ -37,8 +37,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     private val WINDOW_MS = 5 * 60 * 1000L
     private val TRIGGER_COOLDOWN = 5 * 60 * 1000L // 触发后5分钟冷却
-    private fun threshold(): Int = xsp?.getInt(SafeWalkPrefKey.stepThreshold, 400) ?: 400
-    private fun staticResetMs(): Long = ((xsp?.getInt(SafeWalkPrefKey.staticResetSec, 60) ?: 60) * 1000L)
+    private fun threshold(): Int = xsp?.getInt(SafeWalkPrefKey.stepThreshold, 800) ?: 800
+    private fun staticResetMs(): Long = ((xsp?.getInt(SafeWalkPrefKey.staticResetSec, 180) ?: 180) * 1000L)
     private fun masterEnable(): Boolean = xsp?.getBoolean("masterEnable", true) ?: true
 
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
@@ -118,26 +118,37 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
         var peaks = 0
         var prevZ = 0f
+        var totalSamples = 0
+        var uprightSamples = 0  // Z轴>7.5才算手机竖直拿着
         val start = System.currentTimeMillis()
-        val end = start + 3000
+        val end = start + 4000
 
         s.registerListener(object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent?) {
                 if (e == null) return
                 val z = e.values[2]
-                // 平躺直接取消（阈值放宽到0.5，床上翻身必拦）
-                if (kotlin.math.abs(z) < 9.8f * 0.5f) {
+                totalSamples++
+                // 手机竖直拿着时 z≈9.8；躺床上/枕头旁边 z<7.5
+                if (z > 7.5f) uprightSamples++
+                // 任何一次 z<4 就直接判定躺床，取消
+                if (z < 4.0f) {
                     s.unregisterListener(this)
                     state = State.SLEEP
                     steps.clear()
                     return
                 }
-                if (z - prevZ > 2.5f) peaks++
+                if (z - prevZ > 3.0f) peaks++
                 prevZ = z
                 if (System.currentTimeMillis() > end) {
                     s.unregisterListener(this)
-                    if (peaks >= 5) triggerMovement()
-                    else state = State.LIGHT_MONITOR
+                    // 必须：大部分时间手机竖直拿着 + 有足够走路起伏
+                    val uprightRatio = if (totalSamples > 0) uprightSamples.toFloat() / totalSamples else 0f
+                    if (peaks >= 6 && uprightRatio > 0.7f) {
+                        triggerMovement()
+                    } else {
+                        state = State.LIGHT_MONITOR
+                        steps.clear()
+                    }
                 }
             }
             override fun onAccuracyChanged(s: Sensor?, a: Int) {}
