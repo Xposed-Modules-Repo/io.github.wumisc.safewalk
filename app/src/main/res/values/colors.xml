@@ -1,19 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Miuix 白底配色 -->
-    <color name="primary">#007AFF</color>
-    <color name="bg">#FFFFFF</color>
-    <color name="card_bg">#FFFFFF</color>
-    <color name="card_stroke">#F2F2F7</color>
-    <color name="divider">#F2F2F7</color>
-    <color name="text_primary">#1D1D1D</color>
-    <color name="text_body">#333333</color>
-    <color name="text_hint">#8E8E93</color>
-    <color name="text_secondary">#8E8E93</color>
-    <color name="text_muted">#C7C7CC</color>
-    <color name="accent_walk">#34C759</color>
-    <color name="accent_camera">#007AFF</color>
-    <color name="button_bg">#F2F2F7</color>
-    <color name="nav_bg">#FFFFFF</color>
-    <color name="ic_launcher_background">#2E7D32</color>
+    <!-- 国风宣纸 + Beyond 靛蓝风格 -->
+    <color name="primary">#1B3A5C</color>
+    <color name="bg">#F5F0E8</color>
+    <color name="card_bg">#FFFCF5</color>
+    <color name="card_stroke">#C4B896</color>
+    <color name="divider">#E0D8C4</color>
+    <color name="text_primary">#1A1A1A</color>
+    <color name="text_body">#2D2D2D</color>
+    <color name="text_hint">#8B7D6B</color>
+    <color name="text_secondary">#8B7D6B</color>
+    <color name="text_muted">#B8A88A</color>
+    <color name="accent_walk">#2D7A3E</color>
+    <color name="accent_camera">#1B3A5C</color>
+    <color name="button_bg">#EDE6D6</color>
+    <color name="nav_bg">#FFFCF5</color>
+    <color name="ic_launcher_background">#F5F0E8</color>
+    <color name="seal_red">#C8392E</color>
+    <color name="beyond_orange">#D4820A</color>
+    <color name="bg_overlay">#70FFFFFF</color>
 </resources>

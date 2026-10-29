@@ -1,20 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 权限：与 Pixel 数字健康"看路提醒"对齐（身体活动/通知/位置/相机） -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.FLASHLIGHT" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
         android:label="安全出行"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.Safewalk">
 
-        <!-- 配置界面：桌面图标入口 + LSPosed 设置入口（独立 filter，规范无歧义） -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -30,26 +25,15 @@
             </intent-filter>
         </activity>
 
-        <!-- 快捷开关磁贴 -->
-        <service
-            android:name=".SafeWalkTile"
+        <activity
+            android:name=".EmergencyCardActivity"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:label="安全出行"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
+            android:label="急救卡" />
 
-        <!-- 夜间手电筒通知按钮接收器 -->
-        <receiver
-            android:name=".NightFlashlight$TorchReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="io.github.wumisc.safewalk.TORCH_ON" />
-            </intent-filter>
-        </receiver>
+        <activity
+            android:name=".LabActivity"
+            android:exported="false"
+            android:label="功能实验区" />
 
         <!-- LSPosed 模块声明 -->
         <meta-data
@@ -57,13 +41,13 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="行走模式：后置摄像头实时路况，支持角落小窗与全屏半透明叠加；自动检测步行开启/静止关闭；低头看手机过久弹看路提醒。适配 HyperOS4 / Android 15。" />
+            android:value="SafeWalk 安全出行低功耗提醒：电量预警、证件提醒、久坐提醒、社交礼仪提示。仅Hook系统进程，硬件计步检测，低功耗。" />
         <meta-data
             android:name="xposedminversion"
-            android:value="82" />
+            android:value="93" />
         <meta-data
             android:name="xposedscope"
-            android:resource="@array/xposed_scope" />
+            android:value="android" />
     </application>
 
 </manifest>

@@ -1,0 +1,236 @@
+package io.github.wumisc.safewalk;
+
+import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.content.Context;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.method.ScrollingMovementMethod;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
+/**
+ * 功能实验区：调试用，独立注册传感器。
+ */
+public class LabActivity extends Activity implements SensorEventListener {
+
+    private TextView tvStep, tvWalkState, tvXiaomiStep, tvLog;
+    private Handler main = new Handler(Looper.getMainLooper());
+    private SensorManager sm;
+    private Sensor accel, stepCounter;
+
+    private int labSteps = 0;
+    private long lastStepTime = 0;
+    private float lastMag = 0;
+    private boolean labWalking = false;
+    private long walkSince = 0;
+
+    private long xiaomiBase = -1;
+    private long xiaomiSteps = 0;
+    private StringBuilder logBuf = new StringBuilder();
+
+    private static final SimpleDateFormat SDF = new SimpleDateFormat("HH:mm:ss", Locale.US);
+
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        try {
+            buildUI();
+            log("实验区启动");
+        } catch (Throwable t) {
+            LinearLayout err = new LinearLayout(this);
+            err.setOrientation(LinearLayout.VERTICAL);
+            err.setPadding(40, 80, 40, 40);
+            TextView et = new TextView(this);
+            et.setText("崩溃:\n" + android.util.Log.getStackTraceString(t));
+            et.setTextSize(12);
+            err.addView(et);
+            setContentView(err);
+        }
+    }
+
+    private void buildUI() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(40, 80, 40, 60);
+        root.setBackgroundColor(0xFFF5F0E8);
+        root.setFitsSystemWindows(true);
+
+        TextView title = new TextView(this);
+        title.setText("🧪 功能实验区");
+        title.setTextSize(24);
+        title.setTextColor(0xFF1B3A5C);
+        root.addView(title);
+
+        LinearLayout card = card();
+        tvStep = row(card, "本实验区步数");
+        tvWalkState = row(card, "行走状态");
+        tvXiaomiStep = row(card, "小米计步器");
+        root.addView(card);
+
+        root.addView(btn("清空实验区步数", v -> {
+            labSteps = 0; labWalking = false;
+            log("步数已清空");
+        }));
+
+        root.addView(label("—— 功能测试 ——"));
+        root.addView(btn("通知测试", v -> { testNotify("测试通知", "如果你看到这条，通知正常"); log("通知测试"); }));
+        root.addView(btn("电量预警", v -> { testNotify("电量预警", "快没电了，赶紧找个充电宝或就近充电"); log("电量预警"); }));
+        root.addView(btn("证件提醒", v -> { testNotify("证件提醒", "身份证、护照等重要证件一定要贴身放好"); log("证件提醒"); }));
+        root.addView(btn("久坐提醒", v -> { testNotify("久坐提醒", "已坐了2小时了，该起来运动运动了"); log("久坐提醒"); }));
+        root.addView(btn("社交礼仪", v -> { testNotify("社交提示", "守时，不打探隐私，不强行劝酒"); log("社交礼仪"); }));
+
+        root.addView(label("—— 调试日志 ——"));
+        tvLog = new TextView(this);
+        tvLog.setTextSize(11);
+        tvLog.setLineSpacing(2, 1f);
+        tvLog.setMovementMethod(new ScrollingMovementMethod());
+        tvLog.setBackgroundColor(0xFF1A1A1A);
+        tvLog.setTextColor(0xFF00FF00);
+        tvLog.setPadding(16, 16, 16, 16);
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(-1, 300);
+        llp.topMargin = 10;
+        tvLog.setLayoutParams(llp);
+        root.addView(tvLog);
+
+        root.addView(btn("📋 复制日志", v -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("log", logBuf.toString()));
+            Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
+        }));
+
+        sv.addView(root);
+        setContentView(sv);
+
+        sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        stepCounter = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+        log(accel != null ? "加速度计已注册" : "无加速度计");
+        log(stepCounter != null ? "硬件计步器已注册" : "无硬件计步器");
+    }
+
+    private TextView row(LinearLayout parent, String label) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        TextView l = new TextView(this);
+        l.setText(label + ": ");
+        l.setTextSize(14); l.setTextColor(0xFF8B7D6B);
+        TextView v = new TextView(this);
+        v.setTextSize(14); v.setTextColor(0xFF1A1A1A);
+        r.addView(l); r.addView(v);
+        r.setPadding(0, 10, 0, 10);
+        parent.addView(r);
+        return v;
+    }
+
+    private LinearLayout card() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackgroundColor(0xFFFFFCF5);
+        c.setPadding(30, 20, 30, 20);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = 30;
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    private TextView label(String s) {
+        TextView t = new TextView(this);
+        t.setText(s); t.setTextSize(13); t.setTextColor(0xFF8B7D6B);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.topMargin = 30;
+        t.setLayoutParams(lp);
+        return t;
+    }
+
+    private Button btn(String text, Runnable l) { return btn(text, v -> l.run()); }
+    private Button btn(String text, android.view.View.OnClickListener l) {
+        Button b = new Button(this);
+        b.setText(text); b.setAllCaps(false);
+        b.setBackgroundColor(0xFF1B3A5C); b.setTextColor(0xFFFFFFFF);
+        b.setOnClickListener(l);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = 15;
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private void log(String msg) {
+        logBuf.append(SDF.format(new Date())).append(" ").append(msg).append("\n");
+        if (tvLog != null) tvLog.setText(logBuf.toString());
+    }
+
+    private void testNotify(String title, String text) {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            String ch = "safewalk_test";
+            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "测试", NotificationManager.IMPORTANCE_HIGH));
+            Notification n = new Notification.Builder(this, ch)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle(title).setContentText(text)
+                    .setStyle(new Notification.BigTextStyle().bigText(text))
+                    .setAutoCancel(true).setTimeoutAfter(60_000).build();
+            nm.notify((int) System.currentTimeMillis() % 10000, n);
+            log("通知: " + title);
+        } catch (Throwable t) { log("失败: " + t.getMessage()); }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        try {
+            if (accel != null) sm.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
+            if (stepCounter != null) sm.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_UI);
+            main.postDelayed(refresh, 500);
+        } catch (Throwable t) { log("onResume err: " + t.getMessage()); }
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        try { sm.unregisterListener(this); } catch (Throwable ignored) {}
+        main.removeCallbacks(refresh);
+    }
+
+    private Runnable refresh = new Runnable() {
+        @Override public void run() {
+            try {
+                tvStep.setText(labSteps + " 步");
+                tvWalkState.setText(labWalking ? "🚶 行走中" : "🚫 静止");
+                tvXiaomiStep.setText(xiaomiSteps + " 步");
+            } catch (Throwable t) { log("refresh err: " + t.getMessage()); }
+            main.postDelayed(this, 500);
+        }
+    };
+
+    @Override public void onSensorChanged(SensorEvent e) {
+        if (e.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+            float mag = (float) Math.sqrt(e.values[0]*e.values[0]+e.values[1]*e.values[1]+e.values[2]*e.values[2]);
+            long now = System.currentTimeMillis();
+            if (Math.abs(mag - lastMag) > 0.8 && now - lastStepTime > 250) {
+                labSteps++; lastStepTime = now; labWalking = true; walkSince = now;
+                if (labSteps % 10 == 0) log("第 " + labSteps + " 步");
+            }
+            if (now - walkSince > 5000) labWalking = false;
+            lastMag = mag;
+        } else if (e.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
+            long total = (long) e.values[0];
+            if (xiaomiBase < 0) xiaomiBase = total;
+            xiaomiSteps = total - xiaomiBase;
+        }
+    }
+
+    @Override public void onAccuracyChanged(Sensor s, int a) {}
+}

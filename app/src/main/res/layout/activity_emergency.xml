@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F2F2F7"
+    android:fitsSystemWindows="true"
+    android:padding="16dp"
+    android:paddingTop="40dp">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="医疗急救卡"
+            android:textColor="#1D1D1D"
+            android:textSize="24sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="手机损坏、迷路、身体不适或无网络环境下，救援人员可直接查看此卡片了解你的信息。全部数据本地保存，不上传网络。"
+            android:textColor="#8E8E93"
+            android:textSize="13sp"/>
+
+        <!-- 表单卡片 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="#FFFFFF"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <EditText
+                android:id="@+id/et_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="姓名"
+                android:inputType="textPersonName"
+                android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <EditText
+                android:id="@+id/et_blood"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="血型"
+                android:inputType="textCapCharacters"
+                android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <EditText
+                android:id="@+id/et_phone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="身高/体重"
+                android:inputType="text"
+                android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <EditText
+                android:id="@+id/et_address"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="住址"
+                android:inputType="textPostalAddress"
+                android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <EditText
+                android:id="@+id/et_contact"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="紧急联系人电话"
+                android:inputType="phone"
+                android:background="@null"/>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_save_emergency"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="#007AFF"
+            android:text="保存急救卡"
+            android:textColor="#FFFFFF"/>
+
+        <!-- 系统 SOS 引导 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:background="#FFFFFF"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="系统紧急呼救"
+                android:textColor="#1D1D1D"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:lineSpacingExtra="4dp"
+                android:text="连按电源键5次可自动拨打紧急电话并发送求助短信，建议开启。\n\n开启后即使手机锁屏、无SIM卡也能触发。"
+                android:textColor="#8E8E93"
+                android:textSize="13sp"/>
+
+            <Button
+                android:id="@+id/btn_goto_sos"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:backgroundTint="#FF3B30"
+                android:text="前往系统紧急呼救设置"
+                android:textColor="#FFFFFF"/>
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
