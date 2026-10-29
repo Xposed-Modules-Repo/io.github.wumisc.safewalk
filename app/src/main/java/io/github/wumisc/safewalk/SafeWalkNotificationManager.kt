@@ -18,6 +18,7 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         const val ID_IDCARD = 1002
         const val ID_SIT = 1003
         const val ID_SOCIAL = 1004
+        const val ID_TORCH = 1005
     }
 
     init { createChannel() }
@@ -51,4 +52,21 @@ class SafeWalkNotificationManager(private val ctx: Context) {
     fun sitRemind() = showNotify(ID_SIT, "SafeWalk 久坐提醒", "已坐了2小时了，该起来运动运动了。")
 
     fun socialTip(text: String) = showNotify(ID_SOCIAL, "SafeWalk 社交提示", text)
+
+    fun flashlightSuggest() {
+        val intent = android.content.Intent("io.github.wumisc.safewalk.TORCH_TOGGLE").setPackage(ctx.packageName)
+        val pi = android.app.PendingIntent.getBroadcast(ctx, 0, intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+        val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle("SafeWalk 夜间照明")
+            .setContentText("天黑了，点此开启手电筒照亮前路")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("天黑了，走路小心，点下方按钮开启手电筒"))
+            .setContentIntent(pi)
+            .addAction(android.R.drawable.ic_media_play, "开手电筒", pi)
+            .setAutoCancel(true)
+            .setTimeoutAfter(120_000)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(ID_TORCH, b.build())
+    }
 }

@@ -413,33 +413,24 @@
                         android:textSize="15sp" />
                 </com.google.android.material.card.MaterialCardView>
 
-                <!-- 右下角小窗壁纸 -->
-                <com.google.android.material.card.MaterialCardView
-                    android:layout_width="140dp"
-                    android:layout_height="200dp"
-                    android:layout_marginTop="20dp"
-                    android:layout_gravity="end"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="4dp">
-                    <ImageView
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:scaleType="centerCrop"
-                        android:src="@drawable/bg_about_wallpaper" />
-                </com.google.android.material.card.MaterialCardView>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:layout_marginTop="4dp"
-                    android:text="— 出川 · 吴玉章"
-                    android:textColor="@color/text_hint"
-                    android:textSize="11sp"
-                    android:textStyle="italic" />
-
             </LinearLayout>
         </ScrollView>
+
+        <!-- 右下角浮窗壁纸（长按隐藏） -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/floating_wallpaper"
+            android:layout_width="110dp"
+            android:layout_height="155dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="6dp">
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="@drawable/bg_about_wallpaper" />
+        </com.google.android.material.card.MaterialCardView>
     </FrameLayout>
 
     <!-- 底部导航 -->

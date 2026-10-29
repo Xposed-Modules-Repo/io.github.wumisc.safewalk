@@ -58,3 +58,17 @@ JAVA_HOME=<jdk17路径> ANDROID_HOME=<sdk路径> gradle assembleDebug --no-daemo
 ## 许可证
 
 GPL-3.0，见 [LICENSE](LICENSE)。
+
+# Acknowledgments
+
+SafeWalk 是面向 HyperOS / Android 的 KSU/LSPosed 出行感知模块，实现不依赖 GMS 的步行状态识别。项目大量参考优秀开源项目的算法、架构思路，特此感谢各位开发者的贡献：
+
+1. **bagilevi/android-pedometer** — 纯加速度计步器经典实现：峰值检测、步频区间过滤、自适应阈值的基础思路，是步态检测部分最重要的参考来源。
+2. **mdeguzis/StepCounter** — 滑动窗口方差统计实现、根据运动状态动态切换传感器采样率的省电策略。
+3. **ashishb/android-step-detector** — 基于 FFT 频谱分析识别周期性步态的方案，作为高级增强功能备选。
+4. **tonyo567/hysteresis-state-machine** — 分离式迟滞状态机思想，独立配置进入防抖、退出防抖计时器，解决状态频繁抖动切换。
+5. **KalebKE/FSensor** — Madgwick/Mahony 姿态滤波、卡尔曼 GPS 平滑算法，作为后续 GPS 漂移优化的备选方案。
+6. **p-v/Android-SensorService** — Android 后台传感器监听、系统采样节流、丢采样容错、前台服务适配方案，适配国内定制 ROM 后台限制。
+7. **UrbanBigDataCentre/meowmotion** — GPS 轨迹分割、停留/移动分类、连续位移校验逻辑，用于离线导出轨迹日志调参。
+
+> 声明：SafeWalk 所有代码为独立手写重构，仅借鉴思路与算法原理，没有直接拷贝上述项目源码。遵循 GPL-3.0 许可证开源。

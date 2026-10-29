@@ -33,7 +33,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var lastIdRemindTs = 0L
     private var lastSitRemindTs = 0L
     private var lastTriggerTs = 0L
+    private var lastBatteryWarnTs = 0L
     private var batteryReceiverRegistered = false
+    private var verifyStartTs = 0L
 
     private val WINDOW_MS = 5 * 60 * 1000L
     private val TRIGGER_COOLDOWN = 5 * 60 * 1000L // 触发后5分钟冷却
@@ -60,6 +62,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
                 if (!batteryReceiverRegistered) {
                     registerBattery(ctx!!)
+                    registerTorchReceiver(ctx!!)
                     batteryReceiverRegistered = true
                 }
 
@@ -91,9 +94,22 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         val now = System.currentTimeMillis()
         xsp?.reload()
 
+        // VERIFYING超时兜底：超过6秒还没结束，回LIGHT_MONITOR
+        if (state == State.VERIFYING && now - verifyStartTs > 6000) {
+            state = State.LIGHT_MONITOR
+            steps.clear()
+        }
+
         // 静置重置
         if (now - lastStepTs > staticResetMs()) {
             steps.clear()
+            // 久坐提醒：2小时没动过
+            if (now - lastStepTs > 2 * 60 * 60 * 1000L && now - lastSitRemindTs > 24 * 60 * 60 * 1000L) {
+                if (xsp?.getBoolean(SafeWalkPrefKey.enableSitHealthRemind, true) == true) {
+                    nm?.sitRemind()
+                    lastSitRemindTs = now
+                }
+            }
             state = State.SLEEP
             return
         }
@@ -105,9 +121,12 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
         if (steps.size >= threshold() && state == State.LIGHT_MONITOR) {
             state = State.VERIFYING
+            verifyStartTs = now
             verifyGait()
         }
     }
+
+    private val gait = GaitDetector()
 
     private fun verifyGait() {
         val s = sm ?: return
@@ -115,44 +134,21 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             state = State.LIGHT_MONITOR
             return
         }
-
-        var peaks = 0
-        var prevZ = 0f
-        var totalSamples = 0
-        var uprightSamples = 0  // Z轴>7.5才算手机竖直拿着
-        val start = System.currentTimeMillis()
-        val end = start + 4000
+        gait.reset()
+        val end = System.currentTimeMillis() + 4000
 
         s.registerListener(object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent?) {
                 if (e == null) return
-                val z = e.values[2]
-                totalSamples++
-                // 手机竖直拿着时 z≈9.8；躺床上/枕头旁边 z<7.5
-                if (z > 7.5f) uprightSamples++
-                // 任何一次 z<4 就直接判定躺床，取消
-                if (z < 4.0f) {
-                    s.unregisterListener(this)
-                    state = State.SLEEP
-                    steps.clear()
-                    return
-                }
-                if (z - prevZ > 3.0f) peaks++
-                prevZ = z
+                gait.feedAcc(e.values[0], e.values[1], e.values[2])
                 if (System.currentTimeMillis() > end) {
                     s.unregisterListener(this)
-                    // 必须：大部分时间手机竖直拿着 + 有足够走路起伏
-                    val uprightRatio = if (totalSamples > 0) uprightSamples.toFloat() / totalSamples else 0f
-                    if (peaks >= 6 && uprightRatio > 0.7f) {
-                        triggerMovement()
-                    } else {
-                        state = State.LIGHT_MONITOR
-                        steps.clear()
-                    }
+                    if (gait.hasStableGait()) triggerMovement()
+                    else { state = State.LIGHT_MONITOR; steps.clear() }
                 }
             }
             override fun onAccuracyChanged(s: Sensor?, a: Int) {}
-        }, acc, SensorManager.SENSOR_DELAY_NORMAL)
+        }, acc, SensorManager.SENSOR_DELAY_GAME)
     }
 
     private fun triggerMovement() {
@@ -176,6 +172,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             }
         }
 
+        // 夜间（22:00~06:00）走路 → 提醒开手电
+        val cal = java.util.Calendar.getInstance()
+        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        if (hour >= 22 || hour < 6) {
+            nm?.flashlightSuggest()
+        }
+
         state = State.SLEEP
     }
 
@@ -195,9 +198,31 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     if (!(xsp?.getBoolean(SafeWalkPrefKey.enableBatteryWarning, true) ?: true)) return
                     val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, 100) ?: 100
                     val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-                    if (level * 100 / scale <= 15) nm?.batteryWarning()
+                    if (level * 100 / scale <= 15) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastBatteryWarnTs > 60 * 60 * 1000L) { // 1小时冷却
+                            nm?.batteryWarning()
+                            lastBatteryWarnTs = now
+                        }
+                    }
                 }
             }, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        } catch (_: Throwable) {}
+    }
+
+    private var torchOn = false
+    private fun registerTorchReceiver(context: Context) {
+        try {
+            context.registerReceiver(object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: Context?, i: Intent?) {
+                    try {
+                        val cm = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        val id = cm.cameraIdList[0]
+                        torchOn = !torchOn
+                        cm.setTorchMode(id, torchOn)
+                    } catch (_: Throwable) {}
+                }
+            }, IntentFilter("io.github.wumisc.safewalk.TORCH_TOGGLE"))
         } catch (_: Throwable) {}
     }
 }

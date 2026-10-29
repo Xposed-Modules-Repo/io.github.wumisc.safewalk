@@ -2,7 +2,9 @@
 <resources>
     <!-- Miuix 深色模式配色：系统深色时自动覆盖 -->
     <color name="primary">#0A84FF</color>
-    <color name="bg">#000000</color>
+    <color name="bg">#0A0A0A</color>
+    <color name="bg_center">#141414</color>
+    <color name="bg_end">#1C1C1E</color>
     <color name="card_bg">#1C1C1E</color>
     <color name="card_stroke">#2C2C2E</color>
     <color name="divider">#2C2C2E</color>

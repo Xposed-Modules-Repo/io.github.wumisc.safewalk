@@ -93,6 +93,9 @@ public class LabActivity extends Activity implements SensorEventListener {
         root.addView(btn("证件提醒", v -> { testNotify("证件提醒", "身份证、护照等重要证件一定要贴身放好"); log("证件提醒"); }));
         root.addView(btn("久坐提醒", v -> { testNotify("久坐提醒", "已坐了2小时了，该起来运动运动了"); log("久坐提醒"); }));
         root.addView(btn("社交礼仪", v -> { testNotify("社交提示", "守时，不打探隐私，不强行劝酒"); log("社交礼仪"); }));
+        root.addView(btn("手电筒开关", v -> toggleTorch()));
+        root.addView(btn("夜间手电通知", v -> { testNotify("夜间照明", "天黑了，走路小心，建议开启手电筒照亮前路"); log("夜间手电通知"); }));
+        root.addView(btn("模拟出门触发", v -> { testNotify("出门提醒", "检测到持续步行，证件已贴身放好？"); log("模拟出门触发"); }));
 
         root.addView(label("—— 调试日志 ——"));
         tvLog = new TextView(this);
@@ -172,6 +175,17 @@ public class LabActivity extends Activity implements SensorEventListener {
     private void log(String msg) {
         logBuf.append(SDF.format(new Date())).append(" ").append(msg).append("\n");
         if (tvLog != null) tvLog.setText(logBuf.toString());
+    }
+
+    private boolean torchOn = false;
+    private void toggleTorch() {
+        try {
+            android.hardware.camera2.CameraManager cm = (android.hardware.camera2.CameraManager) getSystemService(CAMERA_SERVICE);
+            String id = cm.getCameraIdList()[0];
+            torchOn = !torchOn;
+            cm.setTorchMode(id, torchOn);
+            log("手电筒: " + (torchOn ? "开" : "关"));
+        } catch (Throwable t) { log("手电筒失败: " + t.getMessage()); }
     }
 
     private void testNotify(String title, String text) {

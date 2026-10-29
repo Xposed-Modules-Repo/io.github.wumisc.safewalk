@@ -134,6 +134,26 @@ public final class MainActivity extends Activity {
             startActivity(new Intent(this, LabActivity.class));
             return true;
         });
+
+        // 浮窗壁纸：长按隐藏，记住状态；在关于页长按标题恢复
+        final android.view.View wp = findViewById(R.id.floating_wallpaper);
+        android.content.SharedPreferences ui = getSharedPreferences("safewalk_ui", MODE_PRIVATE);
+        wp.setVisibility(ui.getBoolean("wp_hidden", false) ? View.GONE : View.VISIBLE);
+        wp.setOnLongClickListener(v -> {
+            wp.setVisibility(View.GONE);
+            ui.edit().putBoolean("wp_hidden", true).apply();
+            Toast.makeText(this, "壁纸已隐藏", Toast.LENGTH_SHORT).show();
+            return true;
+        });
+        // 关于页长按版本号恢复壁纸
+        ((TextView) findViewById(R.id.tv_about_subtitle)).setOnLongClickListener(v -> {
+            if (wp.getVisibility() != View.VISIBLE) {
+                wp.setVisibility(View.VISIBLE);
+                ui.edit().putBoolean("wp_hidden", false).apply();
+                Toast.makeText(this, "壁纸已显示", Toast.LENGTH_SHORT).show();
+            }
+            return true;
+        });
     }
 
     private void loadConfig() {
