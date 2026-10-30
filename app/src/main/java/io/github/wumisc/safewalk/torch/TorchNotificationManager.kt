@@ -1,0 +1,105 @@
+package io.github.wumisc.safewalk.torch
+
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.hardware.camera2.CameraManager
+import androidx.core.app.NotificationCompat
+
+/**
+ * 手电筒通知管理器：
+ * - 使用 CameraManager.TorchCallback 全局监听闪光灯状态（兼容HyperOS）
+ * - 通知按钮动态切换「打开手电 / 关闭手电」
+ * - 通知60秒自动消失，闪光灯保持开启
+ */
+class TorchNotificationManager(private val context: Context) {
+    internal var torchIsOn = false
+
+    private var torchCallback: CameraManager.TorchCallback? = null
+    private val nm: NotificationManager by lazy {
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    }
+
+    /**
+     * 开始监听手电筒状态（Camera2原生回调，HyperOS兼容）
+     */
+    fun startMonitor() {
+        val camManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val callback = object : CameraManager.TorchCallback() {
+            override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                torchIsOn = enabled
+                refreshNotification()
+            }
+        }
+        torchCallback = callback
+        camManager.registerTorchCallback(callback, null)
+    }
+
+    /**
+     * 停止监听，释放资源
+     */
+    fun stopMonitor() {
+        torchCallback?.let {
+            val camManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            camManager.unregisterTorchCallback(it)
+            torchCallback = null
+        }
+    }
+
+    /**
+     * 刷新手电通知，根据当前状态动态切换按钮文字
+     */
+    fun refreshNotification() {
+        val openIntent = Intent(ACTION_OPEN_TORCH).apply { setPackage(context.packageName) }
+        val openPi = PendingIntent.getBroadcast(
+            context, 100, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val closeIntent = Intent(ACTION_CLOSE_TORCH).apply { setPackage(context.packageName) }
+        val closePi = PendingIntent.getBroadcast(
+            context, 200, closeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, TORCH_CHANNEL_ID)
+            .setSmallIcon(context.applicationInfo.icon)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setTimeoutAfter(60 * 1000L)
+
+        if (torchIsOn) {
+            builder
+                .setContentTitle("手电筒已开启")
+                .setContentText("已长时间静置，记得及时关闭手电节约电量")
+                .addAction(
+                    NotificationCompat.Action.Builder(
+                        context.applicationInfo.icon,
+                        "关闭手电",
+                        closePi
+                    ).build()
+                )
+        } else {
+            builder
+                .setContentTitle("夜间手电筒")
+                .setContentText("夜间出行，点击按钮打开手电照明")
+                .addAction(
+                    NotificationCompat.Action.Builder(
+                        context.applicationInfo.icon,
+                        "打开手电",
+                        openPi
+                    ).build()
+                )
+        }
+        nm.notify(TORCH_NOTIFY_ID, builder.build())
+    }
+
+    /**
+     * 手动移除通知
+     */
+    fun dismissNotification() {
+        nm.cancel(TORCH_NOTIFY_ID)
+    }
+}

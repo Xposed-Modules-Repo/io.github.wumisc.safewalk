@@ -60,6 +60,16 @@
             android:exported="false"
             android:label="出门踩坑指南" />
 
+        <!-- 手电筒通知按钮广播接收器 -->
+        <receiver
+            android:name=".torch.TorchActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="io.github.wumisc.safewalk.OPEN_TORCH"/>
+                <action android:name="io.github.wumisc.safewalk.CLOSE_TORCH"/>
+            </intent-filter>
+        </receiver>
+
         <!-- LSPosed 模块声明 -->
         <meta-data
             android:name="xposedmodule"

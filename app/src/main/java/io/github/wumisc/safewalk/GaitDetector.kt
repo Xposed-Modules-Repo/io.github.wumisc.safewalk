@@ -1,5 +1,6 @@
 package io.github.wumisc.safewalk
 
+import io.github.wumisc.safewalk.torch.GaitStateCallback
 import kotlin.math.sqrt
 
 /**
@@ -49,6 +50,15 @@ class GaitDetector {
 
     fun getAttitude(): PhoneAttitude = currentAttitude
 
+    // ========== 静置状态回调（手电筒静置提醒用） ==========
+    private var gaitStateCallback: GaitStateCallback? = null
+    private var staticDetectTimerStart: Long? = null
+    private val SENSOR_STATIC_THRESHOLD = 3000L // 传感器3秒无运动判定为静置
+
+    fun setGaitStateCallback(callback: GaitStateCallback?) {
+        gaitStateCallback = callback
+    }
+
     private fun updateAttitude(gx: Float, gy: Float, gz: Float) {
         val gMag = sqrt(gx * gx + gy * gy + gz * gz)
         if (gMag < 8f) { currentAttitude = PhoneAttitude.UNKNOWN; return }
@@ -81,6 +91,7 @@ class GaitDetector {
             effectiveThreshold *= MotionConfig.LAY_FLAT_WEIGHT
         }
 
+        var hasWalkingMotion = false
         if (mag > effectiveThreshold) {
             val now = System.currentTimeMillis()
             if (lastPeakTime != 0L) {
@@ -90,11 +101,27 @@ class GaitDetector {
                     peakIntervals.add(interval)
                     if (peakIntervals.size > 3) peakIntervals.removeAt(0)
                     lastPeakTime = now
+                    hasWalkingMotion = true
+                    // 有运动，重置静置计时器
+                    staticDetectTimerStart = null
+                    gaitStateCallback?.onLongStaticDetected(false)
                     return true
                 }
             }
             lastPeakTime = now
         }
+
+        // 静置判定：无持续运动，累积静置时间
+        if (!hasWalkingMotion) {
+            val now = System.currentTimeMillis()
+            if (staticDetectTimerStart == null) {
+                staticDetectTimerStart = now
+            }
+            val staticDuration = now - staticDetectTimerStart!!
+            val isStatic = staticDuration >= SENSOR_STATIC_THRESHOLD
+            gaitStateCallback?.onLongStaticDetected(isStatic)
+        }
+
         return false
     }
 
@@ -128,6 +155,9 @@ class GaitDetector {
         currentAdaptiveThreshold = 1.0f
         currentAttitude = PhoneAttitude.UNKNOWN
         gravityX = 0f; gravityY = 0f; gravityZ = 0f
+        // 清空静置状态
+        staticDetectTimerStart = null
+        gaitStateCallback?.onLongStaticDetected(false)
     }
 
     fun getCurrentThreshold(): Float = currentAdaptiveThreshold
