@@ -81,13 +81,40 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     // ========== Hook 入口 ==========
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
         Log.i("SafeWalk", "===== Hook 加载到进程: ${lp.packageName} =====")
-        // 和v1.8一致，Hook系统界面 SystemUI，后置看路在这里好用
+        // Hook系统界面 SystemUI，和以前好用的版本一致
         if (lp.packageName != "com.android.systemui") return
         Log.i("SafeWalk", "成功挂载至 SystemUI【系统界面】进程")
 
+        // 和最好版一致：Hook SystemUIApplication.onCreate，在onCreate里初始化
+        try {
+            val appCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.android.systemui.SystemUIApplication",
+                lp.classLoader
+            )
+            if (appCls != null) {
+                de.robv.android.xposed.XposedHelpers.findAndHookMethod(
+                    appCls, "onCreate",
+                    object : de.robv.android.xposed.XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            val appCtx = param.thisObject as? Context ?: return
+                            Log.i("SafeWalk", "SystemUIApplication.onCreate 触发，开始初始化")
+                            init(appCtx)
+                        }
+                    }
+                )
+                Log.i("SafeWalk", "Hook SystemUIApplication.onCreate 成功")
+            } else {
+                Log.e("SafeWalk", "找不到 SystemUIApplication 类")
+            }
+        } catch (e: Exception) {
+            Log.e("SafeWalk", "Hook SystemUIApplication 失败", e)
+        }
+    }
+
+    private fun init(appCtx: Context) {
         Handler(Looper.getMainLooper()).postDelayed({
             try {
-                ctx = getSystemContext() ?: return@postDelayed
+                ctx = appCtx.applicationContext
                 // 读配置JSON文件（新版方案，不用XSharedPreferences）
                 configJson = SafeWalkConfig.loadConfigFromFile()
                 nm = SafeWalkNotificationManager(ctx!!)
