@@ -98,10 +98,10 @@ public class LabActivity extends Activity implements SensorEventListener {
         root.addView(btn("夜间手电通知", v -> { testNotify("夜间照明", "天黑了，走路小心，建议开启手电筒照亮前路"); log("夜间手电通知"); }));
         root.addView(btn("🔦 手电悬浮通知测试", v -> testTorchNotify()));
         root.addView(btn("🔦 关闭手电悬浮通知", v -> dismissTorchNotify()));
-        root.addView(label("—— 后置看路测试 ——"));
-        root.addView(btn("📷 打开后置看路（全屏）", v -> openRearCamFull()));
-        root.addView(btn("📷 打开后置看路（小窗）", v -> openRearCamSmall()));
-        root.addView(btn("📷 关闭后置看路", v -> closeRearCam()));
+        root.addView(label("—— 行走模式测试 ——"));
+        root.addView(btn("🚶 打开行走模式（全屏）", v -> openRearCamFull()));
+        root.addView(btn("🚶 打开行走模式（小窗）", v -> openRearCamSmall()));
+        root.addView(btn("🚶 关闭行走模式", v -> closeRearCam()));
         root.addView(btn("模拟出门触发", v -> { testNotify("出门提醒", "检测到持续步行，证件已贴身放好？"); log("模拟出门触发"); }));
 
         root.addView(label("—— 调试日志 ——"));
@@ -263,13 +263,28 @@ public class LabActivity extends Activity implements SensorEventListener {
         } catch (Throwable t) { log("失败: " + t.getMessage()); }
     }
 
-    // ========== 后置看路测试（写JSON指令，Hook端执行） ==========
+    // ========== 行走模式测试（写入safewalk.conf，对齐2.0最好版） ==========
     private void sendRearCamTestAction(String action) {
         try {
-            android.content.SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
-            sp.edit().putString(SafeWalkPrefKey.testRearCamAction, action).apply();
-            SafeWalkConfig.exportConfig(this);
-            log("已发送后置看路指令: " + action);
+            // 先读取现有配置，再修改对应字段
+            StringBuilder conf = new StringBuilder();
+            conf.append("enable=true\n");
+            conf.append("walk_mode=").append(action.equals("close") ? "false" : "true").append("\n");
+            conf.append("auto_walk=false\n");
+            conf.append("overlay_form=").append(action.equals("open_small") ? "0" : "1").append("\n");
+            conf.append("alpha=55\n");
+            conf.append("corner=2\n");
+
+            // Base64编码后通过su写入
+            String b64 = android.util.Base64.encodeToString(conf.toString().getBytes(), android.util.Base64.NO_WRAP);
+            Process p = new ProcessBuilder("su", "-c",
+                "echo " + b64 + " | base64 -d > /data/local/tmp/safewalk.conf && chmod 644 /data/local/tmp/safewalk.conf").start();
+            boolean ok = p.waitFor(8, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0;
+            if (ok) {
+                log("已写入safewalk.conf: " + action);
+            } else {
+                log("写入失败，请检查Root权限");
+            }
         } catch (Throwable t) { log("发送指令失败: " + t.getMessage()); }
     }
 

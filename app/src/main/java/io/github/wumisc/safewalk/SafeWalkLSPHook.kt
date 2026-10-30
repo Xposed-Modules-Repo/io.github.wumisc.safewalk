@@ -63,9 +63,22 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         const val BATTERY_COOLDOWN = 60 * 60 * 1000L   // 电量1小时冷却
         const val NIGHT_START_HOUR = 22  // 夜间开始
         const val NIGHT_END_HOUR = 6      // 夜间结束
+        const val CONF_PATH = "/data/local/tmp/safewalk.conf"
 
         /** 手电筒广播 Action */
         const val ACTION_TORCH_TOGGLE = "io.github.wumisc.safewalk.TORCH_TOGGLE"
+
+        // ========== Config变量（对齐2.0最好版） ==========
+        var confEnable = false
+        var confWalkMode = false      // 手动行走模式开关
+        var confAutoWalk = false      // 自动行走检测
+        var confOverlayForm = 1       // 0=小窗 1=全屏
+        var confAlpha = 55            // 透明度
+        var confCorner = 2            // 小窗位置
+        var confLookdown = true
+        var confNightFlash = true
+        var confSafety = true
+        var confLastMod = -1L         // 配置文件最后修改时间
 
         /** 写文件日志，不用logcat也能看 */
         fun diag(msg: String) {
@@ -74,6 +87,35 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 val fos = java.io.FileOutputStream("/data/local/tmp/safewalk_diag.log", true)
                 fos.write(line.toByteArray())
                 fos.close()
+            } catch (_: Throwable) {}
+        }
+
+        /** 重新读取safewalk.conf配置 */
+        fun reloadConf() {
+            try {
+                val f = java.io.File(CONF_PATH)
+                if (!f.exists()) return
+                val kv = HashMap<String, String>()
+                val r = java.io.BufferedReader(java.io.FileReader(f))
+                var line: String?
+                while (r.readLine().also { line = it } != null) {
+                    val l = line!!.trim()
+                    if (l.isEmpty() || l.startsWith("#")) continue
+                    val eq = l.indexOf('=')
+                    if (eq > 0) {
+                        kv[l.substring(0, eq).trim()] = l.substring(eq + 1).trim()
+                    }
+                }
+                r.close()
+                confEnable = kv.getOrDefault("enable", "false") == "true"
+                confWalkMode = kv.getOrDefault("walk_mode", "false") == "true"
+                confAutoWalk = kv.getOrDefault("auto_walk", "false") == "true"
+                confOverlayForm = kv.getOrDefault("overlay_form", "1")?.toIntOrNull() ?: 1
+                confAlpha = kv.getOrDefault("alpha", "55")?.toIntOrNull() ?: 55
+                confCorner = kv.getOrDefault("corner", "2")?.toIntOrNull() ?: 2
+                confLookdown = kv.getOrDefault("lookdown", "true") == "true"
+                confNightFlash = kv.getOrDefault("night_flash", "true") == "true"
+                confSafety = kv.getOrDefault("safety", "true") == "true"
             } catch (_: Throwable) {}
         }
     }
@@ -178,13 +220,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     batteryReceiverRegistered = true
                 }
 
-                // 定时检查循环
-                Handler(Looper.getMainLooper()).postDelayed(object : Runnable {
-                    override fun run() {
-                        try { check() } catch (_: Throwable) {}
-                        Handler(Looper.getMainLooper()).postDelayed(this, 15_000L)
-                    }
-                }, 5_000L)
+                // 定时轮询（对齐2.0最好版：开启时2秒，关闭时5秒）
+                Handler(Looper.getMainLooper()).postDelayed(tickRunnable, 2_000L)
             } catch (_: Throwable) {}
         }, 2_000L)
     }
@@ -416,5 +453,61 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         torchOn = !torchOn
         cm.setTorchMode(flashId, torchOn)
         android.util.Log.i("SafeWalk", "手电筒: $torchOn")
+    }
+
+    // ========== 对齐2.0最好版：ConfWatcher轮询 + 统一状态管理 ==========
+    private val tickRunnable = object : Runnable {
+        override fun run() {
+            try {
+                // 1. 检查配置文件变化（通过mtime，静态时零IO）
+                val m = java.io.File(CONF_PATH).lastModified()
+                if (m != confLastMod) {
+                    confLastMod = m
+                    reloadConf()
+                    diag("ConfWatcher: 配置文件变化，重新加载")
+                }
+
+                // 2. 执行统一状态更新
+                updateOverlay()
+
+            } catch (t: Throwable) {
+                diag("tick: $t")
+            }
+            // 开启时2秒，关闭时5秒（省电）
+            val interval = if (confEnable) 2_000L else 5_000L
+            Handler(Looper.getMainLooper()).postDelayed(this, interval)
+        }
+    }
+
+    /** 统一的悬浮窗状态管理（对齐2.0最好版updateOverlay） */
+    private fun updateOverlay() {
+        rearCam ?: return
+
+        // 总开关没开 → 隐藏
+        if (!confEnable) {
+            rearCam?.hide()
+            return
+        }
+
+        // 判断是否应该显示
+        val manual = confWalkMode  // 手动模式开启
+        val auto = confAutoWalk && isWalking()  // 自动模式且检测到走路
+        val shouldShow = manual || auto
+
+        if (shouldShow) {
+            val mode = if (confOverlayForm == 1) RearCameraOverlay.MODE_FULLSCREEN
+                       else RearCameraOverlay.MODE_SMALLWINDOW
+            rearCam?.show(mode)
+            diag("updateOverlay: 显示行走模式悬浮窗, mode=$mode, manual=$manual, auto=$auto")
+        } else {
+            rearCam?.hide()
+        }
+    }
+
+    /** 判断当前是否在走路（步数滑动窗口） */
+    private fun isWalking(): Boolean {
+        val now = System.currentTimeMillis()
+        val recentSteps = steps.count { it > now - 5_000L } // 5秒内的步数
+        return recentSteps >= 5 // 5秒内走5步以上就算在走
     }
 }
