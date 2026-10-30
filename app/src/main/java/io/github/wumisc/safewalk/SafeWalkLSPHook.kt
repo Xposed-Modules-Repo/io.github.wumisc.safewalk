@@ -159,11 +159,10 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     // ========== 定时检查 ==========
     private fun check() {
-        if (!masterEnabled()) return
         val now = System.currentTimeMillis()
         configJson = SafeWalkConfig.loadConfigFromFile()
 
-        // ===== 后置看路测试指令处理（实验区跨进程调用） =====
+        // ===== 后置看路测试指令处理（不管总开关开没开都能测试） =====
         val testAction = pref(SafeWalkPrefKey.testRearCamAction, "")
         if (testAction.isNotEmpty()) {
             when (testAction) {
@@ -175,6 +174,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             clearTestRearCamAction()
             Log.i("SafeWalk", "执行后置看路测试指令: $testAction")
         }
+
+        if (!masterEnabled()) return
 
         // VERIFYING 超时兜底
         if (state == State.VERIFYING && now - verifyStartTs > VERIFY_TIMEOUT_MS) {
