@@ -39,9 +39,20 @@ class RearCameraOverlay(private val ctx: Context) {
     private var isShowing = false
     private var currentMode = MODE_FULLSCREEN
 
+    /** 写文件日志 */
+    private fun diag(msg: String) {
+        try {
+            val line = "${System.currentTimeMillis() / 1000} [cam] $msg\n"
+            val fos = java.io.FileOutputStream("/data/local/tmp/safewalk_diag.log", true)
+            fos.write(line.toByteArray())
+            fos.close()
+        } catch (_: Throwable) {}
+    }
+
     /** 显示悬浮窗 */
     fun show(mode: String = MODE_FULLSCREEN) {
         Log.i(TAG, "show() 被调用, mode=$mode, isShowing=$isShowing")
+        diag("CameraOverlay.show() 被调用, mode=$mode")
         if (isShowing && mode == currentMode) return
 
         isShowing = true
@@ -106,14 +117,18 @@ class RearCameraOverlay(private val ctx: Context) {
         val lp = buildParams()
         try {
             Log.i(TAG, "准备 addView, type=${lp.type}")
+            diag("准备 addView, type=${lp.type}")
             if (tv?.parent == null) {
                 wm.addView(tv, lp)
                 Log.i(TAG, "✅ 悬浮窗显示成功: $currentMode")
+                diag("✅ 悬浮窗显示成功: $currentMode")
             } else {
                 wm.updateViewLayout(tv, lp)
+                diag("更新悬浮窗布局")
             }
         } catch (t: Throwable) {
             Log.e(TAG, "❌ 显示悬浮窗失败", t)
+            diag("❌ 显示悬浮窗失败: ${t.message}")
         }
     }
 

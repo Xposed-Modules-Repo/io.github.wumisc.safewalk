@@ -66,6 +66,16 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
         /** 手电筒广播 Action */
         const val ACTION_TORCH_TOGGLE = "io.github.wumisc.safewalk.TORCH_TOGGLE"
+
+        /** 写文件日志，不用logcat也能看 */
+        fun diag(msg: String) {
+            try {
+                val line = "${System.currentTimeMillis() / 1000} [safe] $msg\n"
+                val fos = java.io.FileOutputStream("/data/local/tmp/safewalk_diag.log", true)
+                fos.write(line.toByteArray())
+                fos.close()
+            } catch (_: Throwable) {}
+        }
     }
 
     // ========== 配置读取（统一入口） ==========
@@ -81,9 +91,14 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     // ========== Hook 入口 ==========
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
         Log.i("SafeWalk", "===== Hook 加载到进程: ${lp.packageName} =====")
+        diag("===== Hook 加载到进程: ${lp.packageName} =====")
         // Hook系统界面 SystemUI，和以前好用的版本一致
-        if (lp.packageName != "com.android.systemui") return
+        if (lp.packageName != "com.android.systemui") {
+            diag("不是SystemUI，跳过: ${lp.packageName}")
+            return
+        }
         Log.i("SafeWalk", "成功挂载至 SystemUI【系统界面】进程")
+        diag("成功挂载至 SystemUI【系统界面】进程")
 
         // 和最好版一致：Hook SystemUIApplication.onCreate，在onCreate里初始化
         try {
