@@ -138,6 +138,9 @@ public final class MainActivity extends Activity {
         findViewById(R.id.tile_emergency).setOnClickListener(v ->
                 startActivity(new Intent(this, EmergencyCardActivity.class)));
 
+        // 保存按钮
+        findViewById(R.id.btn_save).setOnClickListener(v -> saveConfig());
+
         // 底部导航
         pageSettings = findViewById(R.id.page_settings);
         pageAbout = findViewById(R.id.page_about);
