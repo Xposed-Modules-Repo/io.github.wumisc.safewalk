@@ -14,6 +14,9 @@ import android.os.Looper
 import de.robv.android.xposed.IXposedHookLoadPackage
 
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import io.github.wumisc.safewalk.torch.TorchNotificationManager
+import io.github.wumisc.safewalk.torch.TorchStaticReminder
+import io.github.wumisc.safewalk.torch.createTorchNotifyChannel
 
 /**
  * SafeWalk LSPosed 状态机 + 步态判定。
@@ -32,6 +35,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var sm: SensorManager? = null
     private var ctx: Context? = null
     private var rearCam: RearCameraOverlay? = null
+    private var torchNotifyManager: TorchNotificationManager? = null
+    private var torchReminder: TorchStaticReminder? = null
 
     // ========== 时间戳（冷却用） ==========
     private val steps = mutableListOf<Long>()
@@ -80,6 +85,14 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 nm = SafeWalkNotificationManager(ctx!!)
                 sm = ctx!!.getSystemService(Context.SENSOR_SERVICE) as SensorManager
                 rearCam = RearCameraOverlay(ctx!!)
+
+                // 初始化手电筒通知模块
+                createTorchNotifyChannel(ctx!!)
+                torchNotifyManager = TorchNotificationManager(ctx!!)
+                torchNotifyManager?.startMonitor()
+                torchReminder = TorchStaticReminder(torchNotifyManager!!, ctx!!)
+                // 绑定步态回调（注：当前GaitDetector只在verifyGait时临时采样，
+                // 要实现持续静置提醒需要改为持续监听加速度传感器）
 
                 // 注册计步器
                 sm?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {
