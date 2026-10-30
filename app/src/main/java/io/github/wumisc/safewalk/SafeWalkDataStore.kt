@@ -1,9 +1,12 @@
 package io.github.wumisc.safewalk
 
+import android.content.Context
+import org.json.JSONObject
+
 /**
  * 配置 Key 常量。
- * UI端写入 XSharedPreferences(name="safewalk_xsp", MODE_WORLD_READABLE)，
- * Hook端通过 XSharedPreferences 读取。
+ * 新版方案：UI端写入 SharedPreferences（私有），同时导出成 JSON 文件到 files/ 目录。
+ * Hook端直接读 JSON 文件，不需要 XSharedPreferences，不需要 MODE_WORLD_READABLE。
  */
 object SafeWalkPrefKey {
     // 总开关
@@ -23,6 +26,10 @@ object SafeWalkPrefKey {
     const val rearCamMode = "rearCamMode"
     /** 后置看路自动模式：true=走起来自动开、停下自动收；false=手动开关。 */
     const val rearCamAuto = "rearCamAuto"
+    /** 后置看路透明度：0~100，值越大越不透明。 */
+    const val rearCamOpacity = "rearCamOpacity"
+    /** 小窗方向："bottom_right" / "bottom_left" / "top_right" / "top_left"。 */
+    const val rearCamCorner = "rearCamCorner"
 
     // 出行模式
     const val travelMode = "travelMode"  // 求职/约会/聚会/旅游
@@ -37,4 +44,50 @@ object SafeWalkPrefKey {
     const val emerAddress = "emerAddress"
     const val emerContactName = "emerContactName"
     const val emerContactPhone = "emerContactPhone"
+
+    /** 配置文件名，放在 files/ 目录下，Hook端直接读这个文件 */
+    const val CONFIG_FILE = "safewalk_config.json"
+}
+
+/**
+ * 新版配置读写：UI端写入 + 导出JSON，Hook端读JSON。
+ * 不需要 XSharedPreferences，不需要 MODE_WORLD_READABLE。
+ */
+object SafeWalkConfig {
+
+    /** UI端：写入配置并导出成JSON文件 */
+    @JvmStatic
+    fun exportConfig(ctx: Context) {
+        val sp = ctx.getSharedPreferences("safewalk_xsp", Context.MODE_PRIVATE)
+        val json = JSONObject()
+
+        // 遍历所有key，写进JSON
+        sp.all.forEach { (k, v) ->
+            when (v) {
+                is Boolean -> json.put(k, v)
+                is Int -> json.put(k, v)
+                is Long -> json.put(k, v)
+                is Float -> json.put(k, v)
+                is String -> json.put(k, v)
+            }
+        }
+
+        // 写到 files/ 目录
+        ctx.openFileOutput(SafeWalkPrefKey.CONFIG_FILE, Context.MODE_PRIVATE).use {
+            it.write(json.toString().toByteArray())
+        }
+    }
+
+    /** Hook端：直接读JSON文件 */
+    @JvmStatic
+    fun loadConfigFromFile(): JSONObject? {
+        return try {
+            val path = "/data/data/io.github.wumisc.safewalk/files/${SafeWalkPrefKey.CONFIG_FILE}"
+            val f = java.io.File(path)
+            if (!f.exists()) return null
+            JSONObject(f.readText())
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

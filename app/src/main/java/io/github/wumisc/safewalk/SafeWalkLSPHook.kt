@@ -12,7 +12,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.XSharedPreferences
+
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 /**
@@ -27,7 +27,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     // ========== 运行时状态 ==========
     private var state = State.SLEEP
-    private var xsp: XSharedPreferences? = null
+    private var configJson: org.json.JSONObject? = null
     private var nm: SafeWalkNotificationManager? = null
     private var sm: SensorManager? = null
     private var ctx: Context? = null
@@ -59,9 +59,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
     // ========== 配置读取（统一入口） ==========
-    private fun pref(key: String, default: Boolean): Boolean = xsp?.getBoolean(key, default) ?: default
-    private fun pref(key: String, default: Int): Int = xsp?.getInt(key, default) ?: default
-    private fun pref(key: String, default: String): String = xsp?.getString(key, default) ?: default
+    private fun pref(key: String, default: Boolean): Boolean = configJson?.optBoolean(key, default) ?: default
+    private fun pref(key: String, default: Int): Int = configJson?.optInt(key, default) ?: default
+    private fun pref(key: String, default: String): String = configJson?.optString(key, default) ?: default
 
     private fun masterEnabled() = pref(SafeWalkPrefKey.masterEnable, true)
     // 参数调整：步数阈值150，静置重置20秒
@@ -75,7 +75,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 ctx = getSystemContext() ?: return@postDelayed
-                xsp = XSharedPreferences("io.github.wumisc.safewalk", "safewalk_xsp")
+                // 读配置JSON文件（新版方案，不用XSharedPreferences）
+                configJson = SafeWalkConfig.loadConfigFromFile()
                 nm = SafeWalkNotificationManager(ctx!!)
                 sm = ctx!!.getSystemService(Context.SENSOR_SERVICE) as SensorManager
                 rearCam = RearCameraOverlay(ctx!!)
@@ -120,7 +121,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private fun check() {
         if (!masterEnabled()) return
         val now = System.currentTimeMillis()
-        xsp?.reload()
+        configJson = SafeWalkConfig.loadConfigFromFile()
 
         // VERIFYING 超时兜底
         if (state == State.VERIFYING && now - verifyStartTs > VERIFY_TIMEOUT_MS) {
@@ -193,7 +194,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     /** 确认持续步行 → 触发所有外出提醒 */
     private fun triggerMovement() {
-        xsp?.reload()
+        configJson = SafeWalkConfig.loadConfigFromFile()
         val now = System.currentTimeMillis()
         lastTriggerTs = now
         steps.clear()
@@ -245,7 +246,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         try {
             val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(c: Context?, i: Intent?) {
-                    xsp?.reload()
+                    configJson = SafeWalkConfig.loadConfigFromFile()
                     if (!pref(SafeWalkPrefKey.enableBatteryWarning, true)) return
                     val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, 100) ?: 100
                     val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100

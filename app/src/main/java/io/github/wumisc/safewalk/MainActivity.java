@@ -31,14 +31,14 @@ public final class MainActivity extends Activity {
     private TextView tabSettingsText, tabAboutText;
     private ImageView tabSettingsIcon, tabAboutIcon;
     private boolean onPage = false;
-    private int curGuideTab = 0;
+
 
     // ========== 滑动手势 ==========
     private float downX, downY;
 
     private static final int COLOR_ON = 0xFF2D7A3E;
     private static final int COLOR_OFF = 0xFF8B7D6B;
-    private static final int GUIDE_TABS = 5; // 预览/求职/约会/聚会/旅游
+
 
     @Override
     protected void onCreate(Bundle b) {
@@ -97,12 +97,11 @@ public final class MainActivity extends Activity {
     private void initUI() {
         bindViews();
         loadConfig();
-        setupGuideTabs();
         checkFirstLaunch();
     }
 
     private SharedPreferences xsp() {
-        return getSharedPreferences("safewalk_xsp", MODE_WORLD_READABLE);
+        return getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
     }
 
     private void bindViews() {
@@ -156,7 +155,20 @@ public final class MainActivity extends Activity {
             String ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             ((TextView) findViewById(R.id.tv_about_subtitle)).setText("安全出行 · LSPosed 模块 v" + ver);
         } catch (Throwable ignored) {}
-        findViewById(R.id.btn_donate).setOnClickListener(v -> showDonate());
+        // 出门踩坑指南
+        findViewById(R.id.btn_tips).setOnClickListener(v ->
+                startActivity(new Intent(this, TipsActivity.class)));
+        // GitHub 项目地址
+        findViewById(R.id.btn_github).setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk"));
+            startActivity(intent);
+        });
+        // 致敬名单
+        findViewById(R.id.btn_credits).setOnClickListener(v ->
+                startActivity(new Intent(this, AcknowledgementsActivity.class)));
+        // 支持捐赠（直接打开二维码页面）
+        findViewById(R.id.btn_donate).setOnClickListener(v ->
+                startActivity(new Intent(this, DonateQrActivity.class)));
         findViewById(R.id.btn_save_wallpaper).setOnClickListener(v -> saveWallpaper());
         findViewById(R.id.btn_lab).setOnLongClickListener(v -> {
             startActivity(new Intent(this, LabActivity.class));
@@ -190,6 +202,8 @@ public final class MainActivity extends Activity {
         e.putBoolean(SafeWalkPrefKey.enableRearCamera, swRearCam);
         e.putString(SafeWalkPrefKey.travelMode, travelMode);
         e.commit();
+        // 导出JSON文件给Hook端读
+        SafeWalkConfig.exportConfig(this);
     }
 
     private void refreshTileStatus() {
@@ -245,52 +259,6 @@ public final class MainActivity extends Activity {
         Toast.makeText(this, "未安装 LSPosed 管理器", Toast.LENGTH_SHORT).show();
     }
 
-    // ========== 踩坑指南标签页 ==========
-
-    private static final int[] GUIDE_TAB_IDS = {R.id.tab_preview, R.id.tab_job, R.id.tab_date, R.id.tab_party, R.id.tab_travel};
-    private static final int[] GUIDE_PANEL_IDS = {R.id.panel_preview, R.id.panel_job, R.id.panel_date, R.id.panel_party, R.id.panel_travel};
-    private static final String[] GUIDE_MODES = {"", "求职", "约会", "聚会", "旅游"};
-
-    private void setupGuideTabs() {
-        for (int i = 0; i < GUIDE_TAB_IDS.length; i++) {
-            final int idx = i;
-            findViewById(GUIDE_TAB_IDS[i]).setOnClickListener(v -> selectGuideTab(idx));
-        }
-        findViewById(R.id.btn_copy_all).setOnClickListener(v -> copyAllGuides());
-    }
-
-    private void selectGuideTab(int idx) {
-        curGuideTab = idx;
-        for (int j = 0; j < GUIDE_PANEL_IDS.length; j++) {
-            findViewById(GUIDE_PANEL_IDS[j]).setVisibility(j == idx ? View.VISIBLE : View.GONE);
-            TextView tab = findViewById(GUIDE_TAB_IDS[j]);
-            tab.setTextColor(j == idx ? 0xFF1B3A5C : 0xFF8B7D6B);
-            tab.setTypeface(null, j == idx ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
-        }
-        travelMode = GUIDE_MODES[idx];
-        saveConfig();
-    }
-
-    private void guideSwipe(int dir) {
-        int next = curGuideTab + dir;
-        if (next < 0) { switchTab(true); return; }  // 预览页继续右滑回首页
-        if (next >= GUIDE_TABS) return;
-        selectGuideTab(next);
-    }
-
-    private void copyAllGuides() {
-        StringBuilder sb = new StringBuilder();
-        String[] titles = {"【求职】", "【约会】", "【聚会】", "【旅游】"};
-        int[] contentIds = {R.id.panel_job, R.id.panel_date, R.id.panel_party, R.id.panel_travel};
-        for (int i = 0; i < titles.length; i++) {
-            sb.append(titles[i]).append("\n");
-            sb.append(((TextView) findViewById(contentIds[i])).getText()).append("\n\n");
-        }
-        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("踩坑指南", sb.toString()));
-        Toast.makeText(this, "已复制全部", Toast.LENGTH_SHORT).show();
-    }
-
     // ========== 左右滑动切页 ==========
 
     @Override
@@ -304,7 +272,7 @@ public final class MainActivity extends Activity {
                 float dy = ev.getY() - downY;
                 if (Math.abs(dx) > 120 && Math.abs(dx) > Math.abs(dy) * 2) {
                     if (onPage) {
-                        guideSwipe(dx > 0 ? -1 : 1);
+                        if (dx > 0) switchTab(true); // 关于页右滑回首页
                     } else if (dx < 0) {
                         switchTab(false); // 首页左滑进关于
                     }
