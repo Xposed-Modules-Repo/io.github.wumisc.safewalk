@@ -91,6 +91,18 @@ class RearCameraOverlay(private val ctx: Context) {
             }
         }
 
+        // 切换模式时重新设置圆角outline
+        tv?.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                if (currentMode == MODE_SMALLWINDOW) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(24).toFloat())
+                } else {
+                    outline.setRect(0, 0, view.width, view.height)
+                }
+            }
+        }
+        tv?.invalidateOutline()
+
         val lp = buildParams()
         try {
             Log.i(TAG, "准备 addView, type=${lp.type}")
@@ -106,15 +118,19 @@ class RearCameraOverlay(private val ctx: Context) {
     }
 
     private fun buildParams(): WindowManager.LayoutParams {
+        val statusBarH = getStatusBarHeight()
         return if (currentMode == MODE_FULLSCREEN) {
-            // 全屏 - 和最好版完全一致的参数
+            // 全屏 - 顶部预留状态栏安全区
             WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT - statusBarH,
                 2038, // TYPE_APPLICATION_OVERLAY
                 56,   // FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL
                 -3    // PixelFormat.TRANSLUCENT
-            )
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                y = statusBarH // 从状态栏下方开始
+            }
         } else {
             // 右下角小窗
             val w = dp(150)
@@ -127,13 +143,55 @@ class RearCameraOverlay(private val ctx: Context) {
             ).apply {
                 gravity = android.view.Gravity.TOP or android.view.Gravity.END
                 x = dp(12)
-                y = dp(100) // 避开状态栏
+                y = statusBarH + dp(12) // 避开状态栏，用真实状态栏高度
             }
         }
     }
 
     private fun dp(v: Int): Int {
         return Math.round(v * ctx.resources.displayMetrics.density)
+    }
+
+    /** 获取系统真实状态栏高度 */
+    private fun getStatusBarHeight(): Int {
+        return try {
+            val resourceId = ctx.resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (resourceId > 0) ctx.resources.getDimensionPixelSize(resourceId)
+            else dp(24) // 默认24dp
+        } catch (_: Throwable) {
+            dp(24)
+        }
+    }
+
+    /** 相机避让：检查前台是否是相机类APP，是则自动隐藏 */
+    fun checkCameraAvoidance() {
+        try {
+            // 用反射调用ActivityTaskManager，兼容低版本
+            val atmClass = Class.forName("android.app.ActivityTaskManager")
+            val getInstance = atmClass.getMethod("getInstance")
+            val atm = getInstance.invoke(null)
+            val getFocusedRootTaskInfo = atmClass.getMethod("getFocusedRootTaskInfo")
+            val info = getFocusedRootTaskInfo.invoke(atm)
+            val topActivityField = info?.javaClass?.getField("topActivity")
+            val topActivity = topActivityField?.get(info)
+            val packageNameField = topActivity?.javaClass?.getField("packageName")
+            val top = packageNameField?.get(topActivity) as? String ?: return
+
+            val cameraApps = setOf(
+                "com.android.camera",
+                "com.huawei.camera",
+                "com.miui.camera",
+                "com.xiaomi.camera",
+                "com.oplus.camera",
+                "com.vivo.camera",
+                "com.samsung.android.camera",
+                "com.oneplus.camera"
+            )
+            if (cameraApps.contains(top)) {
+                Log.i(TAG, "相机避让：前台是相机APP，自动隐藏")
+                hide()
+            }
+        } catch (_: Throwable) {}
     }
 
     private fun teardown() {
