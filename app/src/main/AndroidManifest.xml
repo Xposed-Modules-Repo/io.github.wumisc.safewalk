@@ -86,13 +86,13 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="SafeWalk 安全出行低功耗提醒。⚠️ 作用域只需勾选「系统框架（system）」即可。硬件计步检测，纯本地运行，低功耗。" />
+            android:value="SafeWalk 安全出行低功耗提醒。⚠️ 作用域只需勾选「系统界面（SystemUI）」，无需勾选系统框架。硬件计步检测，纯本地运行，低功耗。" />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
         <meta-data
             android:name="xposedscope"
-            android:value="android" />
+            android:value="com.android.systemui" />
     </application>
 
 </manifest>
