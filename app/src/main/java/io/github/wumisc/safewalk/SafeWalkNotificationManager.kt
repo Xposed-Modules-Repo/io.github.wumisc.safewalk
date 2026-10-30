@@ -37,7 +37,10 @@ class SafeWalkNotificationManager(private val ctx: Context) {
                 CHANNEL_ID, "SafeWalk出行提醒", NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "出行安全悬浮提醒，快捷按钮：手电筒、打开SafeWalk"
-                enableVibration(false)
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 200, 100, 200)
+                setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION), null)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
             (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(ch)

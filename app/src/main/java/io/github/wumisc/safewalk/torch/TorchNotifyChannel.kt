@@ -15,7 +15,10 @@ fun createTorchNotifyChannel(context: Context) {
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = "夜间出行手电筒悬浮提醒"
-            enableVibration(false)
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 200, 100, 200)
+            setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION), null)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         }
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(channel)

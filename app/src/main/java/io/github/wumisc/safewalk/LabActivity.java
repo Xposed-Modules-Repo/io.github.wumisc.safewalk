@@ -215,20 +215,19 @@ public class LabActivity extends Activity implements SensorEventListener {
     // ========== 手电悬浮通知测试 ==========
     private void testTorchNotify() {
         try {
-            // 先创建通道
+            // 先创建通道（高优先级+震动+声音，确保是悬浮通知）
             String ch = "safewalk_torch";
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "SafeWalk夜间手电", NotificationManager.IMPORTANCE_HIGH));
+            android.app.NotificationChannel channel = new android.app.NotificationChannel(ch, "SafeWalk夜间手电", NotificationManager.IMPORTANCE_HIGH);
+            channel.enableVibration(true);
+            channel.setVibrationPattern(new long[]{0, 200, 100, 200});
+            channel.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION), null);
+            nm.createNotificationChannel(channel);
 
             // 打开手电
             toggleTorch();
 
             // 构建带按钮的通知
-            android.app.PendingIntent openPi = android.app.PendingIntent.getBroadcast(
-                this, 100,
-                new Intent("io.github.wumisc.safewalk.OPEN_TORCH").setPackage(getPackageName()),
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-            );
             android.app.PendingIntent closePi = android.app.PendingIntent.getBroadcast(
                 this, 200,
                 new Intent("io.github.wumisc.safewalk.CLOSE_TORCH").setPackage(getPackageName()),
@@ -241,6 +240,7 @@ public class LabActivity extends Activity implements SensorEventListener {
                 .setContentText("已长时间静置，记得及时关闭手电节约电量")
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setCategory(Notification.CATEGORY_REMINDER)
+                .setDefaults(Notification.DEFAULT_ALL)
                 .setTimeoutAfter(60_000)
                 .addAction(new Notification.Action.Builder(
                     android.R.drawable.ic_menu_close_clear_cancel, "关闭手电", closePi

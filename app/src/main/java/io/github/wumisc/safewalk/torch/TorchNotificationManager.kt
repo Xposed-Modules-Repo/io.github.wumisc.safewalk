@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.hardware.camera2.CameraManager
 import androidx.core.app.NotificationCompat
+import io.github.wumisc.safewalk.MainActivity
 
 /**
  * 手电筒通知管理器：
@@ -52,15 +53,29 @@ class TorchNotificationManager(private val context: Context) {
      * 刷新手电通知，根据当前状态动态切换按钮文字
      */
     fun refreshNotification() {
-        val openIntent = Intent(ACTION_OPEN_TORCH).apply { setPackage(context.packageName) }
-        val openPi = PendingIntent.getBroadcast(
-            context, 100, openIntent,
+        // 点击通知主体 → 打开SafeWalk主页
+        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openAppPi = PendingIntent.getActivity(
+            context, 0, openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val closeIntent = Intent(ACTION_CLOSE_TORCH).apply { setPackage(context.packageName) }
-        val closePi = PendingIntent.getBroadcast(
-            context, 200, closeIntent,
+        // 按钮：启动Service处理手电开关（绕开广播，LSP环境下更稳）
+        val turnOnIntent = Intent(context, TorchActionService::class.java).apply {
+            putExtra(TorchActionService.EXTRA_TORCH_ACTION, TorchActionService.ACTION_TURN_ON)
+        }
+        val turnOnPi = PendingIntent.getService(
+            context, 100, turnOnIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val turnOffIntent = Intent(context, TorchActionService::class.java).apply {
+            putExtra(TorchActionService.EXTRA_TORCH_ACTION, TorchActionService.ACTION_TURN_OFF)
+        }
+        val turnOffPi = PendingIntent.getService(
+            context, 200, turnOffIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -68,6 +83,8 @@ class TorchNotificationManager(private val context: Context) {
             .setSmallIcon(context.applicationInfo.icon)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(Notification.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(openAppPi)
             .setTimeoutAfter(60 * 1000L)
 
         if (torchIsOn) {
@@ -78,7 +95,7 @@ class TorchNotificationManager(private val context: Context) {
                     NotificationCompat.Action.Builder(
                         context.applicationInfo.icon,
                         "关闭手电",
-                        closePi
+                        turnOffPi
                     ).build()
                 )
         } else {
@@ -89,7 +106,7 @@ class TorchNotificationManager(private val context: Context) {
                     NotificationCompat.Action.Builder(
                         context.applicationInfo.icon,
                         "打开手电",
-                        openPi
+                        turnOnPi
                     ).build()
                 )
         }

@@ -60,6 +60,11 @@
             android:exported="false"
             android:label="出门踩坑指南" />
 
+        <activity
+            android:name=".TorchStaticSettingsActivity"
+            android:exported="false"
+            android:label="手电静置提醒设置" />
+
         <!-- 手电筒通知按钮广播接收器 -->
         <receiver
             android:name=".torch.TorchActionReceiver"
@@ -69,6 +74,11 @@
                 <action android:name="io.github.wumisc.safewalk.CLOSE_TORCH"/>
             </intent-filter>
         </receiver>
+
+        <!-- 手电筒动作处理Service -->
+        <service
+            android:name=".torch.TorchActionService"
+            android:exported="false" />
 
         <!-- LSPosed 模块声明 -->
         <meta-data

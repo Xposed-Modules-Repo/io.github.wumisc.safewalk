@@ -91,8 +91,6 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 torchNotifyManager = TorchNotificationManager(ctx!!)
                 torchNotifyManager?.startMonitor()
                 torchReminder = TorchStaticReminder(torchNotifyManager!!, ctx!!)
-                // 绑定步态回调（注：当前GaitDetector只在verifyGait时临时采样，
-                // 要实现持续静置提醒需要改为持续监听加速度传感器）
 
                 // 注册计步器
                 sm?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {

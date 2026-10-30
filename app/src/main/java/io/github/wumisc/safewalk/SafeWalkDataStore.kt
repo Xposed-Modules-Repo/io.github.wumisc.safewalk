@@ -38,6 +38,10 @@ object SafeWalkPrefKey {
     const val stepThreshold = "stepThreshold"    // 触发步数阈值
     const val staticResetSec = "staticResetSec"  // 静置多少秒重置
 
+    // ===== 手电筒静置提醒 =====
+    /** 手电静置提醒时间（分钟）：手电开着+静置多久后弹提醒 */
+    const val torchStaticMinutes = "torchStaticMinutes"
+
     // 急救卡
     const val emerName = "emerName"
     const val emerBlood = "emerBlood"
