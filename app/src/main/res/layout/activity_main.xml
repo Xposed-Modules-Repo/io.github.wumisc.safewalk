@@ -190,6 +190,75 @@
                     android:orientation="horizontal"
                     android:weightSum="2">
 
+                    <!-- 夜间手电 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/tile_night_torch"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_margin="6dp"
+                        app:cardBackgroundColor="@color/card_bg"
+                        app:cardCornerRadius="16dp"
+                        app:cardElevation="0dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:strokeWidth="1dp"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="16dp">
+                            <LinearLayout
+                                android:layout_width="44dp"
+                                android:layout_height="44dp"
+                                android:background="@drawable/icon_frame_teal"
+                                android:gravity="center">
+                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🔦" android:textSize="22sp" />
+                            </LinearLayout>
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="夜间手电" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
+                            <TextView android:id="@+id/tile_night_torch_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- 后置看路 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/tile_rear_cam"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_margin="6dp"
+                        app:cardBackgroundColor="@color/card_bg"
+                        app:cardCornerRadius="16dp"
+                        app:cardElevation="0dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:strokeWidth="1dp"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="16dp">
+                            <LinearLayout
+                                android:layout_width="44dp"
+                                android:layout_height="44dp"
+                                android:background="@drawable/icon_frame_orange"
+                                android:gravity="center">
+                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="📷" android:textSize="22sp" />
+                            </LinearLayout>
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="后置看路" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
+                            <TextView android:id="@+id/tile_rear_cam_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:weightSum="2">
+
                     <!-- 社交礼仪 -->
                     <com.google.android.material.card.MaterialCardView
                         android:id="@+id/tile_safety"
@@ -273,6 +342,7 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/tv_about_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="关于"
@@ -416,21 +486,6 @@
             </LinearLayout>
         </ScrollView>
 
-        <!-- 右下角浮窗壁纸（长按隐藏） -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/floating_wallpaper"
-            android:layout_width="110dp"
-            android:layout_height="155dp"
-            android:layout_gravity="bottom|end"
-            android:layout_margin="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="6dp">
-            <ImageView
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:src="@drawable/bg_about_wallpaper" />
-        </com.google.android.material.card.MaterialCardView>
     </FrameLayout>
 
     <!-- 底部导航 -->

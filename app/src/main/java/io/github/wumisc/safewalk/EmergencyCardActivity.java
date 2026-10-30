@@ -19,7 +19,8 @@ public class EmergencyCardActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_emergency);
-        sp = getSharedPreferences("safewalk_emergency", MODE_PRIVATE);
+        // 急救卡数据存到 safewalk_xsp（MODE_WORLD_READABLE），与其他配置统一
+        sp = getSharedPreferences("safewalk_xsp", MODE_WORLD_READABLE);
 
         etName = findViewById(R.id.et_name);
         etBlood = findViewById(R.id.et_blood);
@@ -27,20 +28,20 @@ public class EmergencyCardActivity extends Activity {
         etAddress = findViewById(R.id.et_address);
         etContact = findViewById(R.id.et_contact);
 
-        etName.setText(sp.getString("name", ""));
-        etBlood.setText(sp.getString("blood", ""));
-        etPhone.setText(sp.getString("phone", ""));
-        etAddress.setText(sp.getString("address", ""));
-        etContact.setText(sp.getString("contact", ""));
+        etName.setText(sp.getString(SafeWalkPrefKey.emerName, ""));
+        etBlood.setText(sp.getString(SafeWalkPrefKey.emerBlood, ""));
+        etPhone.setText(sp.getString(SafeWalkPrefKey.emerContactPhone, ""));
+        etAddress.setText(sp.getString(SafeWalkPrefKey.emerAddress, ""));
+        etContact.setText(sp.getString(SafeWalkPrefKey.emerContactName, ""));
 
         Button btnSave = findViewById(R.id.btn_save_emergency);
         btnSave.setOnClickListener(v -> {
             sp.edit()
-                    .putString("name", etName.getText().toString())
-                    .putString("blood", etBlood.getText().toString())
-                    .putString("phone", etPhone.getText().toString())
-                    .putString("address", etAddress.getText().toString())
-                    .putString("contact", etContact.getText().toString())
+                    .putString(SafeWalkPrefKey.emerName, etName.getText().toString())
+                    .putString(SafeWalkPrefKey.emerBlood, etBlood.getText().toString())
+                    .putString(SafeWalkPrefKey.emerContactPhone, etPhone.getText().toString())
+                    .putString(SafeWalkPrefKey.emerAddress, etAddress.getText().toString())
+                    .putString(SafeWalkPrefKey.emerContactName, etContact.getText().toString())
                     .apply();
             Toast.makeText(this, "急救卡已保存", Toast.LENGTH_SHORT).show();
         });

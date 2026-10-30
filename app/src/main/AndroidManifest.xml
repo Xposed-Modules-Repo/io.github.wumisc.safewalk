@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- 相机/闪光灯非必需，避免没闪光灯的设备装不上 -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+
     <application
         android:label="安全出行"
         android:icon="@mipmap/ic_launcher"
@@ -35,6 +39,11 @@
             android:name=".LabActivity"
             android:exported="false"
             android:label="功能实验区" />
+
+        <activity
+            android:name=".RearCamSettingsActivity"
+            android:exported="false"
+            android:label="后置看路设置" />
 
         <!-- LSPosed 模块声明 -->
         <meta-data

@@ -181,9 +181,15 @@ public class LabActivity extends Activity implements SensorEventListener {
     private void toggleTorch() {
         try {
             android.hardware.camera2.CameraManager cm = (android.hardware.camera2.CameraManager) getSystemService(CAMERA_SERVICE);
-            String id = cm.getCameraIdList()[0];
+            String flashId = null;
+            for (String id : cm.getCameraIdList()) {
+                android.hardware.camera2.CameraCharacteristics props = cm.getCameraCharacteristics(id);
+                Boolean hasFlash = props.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                if (hasFlash != null && hasFlash) { flashId = id; break; }
+            }
+            if (flashId == null) { log("无闪光灯"); return; }
             torchOn = !torchOn;
-            cm.setTorchMode(id, torchOn);
+            cm.setTorchMode(flashId, torchOn);
             log("手电筒: " + (torchOn ? "开" : "关"));
         } catch (Throwable t) { log("手电筒失败: " + t.getMessage()); }
     }

@@ -8,6 +8,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import de.robv.android.xposed.IXposedHookLoadPackage
@@ -15,57 +16,82 @@ import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 /**
- * SafeWalk LSP 低功耗状态机 + 步态判定。
+ * SafeWalk LSPosed 状态机 + 步态判定。
  * 仅 Hook 系统进程 android。
+ *
+ * 状态机：SLEEP → LIGHT_MONITOR（有步数）→ VERIFYING（步态校验）→ 触发提醒 → SLEEP
  */
 class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     private enum class State { SLEEP, LIGHT_MONITOR, VERIFYING }
 
+    // ========== 运行时状态 ==========
     private var state = State.SLEEP
     private var xsp: XSharedPreferences? = null
     private var nm: SafeWalkNotificationManager? = null
     private var sm: SensorManager? = null
     private var ctx: Context? = null
+    private var rearCam: RearCameraOverlay? = null
 
+    // ========== 时间戳（冷却用） ==========
     private val steps = mutableListOf<Long>()
     private var lastStepTs = 0L
     private var lastIdRemindTs = 0L
     private var lastSitRemindTs = 0L
     private var lastTriggerTs = 0L
     private var lastBatteryWarnTs = 0L
-    private var batteryReceiverRegistered = false
     private var verifyStartTs = 0L
+    private var batteryReceiverRegistered = false
 
-    private val WINDOW_MS = 5 * 60 * 1000L
-    private val TRIGGER_COOLDOWN = 5 * 60 * 1000L // 触发后5分钟冷却
-    private fun threshold(): Int = xsp?.getInt(SafeWalkPrefKey.stepThreshold, 800) ?: 800
-    private fun staticResetMs(): Long = ((xsp?.getInt(SafeWalkPrefKey.staticResetSec, 180) ?: 180) * 1000L)
-    private fun masterEnable(): Boolean = xsp?.getBoolean("masterEnable", true) ?: true
+    // ========== 常量 ==========
+    companion object {
+        const val WINDOW_MS = 5 * 60 * 1000L        // 5分钟滑动窗口
+        const val TRIGGER_COOLDOWN = 5 * 60 * 1000L // 触发后5分钟冷却
+        const val VERIFY_TIMEOUT_MS = 6_000L        // VERIFYING 超时兜底
+        const val SIT_REMIND_MS = 2 * 60 * 60 * 1000L  // 久坐2小时
+        const val DAILY_COOLDOWN = 24 * 60 * 60 * 1000L // 每日冷却
+        const val BATTERY_COOLDOWN = 60 * 60 * 1000L   // 电量1小时冷却
+        const val NIGHT_START_HOUR = 22  // 夜间开始
+        const val NIGHT_END_HOUR = 6      // 夜间结束
 
+        /** 手电筒广播 Action */
+        const val ACTION_TORCH_TOGGLE = "io.github.wumisc.safewalk.TORCH_TOGGLE"
+    }
+
+    // ========== 配置读取（统一入口） ==========
+    private fun pref(key: String, default: Boolean): Boolean = xsp?.getBoolean(key, default) ?: default
+    private fun pref(key: String, default: Int): Int = xsp?.getInt(key, default) ?: default
+    private fun pref(key: String, default: String): String = xsp?.getString(key, default) ?: default
+
+    private fun masterEnabled() = pref(SafeWalkPrefKey.masterEnable, true)
+    private fun stepThreshold() = pref(SafeWalkPrefKey.stepThreshold, 800)
+    private fun staticResetMs() = pref(SafeWalkPrefKey.staticResetSec, 180) * 1000L
+
+    // ========== Hook 入口 ==========
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
         if (lp.packageName != "android") return
 
-        // 延迟拿到 context，系统进程启动早期 currentApplication 可能为 null
         Handler(Looper.getMainLooper()).postDelayed({
             try {
-                ctx = getSystemContext()
-                if (ctx == null) return@postDelayed
-
+                ctx = getSystemContext() ?: return@postDelayed
                 xsp = XSharedPreferences("io.github.wumisc.safewalk", "safewalk_xsp")
                 nm = SafeWalkNotificationManager(ctx!!)
                 sm = ctx!!.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+                rearCam = RearCameraOverlay(ctx!!)
 
+                // 注册计步器
                 sm?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {
                     sm?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
                 }
 
+                // 注册广播接收器
                 if (!batteryReceiverRegistered) {
-                    registerBattery(ctx!!)
-                    registerTorchReceiver(ctx!!)
+                    registerBatteryReceiver()
+                    registerTorchReceiver()
                     batteryReceiverRegistered = true
                 }
 
+                // 定时检查循环
                 Handler(Looper.getMainLooper()).postDelayed(object : Runnable {
                     override fun run() {
                         try { check() } catch (_: Throwable) {}
@@ -76,6 +102,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         }, 2_000L)
     }
 
+    // ========== 传感器回调 ==========
     override fun onSensorChanged(e: SensorEvent?) {
         if (e?.sensor?.type == Sensor.TYPE_STEP_DETECTOR) {
             val now = System.currentTimeMillis()
@@ -88,27 +115,26 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     override fun onAccuracyChanged(s: Sensor?, a: Int) {}
 
+    // ========== 定时检查 ==========
     private fun check() {
-        if (!masterEnable()) return
-
+        if (!masterEnabled()) return
         val now = System.currentTimeMillis()
         xsp?.reload()
 
-        // VERIFYING超时兜底：超过6秒还没结束，回LIGHT_MONITOR
-        if (state == State.VERIFYING && now - verifyStartTs > 6000) {
+        // VERIFYING 超时兜底
+        if (state == State.VERIFYING && now - verifyStartTs > VERIFY_TIMEOUT_MS) {
             state = State.LIGHT_MONITOR
             steps.clear()
         }
 
-        // 静置重置
-        if (now - lastStepTs > staticResetMs()) {
+        // 静置重置：无持续位移 → 判定室内停留，不触发外出提醒
+        if (lastStepTs == 0L || now - lastStepTs > staticResetMs()) {
             steps.clear()
-            // 久坐提醒：2小时没动过
-            if (now - lastStepTs > 2 * 60 * 60 * 1000L && now - lastSitRemindTs > 24 * 60 * 60 * 1000L) {
-                if (xsp?.getBoolean(SafeWalkPrefKey.enableSitHealthRemind, true) == true) {
-                    nm?.sitRemind()
-                    lastSitRemindTs = now
-                }
+            checkSitRemind(now)
+            // 自动模式：停下自动收起后置看路
+            if (pref(SafeWalkPrefKey.enableRearCamera, false)
+                && pref(SafeWalkPrefKey.rearCamAuto, true)) {
+                rearCam?.hide()
             }
             state = State.SLEEP
             return
@@ -119,20 +145,32 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 触发冷却
         if (now - lastTriggerTs < TRIGGER_COOLDOWN) return
 
-        if (steps.size >= threshold() && state == State.LIGHT_MONITOR) {
+        // 步数达标 → 开始步态校验
+        if (steps.size >= stepThreshold() && state == State.LIGHT_MONITOR) {
             state = State.VERIFYING
             verifyStartTs = now
             verifyGait()
         }
     }
 
+    /** 久坐提醒：必须先有过步数记录，否则首次启动误触发 */
+    private fun checkSitRemind(now: Long) {
+        if (lastStepTs == 0L) return
+        if (now - lastStepTs > SIT_REMIND_MS && now - lastSitRemindTs > DAILY_COOLDOWN) {
+            if (pref(SafeWalkPrefKey.enableSitHealthRemind, true)) {
+                nm?.sitRemind()
+                lastSitRemindTs = now
+            }
+        }
+    }
+
+    // ========== 步态校验 ==========
     private val gait = GaitDetector()
 
     private fun verifyGait() {
         val s = sm ?: return
         val acc = s.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: run {
-            state = State.LIGHT_MONITOR
-            return
+            state = State.LIGHT_MONITOR; return
         }
         gait.reset()
         val end = System.currentTimeMillis() + 4000
@@ -151,37 +189,47 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         }, acc, SensorManager.SENSOR_DELAY_GAME)
     }
 
+    /** 确认持续步行 → 触发所有外出提醒 */
     private fun triggerMovement() {
         xsp?.reload()
-        lastTriggerTs = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastTriggerTs = now
         steps.clear()
+        state = State.SLEEP
 
-        val enableId = xsp?.getBoolean(SafeWalkPrefKey.enableIdReminder, true) ?: true
-        val mode = xsp?.getString(SafeWalkPrefKey.travelMode, "求职") ?: "求职"
-
-        if (enableId && System.currentTimeMillis() - lastIdRemindTs > 24 * 60 * 60 * 1000L) {
+        // 1. 证件提醒（每日最多1次）
+        if (pref(SafeWalkPrefKey.enableIdReminder, true) && now - lastIdRemindTs > DAILY_COOLDOWN) {
             nm?.idReminder()
-            lastIdRemindTs = System.currentTimeMillis()
+            lastIdRemindTs = now
         }
 
-        val enableSocial = xsp?.getBoolean(SafeWalkPrefKey.enableSocialTipCard, true) ?: true
-        if (enableSocial) {
-            when (mode) {
+        // 2. 社交礼仪提示（按出行模式）
+        if (pref(SafeWalkPrefKey.enableSocialTipCard, true)) {
+            when (pref(SafeWalkPrefKey.travelMode, "求职")) {
                 "约会" -> nm?.socialTip("守时，不打探隐私，提前商量消费方式")
                 "聚会" -> nm?.socialTip("不强行劝酒，AA制，离场打招呼")
             }
         }
 
-        // 夜间（22:00~06:00）走路 → 提醒开手电
-        val cal = java.util.Calendar.getInstance()
-        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-        if (hour >= 22 || hour < 6) {
+        // 3. 夜间手电提醒
+        if (isNightTime() && pref(SafeWalkPrefKey.enableNightTorch, true)) {
             nm?.flashlightSuggest()
         }
 
-        state = State.SLEEP
+        // 4. 后置看路：自动模式下，确认持续步行后自动打开
+        if (pref(SafeWalkPrefKey.enableRearCamera, false)
+            && pref(SafeWalkPrefKey.rearCamAuto, true)) {
+            val mode = pref(SafeWalkPrefKey.rearCamMode, RearCameraOverlay.MODE_FULLSCREEN)
+            rearCam?.show(mode)
+        }
     }
 
+    private fun isNightTime(): Boolean {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR
+    }
+
+    // ========== 工具：反射拿系统Context ==========
     private fun getSystemContext(): Context? {
         return try {
             val at = Class.forName("android.app.ActivityThread")
@@ -190,39 +238,57 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         } catch (_: Throwable) { null }
     }
 
-    private fun registerBattery(context: Context) {
+    // ========== 电量广播接收器 ==========
+    private fun registerBatteryReceiver() {
         try {
-            context.registerReceiver(object : android.content.BroadcastReceiver() {
+            val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(c: Context?, i: Intent?) {
                     xsp?.reload()
-                    if (!(xsp?.getBoolean(SafeWalkPrefKey.enableBatteryWarning, true) ?: true)) return
+                    if (!pref(SafeWalkPrefKey.enableBatteryWarning, true)) return
                     val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, 100) ?: 100
                     val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
                     if (level * 100 / scale <= 15) {
                         val now = System.currentTimeMillis()
-                        if (now - lastBatteryWarnTs > 60 * 60 * 1000L) { // 1小时冷却
+                        if (now - lastBatteryWarnTs > BATTERY_COOLDOWN) {
                             nm?.batteryWarning()
                             lastBatteryWarnTs = now
                         }
                     }
                 }
-            }, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            }
+            ctx?.registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), Context.RECEIVER_NOT_EXPORTED)
         } catch (_: Throwable) {}
     }
 
+    // ========== 手电筒广播接收器 ==========
     private var torchOn = false
-    private fun registerTorchReceiver(context: Context) {
+    private fun registerTorchReceiver() {
         try {
-            context.registerReceiver(object : android.content.BroadcastReceiver() {
+            val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(c: Context?, i: Intent?) {
                     try {
-                        val cm = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-                        val id = cm.cameraIdList[0]
-                        torchOn = !torchOn
-                        cm.setTorchMode(id, torchOn)
-                    } catch (_: Throwable) {}
+                        android.util.Log.i("SafeWalk", "手电广播收到")
+                        toggleTorch(ctx ?: return)
+                    } catch (t: Throwable) { android.util.Log.e("SafeWalk", "手电失败", t) }
                 }
-            }, IntentFilter("io.github.wumisc.safewalk.TORCH_TOGGLE"))
+            }
+            val filter = IntentFilter(ACTION_TORCH_TOGGLE)
+            // 仅本模块自用广播，RECEIVER_NOT_EXPORTED 更安全稳定
+            ctx?.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } catch (_: Throwable) {}
+    }
+
+    /** 切换手电筒：找到首个带闪光灯的摄像头，切换 torchOn 状态 */
+    private fun toggleTorch(context: Context) {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager ?: return
+        val flashId = cm.cameraIdList.firstOrNull { id ->
+            cm.getCameraCharacteristics(id)[android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE] == true
+        } ?: run {
+            android.util.Log.w("SafeWalk", "无闪光灯")
+            return
+        }
+        torchOn = !torchOn
+        cm.setTorchMode(flashId, torchOn)
+        android.util.Log.i("SafeWalk", "手电筒: $torchOn")
     }
 }

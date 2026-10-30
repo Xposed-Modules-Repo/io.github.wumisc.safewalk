@@ -72,7 +72,7 @@ class GaitDetector {
         updateAttitude(gravityX, gravityY, gravityZ)
 
         magWindow.add(mag)
-        while (magWindow.size > MotionConfig.ADAPT_WINDOW_SIZE) magWindow.removeFirst()
+        while (magWindow.size > MotionConfig.ADAPT_WINDOW_SIZE) magWindow.removeAt(0)
         updateAdaptiveThreshold()
 
         // 平躺时阈值放大1.45倍，更难触发
@@ -88,7 +88,7 @@ class GaitDetector {
                 val freq = 1000.0 / interval
                 if (freq in MotionConfig.MIN_STEP_FREQ..MotionConfig.MAX_STEP_FREQ) {
                     peakIntervals.add(interval)
-                    if (peakIntervals.size > 3) peakIntervals.removeFirst()
+                    if (peakIntervals.size > 3) peakIntervals.removeAt(0)
                     lastPeakTime = now
                     return true
                 }

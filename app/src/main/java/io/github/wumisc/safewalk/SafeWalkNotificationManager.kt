@@ -7,8 +7,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 
 /**
- * 通知管理器：电量、证件、久坐、社交礼仪提醒。
- * 全部本地，不上传网络。
+ * 通知管理器：全部走超级岛（PRIORITY_HIGH heads-up）。
  */
 class SafeWalkNotificationManager(private val ctx: Context) {
 
@@ -33,40 +32,43 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         }
     }
 
-    fun showNotify(id: Int, title: String, msg: String) {
-        val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
+    private fun baseBuilder(title: String, msg: String): NotificationCompat.Builder {
+        return NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(msg)
             .setStyle(NotificationCompat.BigTextStyle().bigText(msg))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)  // 超级岛
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setTimeoutAfter(60_000)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND)
+    }
+
+    private fun notify(id: Int, b: NotificationCompat.Builder) {
         (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, b.build())
     }
 
-    fun batteryWarning() = showNotify(ID_BATTERY, "SafeWalk 电量预警", "快没电了，赶紧找个充电宝或就近充电。")
+    fun batteryWarning() = notify(ID_BATTERY, baseBuilder("SafeWalk 电量预警", "快没电了，赶紧找个充电宝或就近充电。"))
 
-    fun idReminder() = showNotify(ID_IDCARD, "SafeWalk 证件提醒", "身份证、护照等重要证件一定要贴身放好。")
+    fun idReminder() = notify(ID_IDCARD, baseBuilder("SafeWalk 证件提醒", "身份证、护照等重要证件一定要贴身放好。"))
 
-    fun sitRemind() = showNotify(ID_SIT, "SafeWalk 久坐提醒", "已坐了2小时了，该起来运动运动了。")
+    fun sitRemind() = notify(ID_SIT, baseBuilder("SafeWalk 久坐提醒", "已坐了2小时了，该起来运动运动了。"))
 
-    fun socialTip(text: String) = showNotify(ID_SOCIAL, "SafeWalk 社交提示", text)
+    fun socialTip(text: String) = notify(ID_SOCIAL, baseBuilder("SafeWalk 社交提示", text))
 
+    /** 夜间手电通知：超级岛带按钮，点按钮直接开手电筒 */
     fun flashlightSuggest() {
-        val intent = android.content.Intent("io.github.wumisc.safewalk.TORCH_TOGGLE").setPackage(ctx.packageName)
+        val intent = android.content.Intent(SafeWalkLSPHook.ACTION_TORCH_TOGGLE)
         val pi = android.app.PendingIntent.getBroadcast(ctx, 0, intent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
-        val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
+
+        val b = baseBuilder("SafeWalk 夜间照明", "天黑了，点按钮开手电筒照亮前路")
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("SafeWalk 夜间照明")
-            .setContentText("天黑了，点此开启手电筒照亮前路")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("天黑了，走路小心，点下方按钮开启手电筒"))
             .setContentIntent(pi)
             .addAction(android.R.drawable.ic_media_play, "开手电筒", pi)
-            .setAutoCancel(true)
             .setTimeoutAfter(120_000)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(ID_TORCH, b.build())
+
+        notify(ID_TORCH, b)
     }
 }
