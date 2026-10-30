@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.content.Intent;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -95,6 +96,8 @@ public class LabActivity extends Activity implements SensorEventListener {
         root.addView(btn("社交礼仪", v -> { testNotify("社交提示", "守时，不打探隐私，不强行劝酒"); log("社交礼仪"); }));
         root.addView(btn("手电筒开关", v -> toggleTorch()));
         root.addView(btn("夜间手电通知", v -> { testNotify("夜间照明", "天黑了，走路小心，建议开启手电筒照亮前路"); log("夜间手电通知"); }));
+        root.addView(btn("🔦 手电悬浮通知测试", v -> testTorchNotify()));
+        root.addView(btn("🔦 关闭手电悬浮通知", v -> dismissTorchNotify()));
         root.addView(btn("模拟出门触发", v -> { testNotify("出门提醒", "检测到持续步行，证件已贴身放好？"); log("模拟出门触发"); }));
 
         root.addView(label("—— 调试日志 ——"));
@@ -206,6 +209,53 @@ public class LabActivity extends Activity implements SensorEventListener {
                     .setAutoCancel(true).setTimeoutAfter(60_000).build();
             nm.notify((int) System.currentTimeMillis() % 10000, n);
             log("通知: " + title);
+        } catch (Throwable t) { log("失败: " + t.getMessage()); }
+    }
+
+    // ========== 手电悬浮通知测试 ==========
+    private void testTorchNotify() {
+        try {
+            // 先创建通道
+            String ch = "safewalk_torch";
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "SafeWalk夜间手电", NotificationManager.IMPORTANCE_HIGH));
+
+            // 打开手电
+            toggleTorch();
+
+            // 构建带按钮的通知
+            android.app.PendingIntent openPi = android.app.PendingIntent.getBroadcast(
+                this, 100,
+                new Intent("io.github.wumisc.safewalk.OPEN_TORCH").setPackage(getPackageName()),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+            );
+            android.app.PendingIntent closePi = android.app.PendingIntent.getBroadcast(
+                this, 200,
+                new Intent("io.github.wumisc.safewalk.CLOSE_TORCH").setPackage(getPackageName()),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+            );
+
+            Notification n = new Notification.Builder(this, ch)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle("手电筒已开启")
+                .setContentText("已长时间静置，记得及时关闭手电节约电量")
+                .setPriority(Notification.PRIORITY_HIGH)
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setTimeoutAfter(60_000)
+                .addAction(new Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel, "关闭手电", closePi
+                ).build())
+                .build();
+            nm.notify(2003, n);
+            log("手电悬浮通知已弹出");
+        } catch (Throwable t) { log("手电通知失败: " + t.getMessage()); }
+    }
+
+    private void dismissTorchNotify() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.cancel(2003);
+            log("手电通知已关闭");
         } catch (Throwable t) { log("失败: " + t.getMessage()); }
     }
 

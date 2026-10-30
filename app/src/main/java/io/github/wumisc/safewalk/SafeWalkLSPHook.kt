@@ -152,8 +152,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 rearCam?.hide()
             }
             state = State.SLEEP
+            // 通知手电筒提醒器：现在是静置状态
+            torchReminder?.onLongStaticDetected(true)
             return
         }
+
+        // 有步数 → 不是静置，通知手电筒提醒器
+        torchReminder?.onLongStaticDetected(false)
 
         steps.removeAll { it < now - WINDOW_MS }
 

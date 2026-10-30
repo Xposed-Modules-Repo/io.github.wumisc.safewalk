@@ -5,6 +5,8 @@ import android.graphics.PixelFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.SurfaceHolder
@@ -31,6 +33,7 @@ class RearCameraOverlay(private val ctx: Context) {
         private const val TAG = "SafeWalk-Cam"
         const val MODE_FULLSCREEN = "fullscreen"
         const val MODE_SMALLWINDOW = "smallwindow"
+        private const val RESUME_DELAY_MS = 90_000L  // 避让后冷却90秒再恢复
     }
 
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -41,6 +44,11 @@ class RearCameraOverlay(private val ctx: Context) {
     private var overlayLayout: FrameLayout? = null
     private var isShowing = false
     private var currentMode = MODE_FULLSCREEN
+
+    // 相机避让相关
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var isCameraBlocked = false  // 是否被相机类APP抢占
+    private var shouldResumeAfterBlock = false  // 被抢占前是否在显示（用于恢复）
 
     /** 找后置摄像头（背面、非前置） */
     private fun findRearCamera(): String? {
@@ -71,6 +79,21 @@ class RearCameraOverlay(private val ctx: Context) {
                 override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
                     cameraDevice?.close()
                     cameraDevice = null
+                    // 相机被抢（相机类APP打开）→ 自动避让隐藏
+                    if (isShowing && !isCameraBlocked) {
+                        Log.i(TAG, "相机被抢占，自动避让隐藏")
+                        isCameraBlocked = true
+                        shouldResumeAfterBlock = true
+                        hide()
+                        // 90秒后尝试恢复
+                        mainHandler.postDelayed({
+                            if (shouldResumeAfterBlock && !isCameraBlocked) {
+                                Log.i(TAG, "避让结束，尝试恢复显示")
+                                show(currentMode)
+                            }
+                            shouldResumeAfterBlock = false
+                        }, RESUME_DELAY_MS)
+                    }
                 }
                 override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
                     cameraDevice?.close()
@@ -219,6 +242,14 @@ class RearCameraOverlay(private val ctx: Context) {
     }
 
     fun isShowing() = isShowing
+
+    /**
+     * 解除相机阻塞状态（外部检测到用户切回非相机APP时调用）
+     */
+    fun unblockCamera() {
+        isCameraBlocked = false
+        Log.i(TAG, "解除相机阻塞")
+    }
 
     /** 获取状态栏高度 */
     private fun getStatusBarHeight(): Int {
