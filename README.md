@@ -116,6 +116,14 @@ SafeWalk 是面向 HyperOS / Android 的 LSPosed 出行感知模块，实现不�
 6. **p-v/Android-SensorService** — Android 后台传感器监听、系统采样节流、丢采样容错、前台服务适配方案，适配国内定制 ROM 后台限制。
 7. **UrbanBigDataCentre/meowmotion** — GPS 轨迹分割、停留/移动分类、连续位移校验逻辑，用于离线导出轨迹日志调参。
 
+此外，本项目还参考学习了以下 HyperOS / 传感器相关开源项目，由衷感谢各位开发者的公开分享：
+
+8. **HyperBridge** — HyperOS 超级岛自定义通知卡片引擎思路
+9. **WidgetEnhancer** — 通知快捷按钮、系统手电筒实现思路
+10. **HyperLight** — HyperOS 悬浮通知相关研究
+11. **SensorFusion** — 传感器姿态融合、自适应阈值算法
+12. **AccStepCounter** — 低功耗计步滤波实现
+
 > 声明：SafeWalk 所有代码为独立手写重构，仅借鉴思路与算法原理，没有直接拷贝上述项目源码。
 
 ---

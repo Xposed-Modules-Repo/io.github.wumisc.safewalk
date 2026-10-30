@@ -124,8 +124,16 @@ public final class MainActivity extends Activity {
         findViewById(R.id.tile_night_torch).setOnClickListener(v -> toggleNightTorch());
         // 后置看路：短按开关，长按进设置页
         findViewById(R.id.tile_rear_cam).setOnClickListener(v -> toggleRearCam());
-        findViewById(R.id.tile_rear_cam).setOnLongClickListener(v -> {
-            startActivity(new Intent(this, RearCamSettingsActivity.class));
+        // 后置看路：长按进设置页
+        View tileRearCam = findViewById(R.id.tile_rear_cam);
+        tileRearCam.setLongClickable(true);
+        tileRearCam.setOnLongClickListener(v -> {
+            Toast.makeText(this, "长按触发，打开设置页", Toast.LENGTH_SHORT).show();
+            try {
+                startActivity(new Intent(this, RearCamSettingsActivity.class));
+            } catch (Exception e) {
+                Toast.makeText(this, "打开失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
             return true;
         });
         findViewById(R.id.tile_emergency).setOnClickListener(v ->
