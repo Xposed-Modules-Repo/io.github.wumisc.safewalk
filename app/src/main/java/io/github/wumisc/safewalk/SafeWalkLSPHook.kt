@@ -80,6 +80,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     // ========== Hook 入口 ==========
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
+        Log.i("SafeWalk", "===== Hook 加载到进程: ${lp.packageName} =====")
         // 只Hook系统界面 SystemUI，这个进程才有悬浮窗绘制权限
         if (lp.packageName != "com.android.systemui") return
         Log.i("SafeWalk", "成功挂载至 SystemUI【系统界面】进程")
