@@ -5,7 +5,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.github.wumisc.safewalk.MainActivity
 
@@ -16,26 +18,39 @@ import io.github.wumisc.safewalk.MainActivity
  * - 通知60秒自动消失，闪光灯保持开启
  */
 class TorchNotificationManager(private val context: Context) {
+    @Volatile
     internal var torchIsOn = false
+        private set
 
     private var torchCallback: CameraManager.TorchCallback? = null
     private val nm: NotificationManager by lazy {
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     }
 
+    companion object {
+        private const val TAG = "SafeWalk-Torch"
+    }
+
     /**
      * 开始监听手电筒状态（Camera2原生回调，HyperOS兼容）
      */
     fun startMonitor() {
-        val camManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val callback = object : CameraManager.TorchCallback() {
-            override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
-                torchIsOn = enabled
-                refreshNotification()
+        try {
+            Log.i(TAG, "开始监听手电状态")
+            val camManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val callback = object : CameraManager.TorchCallback() {
+                override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                    Log.i(TAG, "手电状态变化: $enabled")
+                    torchIsOn = enabled
+                    refreshNotification()
+                }
             }
+            torchCallback = callback
+            camManager.registerTorchCallback(callback, null)
+            Log.i(TAG, "TorchCallback 注册成功")
+        } catch (e: Exception) {
+            Log.e(TAG, "TorchCallback 注册失败", e)
         }
-        torchCallback = callback
-        camManager.registerTorchCallback(callback, null)
     }
 
     /**
@@ -53,6 +68,8 @@ class TorchNotificationManager(private val context: Context) {
      * 刷新手电通知，根据当前状态动态切换按钮文字
      */
     fun refreshNotification() {
+        Log.i(TAG, "刷新通知，手电状态: $torchIsOn")
+
         // 点击通知主体 → 打开SafeWalk主页
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

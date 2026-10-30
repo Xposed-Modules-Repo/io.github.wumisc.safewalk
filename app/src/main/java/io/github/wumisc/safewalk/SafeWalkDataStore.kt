@@ -42,6 +42,10 @@ object SafeWalkPrefKey {
     /** 手电静置提醒时间（分钟）：手电开着+静置多久后弹提醒 */
     const val torchStaticMinutes = "torchStaticMinutes"
 
+    // ===== 后置看路测试指令（实验区用，跨进程） =====
+    /** 后置看路测试动作：open_full / open_small / close / ""（空=无动作） */
+    const val testRearCamAction = "testRearCamAction"
+
     // 急救卡
     const val emerName = "emerName"
     const val emerBlood = "emerBlood"

@@ -263,31 +263,19 @@ public class LabActivity extends Activity implements SensorEventListener {
         } catch (Throwable t) { log("失败: " + t.getMessage()); }
     }
 
-    // ========== 后置看路测试 ==========
-    private RearCameraOverlay rearCam = null;
-
-    private void openRearCamFull() {
+    // ========== 后置看路测试（写JSON指令，Hook端执行） ==========
+    private void sendRearCamTestAction(String action) {
         try {
-            if (rearCam == null) rearCam = new RearCameraOverlay(this);
-            rearCam.show(RearCameraOverlay.MODE_FULLSCREEN);
-            log("后置看路已打开（全屏）");
-        } catch (Throwable t) { log("打开失败: " + t.getMessage()); }
+            android.content.SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+            sp.edit().putString(SafeWalkPrefKey.testRearCamAction, action).apply();
+            SafeWalkConfig.exportConfig(this);
+            log("已发送后置看路指令: " + action);
+        } catch (Throwable t) { log("发送指令失败: " + t.getMessage()); }
     }
 
-    private void openRearCamSmall() {
-        try {
-            if (rearCam == null) rearCam = new RearCameraOverlay(this);
-            rearCam.show(RearCameraOverlay.MODE_SMALLWINDOW);
-            log("后置看路已打开（小窗）");
-        } catch (Throwable t) { log("打开失败: " + t.getMessage()); }
-    }
-
-    private void closeRearCam() {
-        try {
-            if (rearCam != null) rearCam.hide();
-            log("后置看路已关闭");
-        } catch (Throwable t) { log("关闭失败: " + t.getMessage()); }
-    }
+    private void openRearCamFull() { sendRearCamTestAction("open_full"); }
+    private void openRearCamSmall() { sendRearCamTestAction("open_small"); }
+    private void closeRearCam() { sendRearCamTestAction("close"); }
 
     @Override protected void onResume() {
         super.onResume();

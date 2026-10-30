@@ -11,6 +11,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import de.robv.android.xposed.IXposedHookLoadPackage
 
 import de.robv.android.xposed.callbacks.XC_LoadPackage
@@ -100,12 +101,15 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 torchActionReceiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
                         intent ?: return
+                        Log.i("SafeWalk", "收到手电广播: ${intent.action}")
                         when (intent.action) {
                             "io.github.wumisc.safewalk.OPEN_TORCH" -> {
-                                TorchHelper.setTorch(ctx!!, true)
+                                val result = TorchHelper.setTorch(ctx!!, true)
+                                Log.i("SafeWalk", "开启手电结果: $result")
                             }
                             "io.github.wumisc.safewalk.CLOSE_TORCH" -> {
-                                TorchHelper.setTorch(ctx!!, false)
+                                val result = TorchHelper.setTorch(ctx!!, false)
+                                Log.i("SafeWalk", "关闭手电结果: $result")
                             }
                         }
                     }
@@ -115,6 +119,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     addAction("io.github.wumisc.safewalk.CLOSE_TORCH")
                 }
                 ctx!!.registerReceiver(torchActionReceiver, filter, Context.RECEIVER_EXPORTED)
+                Log.i("SafeWalk", "手电广播接收器注册成功")
 
                 // 注册计步器
                 sm?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {
@@ -158,6 +163,19 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         val now = System.currentTimeMillis()
         configJson = SafeWalkConfig.loadConfigFromFile()
 
+        // ===== 后置看路测试指令处理（实验区跨进程调用） =====
+        val testAction = pref(SafeWalkPrefKey.testRearCamAction, "")
+        if (testAction.isNotEmpty()) {
+            when (testAction) {
+                "open_full" -> rearCam?.show(RearCameraOverlay.MODE_FULLSCREEN)
+                "open_small" -> rearCam?.show(RearCameraOverlay.MODE_SMALLWINDOW)
+                "close" -> rearCam?.hide()
+            }
+            // 执行完清空指令
+            clearTestRearCamAction()
+            Log.i("SafeWalk", "执行后置看路测试指令: $testAction")
+        }
+
         // VERIFYING 超时兜底
         if (state == State.VERIFYING && now - verifyStartTs > VERIFY_TIMEOUT_MS) {
             state = State.LIGHT_MONITOR
@@ -196,6 +214,20 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
     /** 久坐提醒：必须先有过步数记录，否则首次启动误触发 */
+    /** 清空后置看路测试指令（Hook端写回JSON） */
+    private fun clearTestRearCamAction() {
+        try {
+            val path = "/data/data/io.github.wumisc.safewalk/files/${SafeWalkPrefKey.CONFIG_FILE}"
+            val f = java.io.File(path)
+            if (!f.exists()) return
+            val json = org.json.JSONObject(f.readText())
+            json.remove(SafeWalkPrefKey.testRearCamAction)
+            f.writeText(json.toString())
+        } catch (e: Exception) {
+            Log.w("SafeWalk", "清空测试指令失败", e)
+        }
+    }
+
     private fun checkSitRemind(now: Long) {
         if (lastStepTs == 0L) return
         if (now - lastStepTs > SIT_REMIND_MS && now - lastSitRemindTs > DAILY_COOLDOWN) {
