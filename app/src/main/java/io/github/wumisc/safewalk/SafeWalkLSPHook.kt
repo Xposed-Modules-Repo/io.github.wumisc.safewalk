@@ -14,6 +14,9 @@ import android.os.Looper
 import de.robv.android.xposed.IXposedHookLoadPackage
 
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import android.content.BroadcastReceiver
+import android.widget.Toast
+import io.github.wumisc.safewalk.torch.TorchHelper
 import io.github.wumisc.safewalk.torch.TorchNotificationManager
 import io.github.wumisc.safewalk.torch.TorchStaticReminder
 import io.github.wumisc.safewalk.torch.createTorchNotifyChannel
@@ -37,6 +40,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var rearCam: RearCameraOverlay? = null
     private var torchNotifyManager: TorchNotificationManager? = null
     private var torchReminder: TorchStaticReminder? = null
+    private var torchActionReceiver: BroadcastReceiver? = null
 
     // ========== 时间戳（冷却用） ==========
     private val steps = mutableListOf<Long>()
@@ -70,7 +74,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     private fun masterEnabled() = pref(SafeWalkPrefKey.masterEnable, true)
     // 参数调整：步数阈值150，静置重置20秒
-    private fun stepThreshold() = pref(SafeWalkPrefKey.stepThreshold, 150)
+    private fun stepThreshold() = pref(SafeWalkPrefKey.stepThreshold, 50)
     private fun staticResetMs() = pref(SafeWalkPrefKey.staticResetSec, 20) * 1000L
 
     // ========== Hook 入口 ==========
@@ -91,6 +95,26 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 torchNotifyManager = TorchNotificationManager(ctx!!)
                 torchNotifyManager?.startMonitor()
                 torchReminder = TorchStaticReminder(torchNotifyManager!!, ctx!!)
+
+                // 在系统进程里注册手电动作接收器（系统进程有权限访问摄像头）
+                torchActionReceiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        intent ?: return
+                        when (intent.action) {
+                            "io.github.wumisc.safewalk.OPEN_TORCH" -> {
+                                TorchHelper.setTorch(ctx!!, true)
+                            }
+                            "io.github.wumisc.safewalk.CLOSE_TORCH" -> {
+                                TorchHelper.setTorch(ctx!!, false)
+                            }
+                        }
+                    }
+                }
+                val filter = IntentFilter().apply {
+                    addAction("io.github.wumisc.safewalk.OPEN_TORCH")
+                    addAction("io.github.wumisc.safewalk.CLOSE_TORCH")
+                }
+                ctx!!.registerReceiver(torchActionReceiver, filter, Context.RECEIVER_EXPORTED)
 
                 // 注册计步器
                 sm?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {

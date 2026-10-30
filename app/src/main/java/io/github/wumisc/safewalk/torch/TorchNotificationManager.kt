@@ -62,19 +62,19 @@ class TorchNotificationManager(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // 按钮：启动Service处理手电开关（绕开广播，LSP环境下更稳）
-        val turnOnIntent = Intent(context, TorchActionService::class.java).apply {
-            putExtra(TorchActionService.EXTRA_TORCH_ACTION, TorchActionService.ACTION_TURN_ON)
+        // 按钮：发广播，系统进程里的receiver接收处理（系统进程有权限访问摄像头）
+        val turnOnIntent = Intent("io.github.wumisc.safewalk.OPEN_TORCH").apply {
+            setPackage(context.packageName)
         }
-        val turnOnPi = PendingIntent.getService(
+        val turnOnPi = PendingIntent.getBroadcast(
             context, 100, turnOnIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val turnOffIntent = Intent(context, TorchActionService::class.java).apply {
-            putExtra(TorchActionService.EXTRA_TORCH_ACTION, TorchActionService.ACTION_TURN_OFF)
+        val turnOffIntent = Intent("io.github.wumisc.safewalk.CLOSE_TORCH").apply {
+            setPackage(context.packageName)
         }
-        val turnOffPi = PendingIntent.getService(
+        val turnOffPi = PendingIntent.getBroadcast(
             context, 200, turnOffIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

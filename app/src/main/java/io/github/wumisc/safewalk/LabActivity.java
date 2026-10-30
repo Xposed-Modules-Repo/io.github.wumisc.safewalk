@@ -98,6 +98,10 @@ public class LabActivity extends Activity implements SensorEventListener {
         root.addView(btn("夜间手电通知", v -> { testNotify("夜间照明", "天黑了，走路小心，建议开启手电筒照亮前路"); log("夜间手电通知"); }));
         root.addView(btn("🔦 手电悬浮通知测试", v -> testTorchNotify()));
         root.addView(btn("🔦 关闭手电悬浮通知", v -> dismissTorchNotify()));
+        root.addView(label("—— 后置看路测试 ——"));
+        root.addView(btn("📷 打开后置看路（全屏）", v -> openRearCamFull()));
+        root.addView(btn("📷 打开后置看路（小窗）", v -> openRearCamSmall()));
+        root.addView(btn("📷 关闭后置看路", v -> closeRearCam()));
         root.addView(btn("模拟出门触发", v -> { testNotify("出门提醒", "检测到持续步行，证件已贴身放好？"); log("模拟出门触发"); }));
 
         root.addView(label("—— 调试日志 ——"));
@@ -257,6 +261,32 @@ public class LabActivity extends Activity implements SensorEventListener {
             nm.cancel(2003);
             log("手电通知已关闭");
         } catch (Throwable t) { log("失败: " + t.getMessage()); }
+    }
+
+    // ========== 后置看路测试 ==========
+    private RearCameraOverlay rearCam = null;
+
+    private void openRearCamFull() {
+        try {
+            if (rearCam == null) rearCam = new RearCameraOverlay(this);
+            rearCam.show(RearCameraOverlay.MODE_FULLSCREEN);
+            log("后置看路已打开（全屏）");
+        } catch (Throwable t) { log("打开失败: " + t.getMessage()); }
+    }
+
+    private void openRearCamSmall() {
+        try {
+            if (rearCam == null) rearCam = new RearCameraOverlay(this);
+            rearCam.show(RearCameraOverlay.MODE_SMALLWINDOW);
+            log("后置看路已打开（小窗）");
+        } catch (Throwable t) { log("打开失败: " + t.getMessage()); }
+    }
+
+    private void closeRearCam() {
+        try {
+            if (rearCam != null) rearCam.hide();
+            log("后置看路已关闭");
+        } catch (Throwable t) { log("关闭失败: " + t.getMessage()); }
     }
 
     @Override protected void onResume() {
