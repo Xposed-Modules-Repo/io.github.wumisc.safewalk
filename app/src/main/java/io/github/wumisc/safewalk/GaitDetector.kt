@@ -113,16 +113,19 @@ class GaitDetector {
     }
 
     fun hasStableGait(): Boolean {
-        if (peakIntervals.size < 3) return false
+        // 至少2步间隔稳定就算真走路（3秒采样窗口内2步足够判定）
+        if (peakIntervals.size < 2) return false
         val avg = peakIntervals.average()
-        return peakIntervals.all { kotlin.math.abs(it - avg) < 180 }
+        return peakIntervals.all { kotlin.math.abs(it - avg) < 200 }
     }
 
     fun reset() {
         peakIntervals.clear()
         magWindow.clear()
         lastPeakTime = 0L
-        currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
+        // 初始阈值设为1.0，比MIN_PEAK_THRESHOLD(0.6)更保守，
+        // 避免前10个样本期间阈值太低导致误触发
+        currentAdaptiveThreshold = 1.0f
         currentAttitude = PhoneAttitude.UNKNOWN
         gravityX = 0f; gravityY = 0f; gravityZ = 0f
     }

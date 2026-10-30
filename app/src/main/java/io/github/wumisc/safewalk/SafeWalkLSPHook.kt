@@ -64,8 +64,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private fun pref(key: String, default: String): String = xsp?.getString(key, default) ?: default
 
     private fun masterEnabled() = pref(SafeWalkPrefKey.masterEnable, true)
-    private fun stepThreshold() = pref(SafeWalkPrefKey.stepThreshold, 800)
-    private fun staticResetMs() = pref(SafeWalkPrefKey.staticResetSec, 180) * 1000L
+    // 参数调整：步数阈值150，静置重置20秒
+    private fun stepThreshold() = pref(SafeWalkPrefKey.stepThreshold, 150)
+    private fun staticResetMs() = pref(SafeWalkPrefKey.staticResetSec, 20) * 1000L
 
     // ========== Hook 入口 ==========
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
@@ -173,7 +174,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             state = State.LIGHT_MONITOR; return
         }
         gait.reset()
-        val end = System.currentTimeMillis() + 4000
+        // 步态验证采样3秒：步频1.4~2.2Hz，3秒足够检测到3步以上
+        val end = System.currentTimeMillis() + 3000
 
         s.registerListener(object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent?) {
