@@ -148,6 +148,7 @@ class RearCameraOverlay(private val ctx: Context) {
      * @param mode MODE_FULLSCREEN 全屏半透明 / MODE_SMALLWINDOW 角落小窗
      */
     fun show(mode: String = MODE_FULLSCREEN) {
+        Log.i(TAG, "show() 被调用, mode=$mode, isShowing=$isShowing")
         if (isShowing) {
             // 已显示，切模式
             if (mode != currentMode) {
@@ -219,12 +220,13 @@ class RearCameraOverlay(private val ctx: Context) {
                 }
             }
 
+            Log.i(TAG, "准备 addView, type=${params.type}")
             wm.addView(container, params)
             overlayLayout = container
             isShowing = true
-            Log.i(TAG, "显示悬浮窗: $mode")
+            Log.i(TAG, "✅ 悬浮窗显示成功: $mode")
         } catch (t: Throwable) {
-            Log.e(TAG, "显示悬浮窗失败", t)
+            Log.e(TAG, "❌ 显示悬浮窗失败", t)
         }
     }
 

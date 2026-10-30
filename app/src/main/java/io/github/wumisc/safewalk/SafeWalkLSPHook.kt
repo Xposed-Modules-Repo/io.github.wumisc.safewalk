@@ -161,62 +161,67 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     // ========== 定时检查 ==========
     private fun check() {
-        val now = System.currentTimeMillis()
-        configJson = SafeWalkConfig.loadConfigFromFile()
+        try {
+            val now = System.currentTimeMillis()
+            configJson = SafeWalkConfig.loadConfigFromFile()
+            Log.d("SafeWalk", "check() 定时轮询执行, rearCam=null? ${rearCam == null}")
 
-        // ===== 后置看路测试指令处理（不管总开关开没开都能测试） =====
-        val testAction = pref(SafeWalkPrefKey.testRearCamAction, "")
-        if (testAction.isNotEmpty()) {
-            when (testAction) {
-                "open_full" -> rearCam?.show(RearCameraOverlay.MODE_FULLSCREEN)
-                "open_small" -> rearCam?.show(RearCameraOverlay.MODE_SMALLWINDOW)
-                "close" -> rearCam?.hide()
+            // ===== 后置看路测试指令处理（不管总开关开没开都能测试） =====
+            val testAction = pref(SafeWalkPrefKey.testRearCamAction, "")
+            Log.d("SafeWalk", "读取到测试指令: '$testAction'")
+            if (testAction.isNotEmpty()) {
+                Log.i("SafeWalk", "执行后置看路测试指令: $testAction")
+                when (testAction) {
+                    "open_full" -> rearCam?.show(RearCameraOverlay.MODE_FULLSCREEN)
+                    "open_small" -> rearCam?.show(RearCameraOverlay.MODE_SMALLWINDOW)
+                    "close" -> rearCam?.hide()
+                }
+                // 执行完清空指令
+                clearTestRearCamAction()
             }
-            // 执行完清空指令
-            clearTestRearCamAction()
-            Log.i("SafeWalk", "执行后置看路测试指令: $testAction")
-        }
 
-        if (!masterEnabled()) return
+            if (!masterEnabled()) return
 
-        // VERIFYING 超时兜底
-        if (state == State.VERIFYING && now - verifyStartTs > VERIFY_TIMEOUT_MS) {
-            state = State.LIGHT_MONITOR
-            steps.clear()
-        }
-
-        // 静置重置：无持续位移 → 判定室内停留，不触发外出提醒
-        if (lastStepTs == 0L || now - lastStepTs > staticResetMs()) {
-            steps.clear()
-            checkSitRemind(now)
-            // 自动模式：停下自动收起后置看路
-            if (pref(SafeWalkPrefKey.enableRearCamera, false)
-                && pref(SafeWalkPrefKey.rearCamAuto, true)) {
-                rearCam?.hide()
+            // VERIFYING 超时兜底
+            if (state == State.VERIFYING && now - verifyStartTs > VERIFY_TIMEOUT_MS) {
+                state = State.LIGHT_MONITOR
+                steps.clear()
             }
-            state = State.SLEEP
-            // 通知手电筒提醒器：现在是静置状态
-            torchReminder?.onLongStaticDetected(true)
-            return
-        }
 
-        // 有步数 → 不是静置，通知手电筒提醒器
-        torchReminder?.onLongStaticDetected(false)
+            // 静置重置：无持续位移 → 判定室内停留，不触发外出提醒
+            if (lastStepTs == 0L || now - lastStepTs > staticResetMs()) {
+                steps.clear()
+                checkSitRemind(now)
+                // 自动模式：停下自动收起后置看路
+                if (pref(SafeWalkPrefKey.enableRearCamera, false)
+                    && pref(SafeWalkPrefKey.rearCamAuto, true)) {
+                    rearCam?.hide()
+                }
+                state = State.SLEEP
+                // 通知手电筒提醒器：现在是静置状态
+                torchReminder?.onLongStaticDetected(true)
+                return
+            }
 
-        steps.removeAll { it < now - WINDOW_MS }
+            // 有步数 → 不是静置，通知手电筒提醒器
+            torchReminder?.onLongStaticDetected(false)
 
-        // 触发冷却
-        if (now - lastTriggerTs < TRIGGER_COOLDOWN) return
+            steps.removeAll { it < now - WINDOW_MS }
 
-        // 步数达标 → 开始步态校验
-        if (steps.size >= stepThreshold() && state == State.LIGHT_MONITOR) {
-            state = State.VERIFYING
-            verifyStartTs = now
-            verifyGait()
+            // 触发冷却
+            if (now - lastTriggerTs < TRIGGER_COOLDOWN) return
+
+            // 步数达标 → 开始步态校验
+            if (steps.size >= stepThreshold() && state == State.LIGHT_MONITOR) {
+                state = State.VERIFYING
+                verifyStartTs = now
+                verifyGait()
+            }
+        } catch (e: Exception) {
+            Log.e("SafeWalk", "check() 异常", e)
         }
     }
 
-    /** 久坐提醒：必须先有过步数记录，否则首次启动误触发 */
     /** 清空后置看路测试指令（Hook端写回JSON） */
     private fun clearTestRearCamAction() {
         try {
