@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- 相机/闪光灯非必需，避免没闪光灯的设备装不上 -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -24,6 +27,36 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".EmergencyCardActivity"
+            android:exported="false"
+            android:label="急救卡" />
+
+        <activity
+            android:name=".LogViewActivity"
+            android:exported="false"
+            android:label="模块运行日志" />
+
+        <activity
+            android:name=".TipsActivity"
+            android:exported="false"
+            android:label="出门踩坑指南" />
+
+        <activity
+            android:name=".AcknowledgementsActivity"
+            android:exported="false"
+            android:label="致敬名单" />
+
+        <activity
+            android:name=".DonateQrActivity"
+            android:exported="false"
+            android:label="支持捐赠" />
+
+        <activity
+            android:name=".LabActivity"
+            android:exported="false"
+            android:label="功能实验区" />
 
         <!-- 手电筒通知按钮广播接收器 -->
         <receiver
@@ -46,7 +79,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="SafeWalk V2.0基准版｜步态检测、相机悬浮层、玻璃胶囊导航、夜间手电提醒" />
+            android:value="SafeWalk 安全出行低功耗提醒。⚠️ 作用域只需勾选「系统界面（SystemUI）」，无需勾选系统框架。硬件计步检测，纯本地运行，低功耗。" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />

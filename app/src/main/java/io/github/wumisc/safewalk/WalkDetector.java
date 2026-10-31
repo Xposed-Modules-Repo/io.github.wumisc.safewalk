@@ -1,64 +1,137 @@
 package io.github.wumisc.safewalk;
 
+import android.hardware.Sensor;
 import android.hardware.SensorEvent;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.List;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Handler;
+import android.os.Looper;
 
-public class WalkDetector {
-    private static final int WINDOW_SIZE = 25;
-    private static final float MIN_STEP_FREQ = 80f;
-    private static final float MAX_STEP_FREQ = 140f;
-    private static final float STATIC_VAR_THRESHOLD = 0.7f;
+/* loaded from: classes3.dex */
+public final class WalkDetector implements SensorEventListener {
+    private static final int STEPS_TO_RESTART = 15;
+    private static final int STEPS_TO_START = 100;
+    private static WalkDetector inst;
+    private Sensor accel;
+    private boolean enabled;
+    private float gx;
+    private float gy;
+    private float gz;
+    private boolean hasEverWalked;
+    private boolean haveGravity;
+    private int idleWindows;
+    private boolean lastHigh;
+    private long lastStepTime;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private int pendingSteps;
+    private SensorManager sm;
+    private int stepCount;
+    private boolean walking;
+    private long windowStart;
 
-    private final ArrayDeque<Float> magBuffer = new ArrayDeque<>();
-    private final List<Long> peakList = new ArrayList<>();
+    private WalkDetector(SensorManager sensorManager) {
+        this.sm = sensorManager;
+        this.accel = sensorManager.getDefaultSensor(1);
+    }
 
-    public static class WalkResult{
-        public boolean isWalking;
-        public float stepFreq;
-        public float variance;
-        public WalkResult(boolean w, float f, float v){
-            isWalking = w; stepFreq = f; variance = v;
+    public static void init(SensorManager sensorManager) {
+        if (inst == null) {
+            inst = new WalkDetector(sensorManager);
         }
     }
 
-    public WalkResult feed(SensorEvent event) {
-        float ax = event.values[0];
-        float ay = event.values[1];
-        float az = event.values[2];
-        float mag = (float) Math.sqrt(ax*ax + ay*ay + az*az);
-
-        magBuffer.addLast(mag);
-        if (magBuffer.size() > WINDOW_SIZE) magBuffer.removeFirst();
-
-        boolean isPeak = false;
-        if (magBuffer.size() >= 3) {
-            Float[] arr = magBuffer.toArray(new Float[0]);
-            int len = arr.length;
-            isPeak = arr[len-2] > arr[len-3] && arr[len-2] > arr[len-1];
+    public static void setAutoEnabled(boolean on) {
+        if (inst == null || on == inst.enabled) {
+            return;
         }
-        if (isPeak) peakList.add(System.currentTimeMillis());
-
-        long now = System.currentTimeMillis();
-        peakList.removeIf(ts -> now - ts > 10000);
-
-        float stepFreq = 0f;
-        if (peakList.size() >= 2) {
-            long span = peakList.get(peakList.size()-1) - peakList.get(0);
-            if (span > 0) {
-                stepFreq = (peakList.size() - 1) * 1000f / span * 60f;
+        inst.enabled = on;
+        inst.walking = false;
+        inst.stepCount = 0;
+        inst.windowStart = 0L;
+        inst.idleWindows = 0;
+        inst.pendingSteps = 0;
+        if (on) {
+            if (inst.accel != null && inst.sm != null) {
+                inst.sm.registerListener(inst, inst.accel, 2, inst.main);
+                return;
             }
+            return;
         }
+        if (inst.sm != null) {
+            inst.sm.unregisterListener(inst);
+        }
+    }
 
-        float mean = 0f;
-        for (float v : magBuffer) mean += v;
-        mean /= magBuffer.size();
-        float variance = 0f;
-        for (float v : magBuffer) variance += (v - mean) * (v - mean);
-        variance /= magBuffer.size();
+    public static boolean isWalking() {
+        return inst != null && inst.enabled && inst.walking;
+    }
 
-        boolean isWalking = stepFreq >= MIN_STEP_FREQ && stepFreq <= MAX_STEP_FREQ && variance > STATIC_VAR_THRESHOLD;
-        return new WalkResult(isWalking, stepFreq, variance);
+    @Override // android.hardware.SensorEventListener
+    public void onSensorChanged(SensorEvent e) {
+        long now = e.timestamp / 1000000;
+        float ax = e.values[0];
+        float ay = e.values[1];
+        float az = e.values[2];
+        if (!this.haveGravity) {
+            this.gx = ax;
+            this.gy = ay;
+            this.gz = az;
+            this.haveGravity = true;
+        } else {
+            this.gx = (this.gx * 0.8f) + (ax * 0.2f);
+            this.gy = (this.gy * 0.8f) + (ay * 0.2f);
+            this.gz = (this.gz * 0.8f) + (0.2f * az);
+        }
+        float mag = (float) Math.sqrt((ax * ax) + (ay * ay) + (az * az));
+        boolean high = mag - 9.8f > 2.5f;
+        if (high && !this.lastHigh && now - this.lastStepTime > 350) {
+            this.stepCount++;
+            this.pendingSteps++;
+            this.lastStepTime = now;
+            SafetyFeatures.onStep();
+        }
+        this.lastHigh = high;
+        if (this.windowStart == 0) {
+            this.windowStart = now;
+            return;
+        }
+        long windowMs = now - this.windowStart;
+        if (windowMs >= 4000) {
+            if (this.walking) {
+                if (this.stepCount < 2) {
+                    this.idleWindows++;
+                    if (this.idleWindows >= 2) {
+                        this.walking = false;
+                        this.pendingSteps = 0;
+                    }
+                } else {
+                    this.idleWindows = 0;
+                }
+            } else {
+                int threshold = this.hasEverWalked ? 15 : 100;
+                if (this.pendingSteps >= threshold) {
+                    this.walking = true;
+                    this.hasEverWalked = true;
+                    this.pendingSteps = 0;
+                    this.idleWindows = 0;
+                }
+            }
+            this.windowStart = now;
+            this.stepCount = 0;
+        }
+    }
+
+    public static boolean isHeadDown() {
+        if (inst == null || !inst.haveGravity) {
+            return false;
+        }
+        float ax = Math.abs(inst.gx);
+        float ay = Math.abs(inst.gy);
+        float az = Math.abs(inst.gz);
+        return az > 6.5f && az > ax && az > ay;
+    }
+
+    @Override // android.hardware.SensorEventListener
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
     }
 }
