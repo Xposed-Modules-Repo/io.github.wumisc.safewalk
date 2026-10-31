@@ -18,52 +18,12 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="安全出行"
-            android:theme="@style/Theme.Safewalk">
+            android:label="安全出行">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.INFO" />
-            </intent-filter>
         </activity>
-
-        <activity
-            android:name=".EmergencyCardActivity"
-            android:exported="true"
-            android:label="急救卡" />
-
-        <activity
-            android:name=".LabActivity"
-            android:exported="false"
-            android:label="功能实验区" />
-
-        <activity
-            android:name=".RearCamSettingsActivity"
-            android:exported="false"
-            android:label="后置看路设置" />
-
-        <activity
-            android:name=".AcknowledgementsActivity"
-            android:exported="false"
-            android:label="致敬名单" />
-
-        <activity
-            android:name=".DonateQrActivity"
-            android:exported="false"
-            android:label="捐赠二维码" />
-
-        <activity
-            android:name=".TipsActivity"
-            android:exported="false"
-            android:label="出门踩坑指南" />
-
-        <activity
-            android:name=".TorchStaticSettingsActivity"
-            android:exported="false"
-            android:label="手电静置提醒设置" />
 
         <!-- 手电筒通知按钮广播接收器 -->
         <receiver
@@ -86,10 +46,10 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="SafeWalk 安全出行低功耗提醒。⚠️ 作用域只需勾选「系统界面（SystemUI）」，无需勾选系统框架。硬件计步检测，纯本地运行，低功耗。" />
+            android:value="SafeWalk V2.0基准版｜步态检测、相机悬浮层、玻璃胶囊导航、夜间手电提醒" />
         <meta-data
             android:name="xposedminversion"
-            android:value="93" />
+            android:value="82" />
         <meta-data
             android:name="xposedscope"
             android:value="com.android.systemui" />
