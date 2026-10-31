@@ -62,7 +62,7 @@ public class AcknowledgementsActivity extends Activity {
 
             "————————————\n" +
             "声明：SafeWalk 所有代码为独立手写重构，仅借鉴思路与算法原理，" +
-            "没有直接拷贝上述项目源码。遵循 GPL-3.0 许可证开源。"
+            "没有直接拷贝上述项目源码。遵循 AGPL-3.0 许可证开源。"
         );
     }
 }

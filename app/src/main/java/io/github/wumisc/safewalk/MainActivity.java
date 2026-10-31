@@ -54,7 +54,9 @@ public final class MainActivity extends Activity {
     private boolean hasAllPermissions() {
         for (String p : new String[]{
                 android.Manifest.permission.ACTIVITY_RECOGNITION,
-                android.Manifest.permission.POST_NOTIFICATIONS}) {
+                android.Manifest.permission.POST_NOTIFICATIONS,
+                android.Manifest.permission.CAMERA,
+                android.Manifest.permission.ACCESS_FINE_LOCATION}) {
             if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                 return false;
         }
@@ -66,7 +68,9 @@ public final class MainActivity extends Activity {
             java.util.List<String> need = new java.util.ArrayList<>();
             for (String p : new String[]{
                     android.Manifest.permission.ACTIVITY_RECOGNITION,
-                    android.Manifest.permission.POST_NOTIFICATIONS}) {
+                    android.Manifest.permission.POST_NOTIFICATIONS,
+                    android.Manifest.permission.CAMERA,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION}) {
                 if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                     need.add(p);
             }

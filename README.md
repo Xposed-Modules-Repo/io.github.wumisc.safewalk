@@ -5,7 +5,7 @@
 纯本地、无服务器的安全出行提醒 LSPosed 模块，只 Hook 系统进程 `android`。
 不依赖 GMS，纯传感器步态识别，低功耗运行。
 
-基于 GPL-3.0 开源。适配 HyperOS / Android 12+。
+基于 AGPL-3.0 开源。适配 HyperOS / Android 12+。
 
 ---
 
@@ -146,4 +146,4 @@ SafeWalk 是面向 HyperOS / Android 的 LSPosed 出行感知模块，实现不�
 
 ## 📄 许可证
 
-GPL-3.0，见 [LICENSE](LICENSE)。
+AGPL-3.0，见 [LICENSE](LICENSE)。
