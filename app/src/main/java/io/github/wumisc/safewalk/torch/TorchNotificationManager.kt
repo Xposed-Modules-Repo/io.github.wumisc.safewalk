@@ -9,7 +9,6 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import io.github.wumisc.safewalk.MainActivity
 
 /**
  * 手电筒通知管理器：
@@ -23,6 +22,8 @@ class TorchNotificationManager(private val context: Context) {
         private set
 
     private var torchCallback: CameraManager.TorchCallback? = null
+    /** 注册回调会立刻回传一次当前状态，首帧不弹通知，否则 SystemUI 一启动就弹「夜间手电」 */
+    private var stateInitialized = false
     private val nm: NotificationManager by lazy {
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     }
@@ -42,7 +43,12 @@ class TorchNotificationManager(private val context: Context) {
                 override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
                     Log.i(TAG, "手电状态变化: $enabled")
                     torchIsOn = enabled
-                    refreshNotification()
+                    if (!stateInitialized) {
+                        stateInitialized = true
+                        return
+                    }
+                    // 关闭时顺手撤掉提醒；开启时交给静置计时器决定是否提醒
+                    if (!enabled) dismissNotification()
                 }
             }
             torchCallback = callback
@@ -71,7 +77,10 @@ class TorchNotificationManager(private val context: Context) {
         Log.i(TAG, "刷新通知，手电状态: $torchIsOn")
 
         // 点击通知主体 → 打开SafeWalk主页
-        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+        // context 是 SystemUI 的，Intent(context, MainActivity) 会拼成
+        // ComponentName("com.android.systemui", "...MainActivity")，点击必然打不开
+        val openAppIntent = Intent().apply {
+            setClassName("io.github.wumisc.safewalk", "io.github.wumisc.safewalk.MainActivity")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val openAppPi = PendingIntent.getActivity(
@@ -80,8 +89,13 @@ class TorchNotificationManager(private val context: Context) {
         )
 
         // 按钮：发广播，系统进程里的receiver接收处理（系统进程有权限访问摄像头）
+        // 接收器为了跨进程是 EXPORTED 的，必须带令牌，否则任何应用都能点亮闪光灯
         val turnOnIntent = Intent("io.github.wumisc.safewalk.OPEN_TORCH").apply {
-            setPackage(context.packageName)
+            setPackage("com.android.systemui")
+            putExtra(
+                io.github.wumisc.safewalk.SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
+                io.github.wumisc.safewalk.SafeWalkPrefKey.BROADCAST_TOKEN
+            )
         }
         val turnOnPi = PendingIntent.getBroadcast(
             context, 100, turnOnIntent,
@@ -89,7 +103,11 @@ class TorchNotificationManager(private val context: Context) {
         )
 
         val turnOffIntent = Intent("io.github.wumisc.safewalk.CLOSE_TORCH").apply {
-            setPackage(context.packageName)
+            setPackage("com.android.systemui")
+            putExtra(
+                io.github.wumisc.safewalk.SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
+                io.github.wumisc.safewalk.SafeWalkPrefKey.BROADCAST_TOKEN
+            )
         }
         val turnOffPi = PendingIntent.getBroadcast(
             context, 200, turnOffIntent,
@@ -97,7 +115,7 @@ class TorchNotificationManager(private val context: Context) {
         )
 
         val builder = NotificationCompat.Builder(context, TORCH_CHANNEL_ID)
-            .setSmallIcon(context.applicationInfo.icon)
+            .setSmallIcon(android.R.drawable.ic_menu_view)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(true)
@@ -110,7 +128,7 @@ class TorchNotificationManager(private val context: Context) {
                 .setContentText("已长时间静置，记得及时关闭手电节约电量")
                 .addAction(
                     NotificationCompat.Action.Builder(
-                        context.applicationInfo.icon,
+                        android.R.drawable.ic_menu_close_clear_cancel,
                         "关闭手电",
                         turnOffPi
                     ).build()
@@ -121,7 +139,7 @@ class TorchNotificationManager(private val context: Context) {
                 .setContentText("夜间出行，点击按钮打开手电照明")
                 .addAction(
                     NotificationCompat.Action.Builder(
-                        context.applicationInfo.icon,
+                        android.R.drawable.ic_menu_view,
                         "打开手电",
                         turnOnPi
                     ).build()

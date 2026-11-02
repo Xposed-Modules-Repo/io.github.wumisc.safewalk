@@ -45,14 +45,13 @@
                     android:textSize="13sp"
                     android:textStyle="italic" />
 
-                <!-- 磁贴网格 2列x3行 -->
+                <!-- 磁贴网格 2列x3行（两个空位保留，后续功能扩展用） -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:weightSum="2">
 
-                    <!-- 总开关 -->
                     <com.google.android.material.card.MaterialCardView
                         android:id="@+id/tile_enable"
                         android:layout_width="0dp"
@@ -82,48 +81,8 @@
                             <TextView android:id="@+id/tile_enable_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
-
-                    <!-- 电量预警 -->
                     <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/tile_auto"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_margin="6dp"
-                        app:cardBackgroundColor="@color/card_bg"
-                        app:cardCornerRadius="16dp"
-                        app:cardElevation="0dp"
-                        app:strokeColor="@color/card_stroke"
-                        app:strokeWidth="1dp"
-                        android:clickable="true"
-                        android:focusable="true">
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="16dp">
-                            <LinearLayout
-                                android:layout_width="44dp"
-                                android:layout_height="44dp"
-                                android:background="@drawable/icon_frame_green"
-                                android:gravity="center">
-                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🔋" android:textSize="22sp" />
-                            </LinearLayout>
-                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="电量预警" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:id="@+id/tile_auto_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:weightSum="2">
-
-                    <!-- 证件提醒 -->
-                    <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/tile_lookdown"
+                        android:id="@+id/tile_smart"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -145,41 +104,10 @@
                                 android:layout_height="44dp"
                                 android:background="@drawable/icon_frame_amber"
                                 android:gravity="center">
-                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🪪" android:textSize="22sp" />
+                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🧠" android:textSize="22sp" />
                             </LinearLayout>
-                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="证件提醒" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:id="@+id/tile_lookdown_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-
-                    <!-- 久坐提醒 -->
-                    <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/tile_night"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_margin="6dp"
-                        app:cardBackgroundColor="@color/card_bg"
-                        app:cardCornerRadius="16dp"
-                        app:cardElevation="0dp"
-                        app:strokeColor="@color/card_stroke"
-                        app:strokeWidth="1dp"
-                        android:clickable="true"
-                        android:focusable="true">
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="16dp">
-                            <LinearLayout
-                                android:layout_width="44dp"
-                                android:layout_height="44dp"
-                                android:background="@drawable/icon_frame_purple"
-                                android:gravity="center">
-                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🪑" android:textSize="22sp" />
-                            </LinearLayout>
-                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="久坐提醒" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:id="@+id/tile_night_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="智能提醒" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
+                            <TextView android:id="@+id/tile_smart_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="5 项 · 已开启" android:textColor="@color/text_secondary" android:textSize="12sp" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
                 </LinearLayout>
@@ -190,40 +118,8 @@
                     android:orientation="horizontal"
                     android:weightSum="2">
 
-                    <!-- 夜间手电 -->
                     <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/tile_night_torch"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_margin="6dp"
-                        app:cardBackgroundColor="@color/card_bg"
-                        app:cardCornerRadius="16dp"
-                        app:cardElevation="0dp"
-                        app:strokeColor="@color/card_stroke"
-                        app:strokeWidth="1dp"
-                        android:clickable="true"
-                        android:focusable="true">
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="16dp">
-                            <LinearLayout
-                                android:layout_width="44dp"
-                                android:layout_height="44dp"
-                                android:background="@drawable/icon_frame_teal"
-                                android:gravity="center">
-                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🔦" android:textSize="22sp" />
-                            </LinearLayout>
-                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="夜间手电" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:id="@+id/tile_night_torch_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-
-                    <!-- 行走模式 -->
-                    <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/tile_rear_cam"
+                        android:id="@+id/tile_walk"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -248,49 +144,9 @@
                                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🚶" android:textSize="22sp" />
                             </LinearLayout>
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="行走模式" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:id="@+id/tile_rear_cam_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                            <TextView android:id="@+id/tile_walk_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="行走模式已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:weightSum="2">
-
-                    <!-- 社交礼仪 -->
-                    <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/tile_safety"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_margin="6dp"
-                        app:cardBackgroundColor="@color/card_bg"
-                        app:cardCornerRadius="16dp"
-                        app:cardElevation="0dp"
-                        app:strokeColor="@color/card_stroke"
-                        app:strokeWidth="1dp"
-                        android:clickable="true"
-                        android:focusable="true">
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="16dp">
-                            <LinearLayout
-                                android:layout_width="44dp"
-                                android:layout_height="44dp"
-                                android:background="@drawable/icon_frame_red"
-                                android:gravity="center">
-                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🤝" android:textSize="22sp" />
-                            </LinearLayout>
-                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="社交礼仪" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:id="@+id/tile_safety_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="已关闭" android:textColor="@color/text_secondary" android:textSize="12sp" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-
-                    <!-- 急救卡 -->
                     <com.google.android.material.card.MaterialCardView
                         android:id="@+id/tile_emergency"
                         android:layout_width="0dp"
@@ -317,9 +173,45 @@
                                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🚑" android:textSize="22sp" />
                             </LinearLayout>
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="急救卡" android:textColor="@color/text_primary" android:textSize="15sp" android:textStyle="bold" />
-                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="点击编辑" android:textColor="@color/text_secondary" android:textSize="12sp" />
+                            <TextView android:id="@+id/tile_emergency_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="点击编辑" android:textColor="@color/text_secondary" android:textSize="12sp" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:weightSum="2">
+
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="124dp"
+                        android:layout_weight="1"
+                        android:layout_margin="6dp"
+                        android:background="@drawable/bg_tile_empty"
+                        android:gravity="center">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="空位"
+                            android:textColor="#B8A88A"
+                            android:textSize="12sp" />
+                    </FrameLayout>
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="124dp"
+                        android:layout_weight="1"
+                        android:layout_margin="6dp"
+                        android:background="@drawable/bg_tile_empty"
+                        android:gravity="center">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="空位"
+                            android:textColor="#B8A88A"
+                            android:textSize="12sp" />
+                    </FrameLayout>
                 </LinearLayout>
 
             </LinearLayout>

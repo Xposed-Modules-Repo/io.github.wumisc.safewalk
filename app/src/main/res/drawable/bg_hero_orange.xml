@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 行走模式 hero 图标底：暖橙渐变 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:endColor="#FBDCBE"
+        android:startColor="#FFF1E0" />
+    <stroke
+        android:width="1.5dp"
+        android:color="#D4820A" />
+    <corners android:radius="26dp" />
+</shape>

@@ -17,4 +17,10 @@
     <color name="accent_camera">#0A84FF</color>
     <color name="button_bg">#2C2C2E</color>
     <color name="nav_bg">#1C1C1E</color>
+    <!-- 浅色主题里定义的强调色在深色背景上对比度不够，这里补一套更亮的。
+         之前没覆盖，夜间「关于」页的朱红小字几乎看不见。 -->
+    <color name="seal_red">#FF6B5E</color>
+    <color name="beyond_orange">#FFB340</color>
+    <color name="bg_overlay">#70000000</color>
+    <color name="ic_launcher_background">#0A0A0A</color>
 </resources>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 智能提醒 hero 图标底：琥珀渐变 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:endColor="#FBE7BE"
+        android:startColor="#FFF6E0" />
+    <stroke
+        android:width="1.5dp"
+        android:color="#D9A441" />
+    <corners android:radius="26dp" />
+</shape>

@@ -3,7 +3,10 @@
     <style name="Theme.Safewalk" parent="Theme.MaterialComponents.Light.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <!-- 必须走 @bool：values-night 里已经定义了 false，
+             原来硬编码 true 会让深色模式下的状态栏保持深色图标，
+             背景一变成 #0A0A0A，时间/电量就整片看不见了 -->
+        <item name="android:windowLightStatusBar">@bool/light_statusbar</item>
         <item name="android:navigationBarColor">@color/bg</item>
     </style>
 </resources>

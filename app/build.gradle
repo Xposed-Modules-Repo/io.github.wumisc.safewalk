@@ -11,8 +11,8 @@ android {
         applicationId "io.github.wumisc.safewalk"
         minSdk 30
         targetSdk 35
-        versionCode 9
-        versionName "2.0-base"
+        versionCode 20
+        versionName "2.9.0"
     }
 
     compileOptions {
@@ -22,6 +22,23 @@ android {
 
     kotlinOptions {
         jvmTarget = '17'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
+    // 只做 main 源集的静态检查：
+    // 我们没有 androidTest 源集，但 AGP 仍会为其生成 lint 模型并解析一整套
+    // 测试依赖，在离线环境下会不断要求下载不存在的旧版本。
+    lint {
+        checkTestSources false
     }
 
     buildTypes {
@@ -35,4 +52,22 @@ dependencies {
     // LSPosed API，仅编译期
     compileOnly 'de.robv.android.xposed:api:82'
     implementation 'com.google.android.material:material:1.12.0'
+    // 显式对齐协程版本：material/lifecycle 的传递依赖会要 1.7.1，
+    // 离线环境下只有 1.7.3，这里直接抬到 1.7.3，避免解析到不存在的版本
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    // 同理：传递依赖会拉到 annotation-jvm 1.7.0-beta01（缓存里只有 pom 没有 jar），
+    // 显式抬到 1.8.0
+    implementation 'androidx.annotation:annotation:1.8.0'
+    // 再同理：material → activity 会要 core-ktx 1.2.0，缓存里只有 1.13.x
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.arch.core:core-runtime:2.2.0'
+    // 说明：这里原来还挂着 compose ui / material3 / foundation / activity-compose 等一整套，
+    // 但全工程没有任何一处 @Composable —— 界面全是 XML + Activity。
+    // 那些依赖只是把 29MB 的包撑大、把构建拖慢，并且多引入一堆用不到的类。
+    // 单元/界面冒烟测试（仅本地 JVM）
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+    testImplementation 'androidx.test:core:1.6.1'
+    // Miuix 组件库（版本号待确认，先注释掉）
+    // implementation 'top.yukonga.miuix.kmp:miuix:1.0.0-beta07'
 }
