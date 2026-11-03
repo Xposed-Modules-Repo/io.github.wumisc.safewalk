@@ -8,6 +8,9 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import java.util.concurrent.Executor
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -65,6 +68,26 @@ class RearCameraOverlay(
             "com.oneplus.camera",
             "com.google.android.GoogleCamera"
         )
+
+        /**
+         * close 之后至少等这么久再 open。
+         *
+         * CameraDevice.close() 只是发起断开请求，HAL 侧的释放是异步的。
+         * 紧接着调 openCamera 会和这次 close 交错，实测表现是
+         * 「正在打开相机 → 相机已打开」都打了，但 createCaptureSession
+         * 的 onConfigured 永远不回调，5 秒看门狗报「相机没有返回画面」。
+         * 400ms 足够大多数 HAL 走完 disconnect。
+         */
+        private const val REOPEN_GAP_MS = 400L
+
+        /** createCaptureSession 的宽限：超时说明会话卡死，必须主动释放重来 */
+        private const val SESSION_TIMEOUT_MS = 3_000L
+
+        /** 看门狗宽限（含模式切换的 400ms 重建延迟） */
+        private const val FRAME_TIMEOUT_MS = 6_000L
+
+        /** 相机链路最多连续重试几次（相机被别的应用占着时不能无限重开） */
+        private const val MAX_CAMERA_RETRY = 2
     }
 
     /** 当前生效的展示参数 */
@@ -83,6 +106,26 @@ class RearCameraOverlay(
     private var tv: TextureView? = null
     private var isShowing = false
     private var style = Style(MODE_FULLSCREEN, 50, CORNER_BR)
+
+    /**
+     * 相机「代号」。每次 [closeCamera] 递增一次，[openCamera] 把当时的值
+     * 带进 StateCallback；回调回来时代号对不上就说明这是上一轮的设备，立刻关掉。
+     *
+     * 没有这个代号时踩过一个很贵的坑：小窗切全屏，旧设备的 close 还没完成，
+     * 新设备就已经 onOpened 并覆盖了 [camera] 字段——旧的那台再没人持有，
+     * 也永远不会被 close，于是摄像头一直处于「被打开」状态。
+     * 后果是新的会话配置静默卡死（一帧都不来），同时手电 setTorchMode
+     * 一直抛 CAMERA_IN_USE——预览和手电一起坏，但根因只有一个。
+     */
+    private var cameraGen = 0
+    /** 正在等 openCamera 的回调。异步窗口期靠它挡住重复 open */
+    private var opening = false
+    /** 上次关闭相机的时刻，用来做 close→open 的最小间隔 */
+    private var lastCloseAt = 0L
+    /** 会话配置超时的兜底任务 */
+    private var sessionTimeout: Runnable? = null
+    /** 相机链路连续失败次数，出画面即清零 */
+    private var retryCount = 0
 
     /** 最近一帧画面的时间戳，0 表示本次显示还没出过画面 */
     private var lastFrameTs = 0L
@@ -129,7 +172,19 @@ class RearCameraOverlay(
             // 视图还在，但相机未必还在：Surface 被系统重建过、上次打开失败、
             // 或者相机被别的应用抢走，都会留下「窗口在、画面全黑」的状态。
             // 原实现直接 return，于是这个黑窗口再也不会重连。
-            if (camera == null) openCamera()
+            when {
+                camera == null && !opening -> {
+                    diag("↻ 窗口在、相机不在，重新打开")
+                    openCamera()
+                }
+                camera != null && session == null && !opening -> {
+                    // 设备在、会话没配起来：这就是「点了没反应、也没有任何日志」
+                    // 的那种僵死状态，主动清掉重连
+                    diag("↻ 窗口在、设备在，但会话缺失，重新连接")
+                    recoverCamera(cameraGen, "会话缺失")
+                }
+                else -> diag("预览已在运行，无需重复打开")
+            }
             return
         }
 
@@ -145,7 +200,12 @@ class RearCameraOverlay(
         firstFrameReported = false
 
         if (modeChanged || viewDetached) {
-            // 形态切换必须重建视图：尺寸、圆角、Surface 都绑在 View 上
+            // 形态切换必须重建视图：尺寸、圆角、Surface 都绑在 View 上。
+            //
+            // 这里**不再**额外延迟 apply：重建后的 onSurfaceTextureAvailable 会
+            // 立刻调 openCamera，而 openCamera 自己带 REOPEN_GAP_MS 冷却，
+            // 会把真正的打开动作推迟到 HAL 断开之后。把「等」集中在一个地方，
+            // 比在 show/apply 里各铺一层延迟更容易看清谁在等什么。
             releaseView()
         }
         apply()
@@ -153,7 +213,11 @@ class RearCameraOverlay(
 
     /** 隐藏悬浮窗 */
     fun hide() {
-        if (!isShowing) return
+        // 注意：不能只判断 isShowing。
+        // 失败路径里窗口可能已经被收起（isShowing=false），但相机没释放干净；
+        // 这时外部再发一次「收起」正是唯一的补救入口，直接 return 就把
+        // 这个占着摄像头的设备永久留在那里了——手电也就跟着点不亮。
+        if (!isShowing && camera == null && tv == null) return
         isShowing = false
         cancelWatchdog()
         teardown()
@@ -229,6 +293,8 @@ class RearCameraOverlay(
                     // 有帧进来就说明预览真的通了，记时间戳给看门狗
                     lastFrameTs = System.currentTimeMillis()
                     failureReported = false
+                    // 通了就把失败计数清零：下次再出问题仍然有完整的重试额度
+                    retryCount = 0
                     if (!firstFrameReported) {
                         firstFrameReported = true
                         stage("✅ 已收到画面")
@@ -378,7 +444,17 @@ class RearCameraOverlay(
         surfaceTexture = null
     }
 
+    /**
+     * 释放相机（会话 → 设备 → Surface），并推进代号。
+     *
+     * 代号一推进，所有还在飞的 StateCallback 都会认出「我已经过期」并自行关掉
+     * 手里的设备——这是防止设备泄漏的唯一手段。close() 本身不等待完成，
+     * 所以这里同时记下时刻，让下一次 openCamera 先等 HAL 断开。
+     */
     private fun closeCamera() {
+        cameraGen++
+        opening = false
+        cancelSessionTimeout()
         session?.let { try { it.close() } catch (_: Throwable) {} }
         session = null
         camera?.let { try { it.close() } catch (_: Throwable) {} }
@@ -386,6 +462,12 @@ class RearCameraOverlay(
         previewSurface?.let { try { it.release() } catch (_: Throwable) {} }
         previewSurface = null
         surfaceTexture = null
+        lastCloseAt = android.os.SystemClock.uptimeMillis()
+    }
+
+    private fun cancelSessionTimeout() {
+        sessionTimeout?.let { mainHandler.removeCallbacks(it) }
+        sessionTimeout = null
     }
 
     private fun hasCameraPermission(): Boolean =
@@ -401,8 +483,8 @@ class RearCameraOverlay(
      * 画面看门狗。
      *
      * 「窗口加进去了」不等于「能看到画面」：缺相机权限、相机被占用、Surface 失效，
-     * 都会得到一个 50% 透明度的黑框。用户分不清「黑屏」和「没反应」，
-     * 所以这里给 5 秒宽限：一帧都没有就收起窗口并明确报错。
+     * 都会得到一个半透明的黑框。用户分不清「黑屏」和「没反应」，
+     * 所以这里给 6 秒宽限：一帧都没有就收起窗口并明确报错。
      */
     private fun armFrameWatchdog() {
         cancelWatchdog()
@@ -412,31 +494,48 @@ class RearCameraOverlay(
             if (lastFrameTs >= start) return@Runnable
             // 报错前先把现场参数写进日志：黑屏到底是窗口、相机还是合成的问题，
             // 一次就能分辨（cam/session 都非空却没帧 = 合成侧；为空 = 相机没开起来）
-            diag("❌ 5 秒无画面 | mode=${style.mode} opacity=${style.opacity} " +
-                    "cam=${camera != null} session=${session != null} " +
+            diag("❌ ${FRAME_TIMEOUT_MS}ms 无画面 | mode=${style.mode} opacity=${style.opacity} " +
+                    "cam=${camera != null} session=${session != null} opening=$opening " +
+                    "gen=$cameraGen retry=$retryCount " +
                     "surface=${surfaceTexture != null} view=${tv?.width}x${tv?.height}")
             reportFailure(if (hasCameraPermission()) "相机没有返回画面" else "应用没有相机权限")
             hide()
         }
         frameWatchdog = r
-        mainHandler.postDelayed(r, 5_000L)
+        mainHandler.postDelayed(r, FRAME_TIMEOUT_MS)
     }
 
     private fun reportFailure(reason: String) {
         if (failureReported) return
         failureReported = true
         diag("❌ 预览失败: $reason")
-        stage("❌ $reason（5 秒内没有收到画面）")
+        stage("❌ $reason（${FRAME_TIMEOUT_MS / 1000} 秒内没有收到画面）")
         try { onFailure?.invoke(reason) } catch (_: Throwable) {}
     }
 
     @android.annotation.SuppressLint("MissingPermission")
     private fun openCamera() {
         try {
-            // 已经有相机会话就不要重复开：onSurfaceTextureAvailable 在某些 ROM 上
-            // 会因为一次布局回调触发两次，第二次会把 camera 引用覆盖掉，
-            // 被覆盖的那个再也没人 close，摄像头指示灯就一直亮着
-            if (camera != null) return
+            if (!isShowing) return
+            // 已经在开 / 已经开着，都不要再发起一次。
+            //
+            // 以前只判断 camera != null，挡不住「第一次 open 的回调还没回来」这段
+            // 异步窗口：onSurfaceTextureAvailable 在部分 ROM 上会连回两次，
+            // 两次都看到 camera 为 null，于是发起两次 cm.openCamera，
+            // 两个设备句柄都算打开成功，后一个覆盖字段，前一个永久泄漏。
+            if (opening || camera != null) return
+
+            // 刚 close 过：HAL 还没断开，等冷却结束再来
+            if (lastCloseAt != 0L) {
+                val since = android.os.SystemClock.uptimeMillis() - lastCloseAt
+                if (since < REOPEN_GAP_MS) {
+                    val wait = REOPEN_GAP_MS - since
+                    diag("相机刚释放 ${since}ms，${wait}ms 后重开")
+                    mainHandler.removeCallbacks(reopenTask)
+                    mainHandler.postDelayed(reopenTask, wait)
+                    return
+                }
+            }
 
             // 权限检查必须内联，lint 的 MissingPermission 只认同方法内的显式判断
             if (ctx.checkSelfPermission(android.Manifest.permission.CAMERA) !=
@@ -455,7 +554,7 @@ class RearCameraOverlay(
                 // Surface 回调比布局早的 ROM 上会先拿到 0×0。
                 // 只 post 一次经常还是 0（post 跑在同一帧的下一轮消息里，
                 // 布局可能还没完成），这里退避式重试几次，总时长控制在 0.6 秒内，
-                // 远小于看门狗的 5 秒。
+                // 远小于看门狗的 6 秒。
                 if (layoutRetry < 3) {
                     layoutRetry++
                     view.postDelayed({ openCamera() }, 200L)
@@ -475,16 +574,34 @@ class RearCameraOverlay(
                 previewSurface = null
                 return
             }
-            Log.i(TAG, "打开后置摄像头: $id")
+            // 捕获发起时的代号：回调回来要是对不上，说明这次请求已经过期
+            val gen = cameraGen
+            opening = true
+            Log.i(TAG, "打开后置摄像头: $id gen=$gen")
             stage("正在打开相机 id=$id")
             cm.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
+                    if (gen != cameraGen) {
+                        // 这是上一轮的设备：close 已经发起，但握手先完成了。
+                        // 必须自己关掉，否则它永远占着摄像头——新会话配置不出来、
+                        // 手电也一直是 CAMERA_IN_USE。
+                        try { d.close() } catch (_: Throwable) {}
+                        diag("⚠️ 丢弃过期相机句柄 gen=$gen 当前=$cameraGen")
+                        return
+                    }
+                    opening = false
                     // 打开是异步的：如果这期间用户已经收起悬浮窗，
                     // 直接持有相机会导致摄像头常亮（耗电 + 隐私指示灯不灭）
                     if (!isShowing || tv == null) {
                         try { d.close() } catch (_: Throwable) {}
+                        lastCloseAt = android.os.SystemClock.uptimeMillis()
                         diag("⚠️ 相机打开时视图已销毁，立即释放")
                         stage("⚠️ 相机打开时窗口已关闭，立即释放")
+                        return
+                    }
+                    if (camera != null) {
+                        try { d.close() } catch (_: Throwable) {}
+                        diag("⚠️ 已有相机设备，丢弃新句柄 gen=$gen")
                         return
                     }
                     stage("相机已打开")
@@ -493,50 +610,124 @@ class RearCameraOverlay(
                         val builder = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                         builder.addTarget(surface)
                         builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        d.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
-                            override fun onConfigured(cs: CameraCaptureSession) {
-                                if (!isShowing) {
-                                    try { cs.close() } catch (_: Throwable) {}
-                                    return
+                        // 用 SessionConfiguration(Executor) 替代已废弃的
+                        // createCaptureSession(List<Surface>, StateCallback, Handler)
+                        val outputConfig = OutputConfiguration(surface)
+                        val sessionConfig = SessionConfiguration(
+                            SessionConfiguration.SESSION_REGULAR,
+                            listOf(outputConfig),
+                            Executor { mainHandler.post(it) },
+                            object : CameraCaptureSession.StateCallback() {
+                                override fun onConfigured(cs: CameraCaptureSession) {
+                                    if (gen != cameraGen || !isShowing) {
+                                        try { cs.close() } catch (_: Throwable) {}
+                                        return
+                                    }
+                                    cancelSessionTimeout()
+                                    session = cs
+                                    stage("预览流已启动")
+                                    try {
+                                        cs.setRepeatingRequest(builder.build(), null, mainHandler)
+                                    } catch (t: Throwable) {
+                                        diag("❌ 预览请求失败: ${t.message}")
+                                    }
                                 }
-                                session = cs
-                                stage("预览流已启动")
-                                try {
-                                    cs.setRepeatingRequest(builder.build(), null, mainHandler)
-                                } catch (_: Throwable) {}
-                            }
 
-                            override fun onConfigureFailed(cs: CameraCaptureSession) {
-                                Log.e(TAG, "会话配置失败")
-                                stage("❌ 相机会话配置失败")
+                                override fun onConfigureFailed(cs: CameraCaptureSession) {
+                                    if (gen != cameraGen) return
+                                    cancelSessionTimeout()
+                                    Log.e(TAG, "会话配置失败")
+                                    stage("❌ 相机会话配置失败")
+                                    recoverCamera(gen, "会话配置失败")
+                                }
                             }
-                        }, mainHandler)
+                        )
+                        d.createCaptureSession(sessionConfig)
+
+                        // 会话配置的兜底：有的机型在相机被占用时 onConfigured 和
+                        // onConfigureFailed 一个都不回调，就这么静默挂着。
+                        // 不主动超时的话，只能等看门狗报「没有画面」，什么线索都没有。
+                        cancelSessionTimeout()
+                        val to = Runnable {
+                            sessionTimeout = null
+                            if (gen != cameraGen || session != null) return@Runnable
+                            diag("❌ 会话 ${SESSION_TIMEOUT_MS}ms 未就绪（相机可能被别的应用占用）")
+                            stage("❌ 相机会话超时")
+                            recoverCamera(gen, "会话配置超时")
+                        }
+                        sessionTimeout = to
+                        mainHandler.postDelayed(to, SESSION_TIMEOUT_MS)
                     } catch (t: Throwable) {
                         Log.e(TAG, "启动预览失败", t)
+                        diag("❌ 启动预览失败: ${t.message}")
+                        recoverCamera(gen, "启动预览异常")
                     }
                 }
 
                 override fun onDisconnected(d: CameraDevice) {
                     try { d.close() } catch (_: Throwable) {}
+                    if (gen != cameraGen) return
+                    opening = false
                     camera = null
                     session = null
+                    cancelSessionTimeout()
+                    diag("⚠️ 相机被其他应用抢占")
                 }
 
                 override fun onError(d: CameraDevice, error: Int) {
                     try { d.close() } catch (_: Throwable) {}
+                    if (gen != cameraGen) return
+                    opening = false
                     camera = null
                     session = null
+                    cancelSessionTimeout()
                     Log.e(TAG, "相机错误: $error")
                     diag("❌ 相机错误: $error")
+                    recoverCamera(gen, "相机错误 $error")
                 }
             }, mainHandler)
         } catch (t: Throwable) {
+            opening = false
             Log.e(TAG, "打开相机失败", t)
+            diag("❌ 打开相机异常: ${t.message}")
             // openCamera 抛异常时 Surface 已经建好了，不释放就永远挂在那里
             try { previewSurface?.release() } catch (_: Throwable) {}
             previewSurface = null
+            lastCloseAt = android.os.SystemClock.uptimeMillis()
         }
     }
+
+    /**
+     * 相机链路出错后的统一恢复：清干净、重新计时、隔一小会儿再开。
+     *
+     * 限制重试次数（[MAX_CAMERA_RETRY]），避免「相机被别的应用占着」时
+     * 每 3 秒开一次、无限循环烧电。真正收到画面后计数清零。
+     */
+    private fun recoverCamera(gen: Int, why: String) {
+        if (gen != cameraGen) return
+        if (!isShowing) {
+            closeCamera()
+            return
+        }
+        closeCamera()
+        if (retryCount >= MAX_CAMERA_RETRY) {
+            retryCount = 0
+            diag("❌ $why，已重试 $MAX_CAMERA_RETRY 次仍失败，放弃")
+            reportFailure("相机没有返回画面")
+            hide()
+            return
+        }
+        retryCount++
+        diag("↻ $why，清理后重试（第 $retryCount/$MAX_CAMERA_RETRY 次）")
+        stage("↻ $why，正在重试")
+        // 新一轮要有自己的宽限窗口，不能沿用上一轮的看门狗计时
+        armFrameWatchdog()
+        mainHandler.removeCallbacks(reopenTask)
+        mainHandler.postDelayed(reopenTask, REOPEN_GAP_MS)
+    }
+
+    /** 冷却结束后的重开入口。单独抽成字段，方便 removeCallbacks 去重 */
+    private val reopenTask = Runnable { if (isShowing) openCamera() }
 
     private fun backCameraId(): String? {
         try {

@@ -86,6 +86,20 @@
             android:exported="true"
             android:label="急救卡" />
 
+        <!--
+            手电通知按钮的落点。
+            必须 exported：通知由 SystemUI 里的 Hook 发出，点击时由系统拉起本页。
+            透明、不进最近任务、不保留历史，用户只会看到一次 Toast 和亮起的灯。
+        -->
+        <activity
+            android:name=".TorchActionActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Safewalk.Transparent" />
+
         <activity
             android:name=".EmergencyAlertActivity"
             android:exported="false"
@@ -128,11 +142,12 @@
             android:label="出门踩坑指南" />
 
         <!--
-            原先这里还有一个 TorchActionReceiver / TorchActionService，
-            它们在**应用进程**里直接调 CameraManager.setTorchMode。
-            那既需要 App 的相机权限（就是为了它才弹授权框），
-            又和 Hook 端的手电通道重复。已删除，手电统一由 SystemUI 进程里
-            的 Hook 执行，App 侧一个相机调用都不剩。
+            手电曾短暂地只走「Hook → SystemUI 进程 setTorchMode」一条路，
+            理由是应用进程调相机要申请权限。但预览本身就在应用进程里开相机，
+            权限早就要过了；而预览正占着摄像头时，系统进程那条路必然
+            CAMERA_IN_USE，表现为「手电点了没反应」。
+            现在主路径回到应用进程（TorchActionReceiver → TorchController），
+            Hook 那条保留作兜底。
         -->
 
         <!--
@@ -155,6 +170,22 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="io.github.wumisc.safewalk.CRASH_DETECTED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            手电通知按钮（App 进程）。
+            通知可能由 SystemUI 里的 Hook 发出，按钮必须能跨进程投递到这里，
+            所以 exported=true，靠令牌挡伪造。
+            实际开灯由 TorchController 完成：它先让后视预览释放摄像头再点灯，
+            这是应用内唯一能解决 CAMERA_IN_USE 的地方。
+        -->
+        <receiver
+            android:name=".TorchActionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.wumisc.safewalk.APP_TORCH_ON" />
+                <action android:name="io.github.wumisc.safewalk.APP_TORCH_OFF" />
             </intent-filter>
         </receiver>
 

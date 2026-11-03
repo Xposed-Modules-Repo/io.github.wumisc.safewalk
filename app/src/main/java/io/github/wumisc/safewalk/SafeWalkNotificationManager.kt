@@ -153,22 +153,28 @@ class SafeWalkNotificationManager(private val ctx: Context) {
 
     /**
      * 夜间手电通知：超级岛带两个按钮
-     * 1. 开手电筒 → 广播给 LSP Hook 控制闪光灯
+     * 1. 开手电筒 → 投给应用自己的 TorchActionReceiver（它负责让预览先让路再点灯）
      * 2. 打开SafeWalk → 打开配置页
      */
     fun flashlightSuggest() {
         if (!checkCooldown(ID_TORCH)) return
 
         // 按钮1：打开手电筒。夜间提醒的语义就是「太黑了，帮你把灯打开」，
-        // 所以发明确的 OPEN_TORCH 指令（不是 toggle）。toggle 有一个致命问题：
-        // 它靠 Hook 端自己记的翻转状态，和手电真实状态（TorchCallback 同步的）
+        // 所以发明确的 ON 指令（不是 toggle）。toggle 有一个致命问题：
+        // 它靠接收端自己记的翻转状态，和手电真实状态（TorchCallback 同步的）
         // 会脱节——用户先用手电再点按钮，就会出现「点开变关」。
-        // 这里统一走 OPEN_TORCH/CLOSE_TORCH 这条绝对开关通道（见 torchReceiver）。
-        val torchIntent = Intent(io.github.wumisc.safewalk.torch.ACTION_OPEN_TORCH).apply {
-            setPackage(SYSTEMUI_PKG)
+        //
+        // 落点是**透明 Activity**，不是广播。
+        // 夜间应用进程常被 ROM 回收，跨进程广播能不能把它拉起来全看后台策略，
+        // HyperOS 上大概率直接丢弃——这就是「点了没反应、日志里连一行都没有」。
+        // 而点击通知是用户操作，PendingIntent.getActivity 一定能拉起进程，
+        // 只有这样才能保证 setTorchMode 真的被执行。
+        val torchIntent = Intent(io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_ON).apply {
+            setClassName(APP_PKG, "$APP_PKG.TorchActionActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN)
         }
-        val torchPi = PendingIntent.getBroadcast(ctx, 1, torchIntent,
+        val torchPi = PendingIntent.getActivity(ctx, 1, torchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         // 按钮2：打开SafeWalk

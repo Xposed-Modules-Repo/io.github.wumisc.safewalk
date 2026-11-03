@@ -51,6 +51,15 @@ object DiagLog {
     @Volatile
     private var logFile: File? = null
 
+    /**
+     * 日志总开关。关了以后 log() 直接 return：不再开文件流、不再写环形缓冲，
+     * 省掉每条日志一次 FileOutputStream 的 I/O（主要耗电点）。
+     * 默认 true，与旧版一致；用户在「智能提醒」里关掉即可省电。
+     */
+    @JvmField
+    @Volatile
+    var enabled: Boolean = true
+
     /** 是否已经做过一次完整探测（失败也算，避免每写一条就重探一遍目录） */
     @Volatile
     private var resolved = false
@@ -77,6 +86,13 @@ object DiagLog {
      */
     @JvmStatic
     fun init(ctx: Context) {
+        // 每次 init 都刷新总开关（用户在设置里改完开关，下次拉起服务即生效）。
+        // 注意：Hook 进程读不到本应用 sp，它那边由 SafeWalkLSPHook.diag() 单独按配置过滤。
+        try {
+            enabled = ctx.getSharedPreferences("safewalk_xsp", Context.MODE_PRIVATE)
+                .getBoolean("enableDiagLog", true)
+        } catch (_: Throwable) {
+        }
         if (resolved) {
             // 授权可能是 App 还活着的时候完成的：之前已经降级到别的目录，
             // 现在能写用户目录了就必须切过去，否则用户授权完还是找不到日志。
@@ -181,6 +197,7 @@ object DiagLog {
 
     @JvmStatic
     fun log(msg: String) {
+        if (!enabled) return
         Log.i(TAG, msg)
         val line = stamp() + " " + msg
         synchronized(ringLock) {
@@ -242,6 +259,26 @@ object DiagLog {
     /** 供页面显示：每个候选目录探测结果 */
     @JvmStatic
     fun probeReport(): String = lastProbeReport
+
+    /**
+     * 读日志文件末尾若干行，直接显示在实验区里。
+     *
+     * 用户手上没有 adb，出问题时唯一能提供的现场就是这段文字 ——
+     * 以前只能说「去抓 logcat」，等于把排查门槛抬到了开发者。
+     */
+    @JvmStatic
+    fun tail(maxLines: Int): String {
+        val f = logFile ?: return "日志未落盘（${lastError ?: "尚未初始化"}）"
+        return try {
+            if (!f.exists()) return "日志文件还不存在：${f.absolutePath}"
+            val all = f.readLines()
+            val from = (all.size - maxLines).coerceAtLeast(0)
+            val body = all.subList(from, all.size).joinToString("\n")
+            if (body.isBlank()) "日志文件是空的：${f.absolutePath}" else body
+        } catch (t: Throwable) {
+            "读取失败：${t.message}（${f.absolutePath}）"
+        }
+    }
 
     /**
      * 本进程内存里的最近日志。

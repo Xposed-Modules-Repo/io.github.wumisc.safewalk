@@ -259,6 +259,25 @@ public final class MainActivity extends Activity {
             startActivity(new Intent(this, LabActivity.class));
             return true;
         });
+
+        // 诊断日志磁贴：点一下开/关切换
+        android.view.View tileLog = findViewById(R.id.btn_toggle_log);
+        android.widget.TextView tvLog = findViewById(R.id.tv_toggle_log);
+        Runnable refreshLogTile = () -> {
+            boolean on = SafePrefs.getBool(xsp(), SafeWalkPrefKey.enableDiagLog, true);
+            tvLog.setText(on ? "🪵 诊断日志：开" : "🪵 诊断日志：关（省电）");
+        };
+        refreshLogTile.run();
+        tileLog.setOnClickListener(v -> {
+            boolean nowOn = !SafePrefs.getBool(xsp(), SafeWalkPrefKey.enableDiagLog, true);
+            xsp().edit().putBoolean(SafeWalkPrefKey.enableDiagLog, nowOn).commit();
+            SafeWalkConfig.exportConfig(this);
+            DiagLog.enabled = nowOn;
+            DiagLog.log("[diag] 诊断日志 → " + nowOn);
+            refreshLogTile.run();
+            android.widget.Toast.makeText(this, nowOn ? "诊断日志已开" : "诊断日志已关",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        });
     }
 
     // ========== 配置读写 ==========
@@ -317,7 +336,10 @@ public final class MainActivity extends Activity {
         tileSmartStatus.setText(smart);
         tileSmartStatus.setTextColor(swEnable && on > 0 ? COLOR_ON : COLOR_OFF);
 
-        String walk = swRearCam ? "行走模式已开启" : "行走模式已关闭";
+        boolean walkAuto = SafePrefs.getBool(xsp(), SafeWalkPrefKey.rearCamAuto, false);
+        String walk;
+        if (!swRearCam) walk = "行走模式已关闭";
+        else walk = walkAuto ? "已开启 · 走动时自动显示" : "已开启 · 路况常显";
         if (!swEnable) walk = "总开关未开（" + (swRearCam ? "已开启" : "未开启") + "）";
         tileWalkStatus.setText(walk);
         tileWalkStatus.setTextColor(swEnable && swRearCam ? COLOR_ON : COLOR_OFF);

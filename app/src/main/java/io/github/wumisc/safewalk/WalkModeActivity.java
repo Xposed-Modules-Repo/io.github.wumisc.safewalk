@@ -11,10 +11,10 @@ import android.widget.Toast;
 import androidx.appcompat.widget.SwitchCompat;
 
 /**
- * 行走模式二级菜单。
+ * 行走模式二级菜单（2.10 起为纯手动模式）。
  *
- * 原首页「行走模式」磁贴收进这里，同时把手电静置时长之外的行走相关参数
- * （形态、位置、透明度、预览、步行判定阈值）统一在一页管理。
+ * 语义极简：开关打开 = 身后路况常显，关闭 = 收起。不再有「自动检测步行」、
+ * 步态判定阈值之类的东西——那套自动开关在真机上反复失效，已经整体移除。
  *
  * 所有改动即时写入并导出 JSON，Hook 端 2 秒轮询内生效。
  */
@@ -23,9 +23,12 @@ public final class WalkModeActivity extends Activity {
     private SharedPreferences sp;
 
     private SwitchCompat swRearCam, swAuto;
-    private TextView heroSummary, tvAutoDesc, tvCornerTitle, tvOpacity, tvSteps, tvStatic;
+    private TextView heroSummary, tvAutoDesc, tvCornerTitle, tvOpacity;
     private TextView tvCamPermHint, tvPreviewStage;
-    private SeekBar seekOpacity, seekSteps, seekStatic;
+
+    private SeekBar seekOpacity;
+    private SeekBar seekGaitSteps, seekGaitStop;
+    private TextView tvGaitSteps, tvGaitStop;
     private TextView[] modeChips, posChips;
 
     private String rearMode = "fullscreen";
@@ -49,7 +52,6 @@ public final class WalkModeActivity extends Activity {
         refreshAll();
         DiagLog.init(getApplicationContext());
         DiagLog.log("[walk] 打开行走模式页 rearCam=" + swRearCam.isChecked()
-                + " auto=" + swAuto.isChecked()
                 + " mode=" + rearMode
                 + " opacity=" + (seekOpacity.getProgress() + 10)
                 + " master=" + SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
@@ -60,11 +62,8 @@ public final class WalkModeActivity extends Activity {
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
 
         heroSummary = findViewById(R.id.hero_walk_summary);
-        tvAutoDesc = findViewById(R.id.tv_auto_desc);
         tvCornerTitle = findViewById(R.id.tv_corner_title);
         tvOpacity = findViewById(R.id.tv_opacity);
-        tvSteps = findViewById(R.id.tv_steps);
-        tvStatic = findViewById(R.id.tv_static);
 
         // 这一行回答「预览现在归谁管」：相机和悬浮窗都在本应用进程，
         // 缺了权限就把原因摆在脸上，不让用户对着黑框猜功能是不是假的。
@@ -75,10 +74,12 @@ public final class WalkModeActivity extends Activity {
 
         swRearCam = findViewById(R.id.sw_rear_cam);
         swAuto = findViewById(R.id.sw_auto);
-
+        tvAutoDesc = findViewById(R.id.tv_auto_desc);
         seekOpacity = findViewById(R.id.seek_opacity);
-        seekSteps = findViewById(R.id.seek_steps);
-        seekStatic = findViewById(R.id.seek_static);
+        seekGaitSteps = findViewById(R.id.seek_gait_steps);
+        seekGaitStop = findViewById(R.id.seek_gait_stop);
+        tvGaitSteps = findViewById(R.id.tv_gait_steps);
+        tvGaitStop = findViewById(R.id.tv_gait_stop);
 
         modeChips = new TextView[]{
                 findViewById(R.id.chip_mode_full),
@@ -92,12 +93,8 @@ public final class WalkModeActivity extends Activity {
         };
 
         findViewById(R.id.card_rear_cam).setOnClickListener(v -> swRearCam.toggle());
-        // 总开关关闭时整行禁用，父容器点击也要拦住，否则能绕过置灰状态。
-        // 但拦住之后必须给一句说明——「点了完全没反应」和功能坏了在用户眼里是一回事。
-        findViewById(R.id.card_auto).setOnClickListener(v -> {
-            if (swAuto.isEnabled()) swAuto.toggle();
-            else Toast.makeText(this, "先打开上方的行走模式开关", Toast.LENGTH_SHORT).show();
-        });
+        // 整卡可点切自动开关；自动开关关 = 手动常显（2.10 的默认行为）
+        findViewById(R.id.card_auto).setOnClickListener(v -> swAuto.toggle());
 
         modeChips[0].setOnClickListener(v -> selectMode(RearCameraOverlay.MODE_FULLSCREEN));
         modeChips[1].setOnClickListener(v -> selectMode(RearCameraOverlay.MODE_SMALLWINDOW));
@@ -107,13 +104,6 @@ public final class WalkModeActivity extends Activity {
             posChips[i].setOnClickListener(v -> selectCorner(key));
         }
 
-        findViewById(R.id.btn_preview_full).setOnClickListener(
-                v -> sendPreview("open_full"));
-        findViewById(R.id.btn_preview_small).setOnClickListener(
-                v -> sendPreview("open_small"));
-        findViewById(R.id.btn_preview_close).setOnClickListener(
-                v -> sendPreview("close"));
-
         // 重启系统界面：整卡可点，右侧按钮只是视觉提示（点按钮会冒泡到卡片）
         View restartCard = findViewById(R.id.card_restart_systemui);
         restartCard.setOnClickListener(v -> confirmRestart());
@@ -122,7 +112,8 @@ public final class WalkModeActivity extends Activity {
     private void loadConfig() {
         // 统一走 SafePrefs：类型对就用原生读取，历史上类型变过（int↔float）也不会 CCE
         swRearCam.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false));
-        swAuto.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, true));
+        // 自动跟随步行默认关：默认行为是 2.10 的手动常显，用户主动打开才进入自动
+        swAuto.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false));
 
         rearMode = SafePrefs.getString(sp, SafeWalkPrefKey.rearCamMode, RearCameraOverlay.MODE_FULLSCREEN);
         if (rearMode == null) rearMode = RearCameraOverlay.MODE_FULLSCREEN;
@@ -133,17 +124,18 @@ public final class WalkModeActivity extends Activity {
         opacity = Math.max(10, Math.min(100, opacity));
         seekOpacity.setProgress(opacity - 10);
 
-        int steps = SafePrefs.getInt(sp, SafeWalkPrefKey.stepThreshold, 50);
-        steps = Math.max(20, Math.min(200, steps));
-        seekSteps.setProgress(steps - 20);
-
-        int staticSec = SafePrefs.getInt(sp, SafeWalkPrefKey.staticResetSec, 20);
-        staticSec = Math.max(5, Math.min(60, staticSec));
-        seekStatic.setProgress(staticSec - 5);
-
         updateOpacityLabel(opacity);
-        updateStepsLabel(steps);
-        updateStaticLabel(staticSec);
+
+        // 确认步数 2~10（滑条 0~8），默认 5；停下延迟 5~30 秒（滑条 0~25），默认 10
+        int steps = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5);
+        steps = Math.max(2, Math.min(10, steps));
+        seekGaitSteps.setProgress(steps - 2);
+        tvGaitSteps.setText("连续走 " + steps + " 步才弹出预览");
+
+        int stopSec = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, 10);
+        stopSec = Math.max(5, Math.min(30, stopSec));
+        seekGaitStop.setProgress(stopSec - 5);
+        tvGaitStop.setText("停下后 " + stopSec + " 秒收起预览");
     }
 
     private void bindListeners() {
@@ -153,8 +145,7 @@ public final class WalkModeActivity extends Activity {
             SafeWalkConfig.exportConfig(this);
             DiagLog.log("[walk] 行走模式开关 → " + (c ? "开" : "关"));
             if (c) {
-                // 开关打开 ≠ 立刻弹相机：先走权限检查，缺什么补什么，
-                // 两样都齐了才启动预览服务
+                // 开关打开：先走权限检查，两样都齐了就启动预览服务，路况常显
                 ensurePermissionsThenStart();
             } else {
                 WalkPreviewService.send(this, WalkPreviewService.ACTION_STOP, null);
@@ -167,7 +158,13 @@ public final class WalkModeActivity extends Activity {
             if (binding) return;
             sp.edit().putBoolean(SafeWalkPrefKey.rearCamAuto, c).commit();
             SafeWalkConfig.exportConfig(this);
+            DiagLog.log("[walk] 自动跟随步行 → " + (c ? "开（走动显示/停下收起）" : "关（常显）"));
             refreshDependencies();
+            // 自动开关切换要立刻反映到运行中的预览服务（启动/停止步态监听），
+            // 否则服务要等到下次重建才知道 rearCamAuto 变了。手动常显本身不受影响。
+            if (swRearCam.isChecked()) {
+                WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);
+            }
         });
 
         seekOpacity.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -185,29 +182,30 @@ public final class WalkModeActivity extends Activity {
             }
         });
 
-        seekSteps.setOnSeekBarChangeListener(new SimpleSeekListener() {
+        seekGaitSteps.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override
             public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                updateStepsLabel(progress + 20);
+                tvGaitSteps.setText("连续走 " + (progress + 2) + " 步才弹出预览");
             }
-
             @Override
             public void onStopTrackingTouch(SeekBar sb) {
-                sp.edit().putInt(SafeWalkPrefKey.stepThreshold, sb.getProgress() + 20).commit();
+                sp.edit().putInt(SafeWalkPrefKey.gaitConfirmSteps, sb.getProgress() + 2).commit();
                 SafeWalkConfig.exportConfig(WalkModeActivity.this);
+                // 新步数阈值要立刻作用于运行中的步态监听
+                if (swRearCam.isChecked()) WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);
             }
         });
 
-        seekStatic.setOnSeekBarChangeListener(new SimpleSeekListener() {
+        seekGaitStop.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override
             public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                updateStaticLabel(progress + 5);
+                tvGaitStop.setText("停下后 " + (progress + 5) + " 秒收起预览");
             }
-
             @Override
             public void onStopTrackingTouch(SeekBar sb) {
-                sp.edit().putInt(SafeWalkPrefKey.staticResetSec, sb.getProgress() + 5).commit();
+                sp.edit().putInt(SafeWalkPrefKey.gaitStopSec, sb.getProgress() + 5).commit();
                 SafeWalkConfig.exportConfig(WalkModeActivity.this);
+                if (swRearCam.isChecked()) WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);
             }
         });
     }
@@ -273,10 +271,8 @@ public final class WalkModeActivity extends Activity {
 
     /** 相机权限 + 悬浮窗权限都齐了才启动预览服务，缺哪样补哪样 */
     private void ensurePermissionsThenStart() {
-        // 总开关关着时只记录偏好、不弹预览。
-        // 否则用户在这里打开开关，预览窗口闪一下就被 Hook 收掉
-        //（masterEnabled=false 时 updateOverlay 立刻发 hide），
-        // 体感完全是「这功能坏了」，而且两份逻辑还互相打架。
+        // 总开关关着时只记录偏好、不弹预览，否则用户在这里打开开关，
+        // 预览窗口闪一下就被 Hook 收掉，体感完全是「这功能坏了」
         if (!SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)) {
             Toast.makeText(this, "总开关已关闭：设置已记录，但不会生效", Toast.LENGTH_LONG).show();
             return;
@@ -343,37 +339,6 @@ public final class WalkModeActivity extends Activity {
 
     private android.content.BroadcastReceiver previewStageReceiver;
 
-    /** 手动预览按钮：直接指挥本应用的预览服务 */
-    private void sendPreview(String action) {
-        if (!swRearCam.isChecked()) {
-            Toast.makeText(this, "请先打开行走模式开关", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (!SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)) {
-            Toast.makeText(this, "总开关已关闭，预览不会生效。请先在首页打开总开关", Toast.LENGTH_LONG).show();
-            return;
-        }
-        boolean camOk = checkSelfPermission(android.Manifest.permission.CAMERA)
-                == android.content.pm.PackageManager.PERMISSION_GRANTED;
-        boolean overlayOk = android.provider.Settings.canDrawOverlays(this);
-        if (!camOk || !overlayOk) {
-            Toast.makeText(this,
-                    camOk ? "先开启悬浮窗权限（点上方红色提示行）" : "先授权相机（点上方红色提示行）",
-                    Toast.LENGTH_LONG).show();
-            updateCameraPermissionHint(true);
-            return;
-        }
-        String mode = "open_full".equals(action) ? "fullscreen"
-                : ("open_small".equals(action) ? "smallwindow" : null);
-        if (mode == null) {
-            WalkPreviewService.send(this, WalkPreviewService.ACTION_HIDE, null);
-            Toast.makeText(this, "已关闭预览", Toast.LENGTH_SHORT).show();
-        } else {
-            startPreviewService(mode);
-            Toast.makeText(this, "预览已调出", Toast.LENGTH_SHORT).show();
-        }
-    }
-
     // ========== 重启系统界面 ==========
 
     private void confirmRestart() {
@@ -422,18 +387,27 @@ public final class WalkModeActivity extends Activity {
         boolean master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true);
 
         if (!master) {
-            // 这里的开关打开也没用，Hook 端第一行就 return 了
-            // （之前不说，用户会以为「开了没反应是坏了」）
+            // 总开关关闭时这里的开关打开也没用
             heroSummary.setText("总开关已关闭 · 行走模式不生效");
+        } else if (rearOn && auto) {
+            heroSummary.setText("已开启 · 自动（走动显示 / 停下收起）");
+        } else if (rearOn) {
+            heroSummary.setText("已开启 · 路况常显");
         } else {
-            heroSummary.setText(rearOn
-                    ? (auto ? "行走模式已开启 · 自动" : "行走模式已开启 · 常显")
-                    : "行走模式已关闭");
+            heroSummary.setText("已关闭");
         }
 
-        tvAutoDesc.setText(auto ? "走起来自动开，停下自动收" : "关闭后常显，需手动关闭");
+        // 自动开关在行走模式关着时变灰但仍可点：点了会走这里重算，副标题
+        // 保持「已关闭」，用户能看出前置条件；彻底禁用反而像「点了没反应」
+        boolean autoUsable = rearOn;
+        swAuto.setEnabled(autoUsable);
+        swAuto.setAlpha(autoUsable ? 1f : 0.45f);
+        if (tvAutoDesc != null) {
+            tvAutoDesc.setText(auto
+                    ? "走起来自动显示，停下自动收起"
+                    : "关闭时路况常显，直到手动关闭开关");
+        }
 
-        setEnabledState(swAuto, rearOn);
         // 形态/位置 chip 保持可点（只是变淡），否则用户点上去毫无反馈，
         // 和「点了没反应」是同一种观感问题
         setDimmed(modeChips[0], rearOn);
@@ -491,8 +465,7 @@ public final class WalkModeActivity extends Activity {
                 .setTitle("预览是怎么看到路的")
                 .setMessage("画面由本应用自己采集：申请相机权限后，App 打开后置摄像头，"
                         + "把画面叠在屏幕上（全屏半透明或角落小窗）。\n\n"
-                        + "「自动检测步行」开着时，走起来自动亮出画面、停下自动收起——"
-                        + "判定由系统界面里的模块完成，它不再碰相机。")
+                        + "行走模式开关打开后，画面会持续显示，直到你手动关闭开关。")
                 .setPositiveButton("知道了", null)
                 .show();
     }
@@ -529,14 +502,6 @@ public final class WalkModeActivity extends Activity {
 
     private void updateOpacityLabel(int value) {
         tvOpacity.setText("画面透明度 " + value + "%");
-    }
-
-    private void updateStepsLabel(int value) {
-        tvSteps.setText("5 分钟内累计 " + value + " 步触发判定");
-    }
-
-    private void updateStaticLabel(int value) {
-        tvStatic.setText("静置 " + value + " 秒判定为停下");
     }
 
     @Override
@@ -583,13 +548,11 @@ public final class WalkModeActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        // 三个滑块可能是在拖动中被切走的，onStopTrackingTouch 不一定触发。
+        // 透明度滑块可能是在拖动中被切走的，onStopTrackingTouch 不一定触发。
         // 只 exportConfig 兜不住：JSON 是从 SP 读出来的，SP 里还是旧值。
         if (!binding && seekOpacity != null) {
             sp.edit()
                     .putInt(SafeWalkPrefKey.rearCamOpacity, seekOpacity.getProgress() + 10)
-                    .putInt(SafeWalkPrefKey.stepThreshold, seekSteps.getProgress() + 20)
-                    .putInt(SafeWalkPrefKey.staticResetSec, seekStatic.getProgress() + 5)
                     .commit();
         }
         SafeWalkConfig.exportConfig(this);

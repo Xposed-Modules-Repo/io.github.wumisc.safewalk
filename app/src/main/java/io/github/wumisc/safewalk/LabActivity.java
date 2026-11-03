@@ -1,14 +1,17 @@
 package io.github.wumisc.safewalk;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,7 +23,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -45,6 +50,9 @@ public class LabActivity extends Activity implements SensorEventListener {
 
     private static final SimpleDateFormat SDF = new SimpleDateFormat("HH:mm:ss", Locale.US);
 
+    /** 实验区运行时权限申请码（通知 + 相机） */
+    private static final int REQ_LAB_PERMS = 4001;
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -52,6 +60,7 @@ public class LabActivity extends Activity implements SensorEventListener {
         try {
             buildUI();
             startTorchMonitor();
+            ensureRuntimePermissions();
             log("实验区启动");
             log("日志目录: " + DiagLog.status());
         } catch (Throwable t) {
@@ -63,6 +72,51 @@ public class LabActivity extends Activity implements SensorEventListener {
             et.setTextSize(12);
             err.addView(et);
             setContentView(err);
+        }
+    }
+
+    /**
+     * 实验区的功能大多依赖运行时权限，缺一个就是「点了没反应」：
+     *  - POST_NOTIFICATIONS（Android 13+）：通知测试 / 夜间手电提醒 / 悬浮通知全走 notify()，
+     *    没授权时系统静默丢弃，看起来就是「无效」；
+     *  - CAMERA：手电 setTorchMode 和预览都必需。
+     * 进页面时一次性把缺的都要过来，避免用户点哪个按钮哪个没反应。
+     */
+    private void ensureRuntimePermissions() {
+        List<String> need = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.CAMERA);
+        }
+        if (!need.isEmpty()) {
+            requestPermissions(need.toArray(new String[0]), REQ_LAB_PERMS);
+        } else {
+            log("运行时权限齐备：通知 + 相机");
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code != REQ_LAB_PERMS) return;
+        StringBuilder sb = new StringBuilder("权限结果: ");
+        for (int i = 0; i < perms.length; i++) {
+            sb.append(perms[i]).append("=")
+                    .append(results.length > i && results[i] == PackageManager.PERMISSION_GRANTED
+                            ? "已授权" : "拒绝")
+                    .append(" ");
+        }
+        log(sb.toString());
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "未授予通知权限，通知类测试不会弹出；可在系统设置里开启",
+                    Toast.LENGTH_LONG).show();
         }
     }
 
@@ -117,6 +171,8 @@ public class LabActivity extends Activity implements SensorEventListener {
         root.addView(btn("🔓 授予「所有文件访问」（写入 Android/Travel safely）",
                 v -> openAllFilesAccess()));
         root.addView(btn("📥 拉取系统界面日志", v -> requestHookLog()));
+        root.addView(btn("🧭 步态自检（正常走 8 秒）", v -> runGaitSelfTest()));
+        root.addView(btn("📄 查看 diag.log 末尾", v -> showLogTail()));
 
         root.addView(label("—— 调试日志 ——"));
         tvLog = new TextView(this);
@@ -245,8 +301,60 @@ public class LabActivity extends Activity implements SensorEventListener {
         }
     }
 
-    // ========== 手电真实状态 ==========
+    // ========== 步态自检 ==========
 
+    /**
+     * 用与 Hook 完全相同的算法，在本进程采 8 秒加速度计。
+     *
+     * 目的只有一个：把「传感器/算法有问题」和「系统界面进程里的 Hook 没跑起来」分开。
+     * 以前这两种情况在用户看来一模一样 —— 走半天，什么都不发生。
+     * 自检识别到步数就说明前半段是好的，问题在 Hook 侧；识别不到就是算法在这台机器上不适用。
+     */
+    private void runGaitSelfTest() {
+        if (sm == null || accel == null) {
+            log("没有加速度计，无法自检");
+            return;
+        }
+        final GaitDetector gait = new GaitDetector();
+        final int[] steps = {0};
+        final long dur = 8000L;
+
+        log("开始步态自检：请拿着手机正常走 8 秒…");
+
+        final SensorEventListener l = new SensorEventListener() {
+            @Override public void onSensorChanged(SensorEvent e) {
+                float[] v = e.values;
+                // 直接复用 Hook 用的同一套算法，自检结果才有可比性
+                if (gait.feedAcc(v[0], v[1], v[2])) steps[0]++;
+            }
+            @Override public void onAccuracyChanged(Sensor s, int a) {}
+        };
+
+        try {
+            sm.registerListener(l, accel, SensorManager.SENSOR_DELAY_GAME);
+        } catch (Throwable t) {
+            log("注册加速度计失败: " + t.getMessage());
+            return;
+        }
+
+        main.postDelayed(() -> {
+            try { sm.unregisterListener(l); } catch (Throwable ignored) {}
+            boolean ok = gait.hasStableGait();
+            log("自检结果：识别 " + steps[0] + " 步 / 8 秒；" + gait.debugInfo() + "；稳定步态=" + ok);
+            log(ok
+                    ? "→ 传感器与算法正常，问题在系统界面进程（Hook 未生效 / 作用域没勾系统界面）"
+                    : "→ 算法在这台设备上判不出步行，请把上面这行发我");
+        }, dur);
+    }
+
+    private void showLogTail() {
+        String text = DiagLog.tail(80);
+        logBuf.setLength(0);
+        log("===== diag.log 末尾 80 行 =====");
+        log(text);
+    }
+
+    // ========== 手电真实状态 ==========
     private android.hardware.camera2.CameraManager.TorchCallback torchCallback;
 
     /**
@@ -287,28 +395,28 @@ public class LabActivity extends Activity implements SensorEventListener {
     }
 
     /**
-     * 通过 Hook 开关手电筒。
+     * 实验室里开关手电。
      *
-     * 这里**不再**直接调 CameraManager：那是应用进程调相机，必须先拿到
-     * CAMERA 运行时权限，而一个提醒类应用一装好就伸手要相机权限，
-     * 用户第一反应是「你一个提醒软件要相机干嘛」然后卸载。
-     * 手电本来就应该由 SystemUI 进程里的 Hook 执行（系统身份本来就管着闪光灯）。
+     * 这里**直接调应用进程的 TorchController**，不再发广播绕一圈。
+     * 实验室的用途就是验证「这颗灯到底能不能亮」：如果这里能亮，
+     * 说明相机、权限、闪光灯都正常，问题只在通知按钮的投递方式上；
+     * 如果这里也亮不了，日志里的失败原因就是最终答案，不用再猜。
      */
     private void setTorch(boolean on) {
-        try {
-            android.content.Intent i = new android.content.Intent(on
-                    ? "io.github.wumisc.safewalk.OPEN_TORCH"
-                    : "io.github.wumisc.safewalk.CLOSE_TORCH");
-            i.setPackage(SYSTEMUI_PKG);
-            i.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN);
-            sendBroadcast(i);
-            // 不在这里翻转 torchOn：真实状态由 TorchCallback 回调，本地记账
-            // 与实况脱节正是「点开变关」的根源
-            log("手电指令已发送: " + (on ? "开" : "关"));
-            Toast.makeText(this, "指令已发送给系统界面", Toast.LENGTH_SHORT).show();
-        } catch (Throwable t) {
-            log("手电指令失败: " + t.getMessage());
-        }
+        TorchController.set(this, on, r -> {
+            runOnUiThread(() -> {
+                if (r.getOk()) {
+                    log("手电已" + (on ? "开启" : "关闭") + "（应用内直连）");
+                    Toast.makeText(this, "手电已" + (on ? "开启" : "关闭"),
+                            Toast.LENGTH_SHORT).show();
+                } else {
+                    log("手电" + (on ? "开启" : "关闭") + "失败: " + r.getReason() + " " + r.getMessage());
+                    Toast.makeText(this, "手电打不开: " + r.getMessage(),
+                            Toast.LENGTH_LONG).show();
+                }
+            });
+            return kotlin.Unit.INSTANCE;
+        });
     }
 
     private void toggleTorch() {
@@ -353,10 +461,13 @@ public class LabActivity extends Activity implements SensorEventListener {
             nm.createNotificationChannel(channel);
 
             android.content.Intent openIntent = new android.content.Intent(
-                    "io.github.wumisc.safewalk.OPEN_TORCH");
-            openIntent.setPackage(SYSTEMUI_PKG);
+                    TorchActionReceiver.ACTION_TORCH_ON);
+            // 与正式通知完全一致：拉起透明 Activity。
+            // 广播要靠「进程恰好还活着」，Activity 则由系统强制拉起，这是唯一有保证的路径。
+            openIntent.setClassName(getPackageName(), getPackageName() + ".TorchActionActivity");
+            openIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             openIntent.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN);
-            android.app.PendingIntent openPi = android.app.PendingIntent.getBroadcast(
+            android.app.PendingIntent openPi = android.app.PendingIntent.getActivity(
                     this, 1, openIntent,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT
                             | android.app.PendingIntent.FLAG_IMMUTABLE);
@@ -399,15 +510,16 @@ public class LabActivity extends Activity implements SensorEventListener {
             channel.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION), null);
             nm.createNotificationChannel(channel);
 
-            // 打开手电（同样走 Hook，不再需要应用自己的相机权限）
+            // 打开手电（走应用内 TorchActionReceiver，与正式通知同一条链路）
             setTorch(true);
 
-            // 构建带按钮的通知：关闭按钮同样投给 SystemUI 的 Hook
+            // 构建带按钮的通知：关闭按钮同样拉起透明 Activity
             android.content.Intent closeIntent = new android.content.Intent(
-                    "io.github.wumisc.safewalk.CLOSE_TORCH");
-            closeIntent.setPackage(SYSTEMUI_PKG);
+                    TorchActionReceiver.ACTION_TORCH_OFF);
+            closeIntent.setClassName(getPackageName(), getPackageName() + ".TorchActionActivity");
+            closeIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             closeIntent.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN);
-            android.app.PendingIntent closePi = android.app.PendingIntent.getBroadcast(
+            android.app.PendingIntent closePi = android.app.PendingIntent.getActivity(
                 this, 200, closeIntent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
             );

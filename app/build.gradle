@@ -11,8 +11,8 @@ android {
         applicationId "io.github.wumisc.safewalk"
         minSdk 30
         targetSdk 35
-        versionCode 20
-        versionName "2.9.0"
+        versionCode 29
+        versionName "2.10.2"
     }
 
     compileOptions {

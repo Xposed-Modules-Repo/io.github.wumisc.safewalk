@@ -64,9 +64,19 @@ public class NotificationTargetTest {
                 saved.getComponent().getClassName());
     }
 
-    /** 夜间手电：按钮广播必须显式投递到 SystemUI，并带令牌 */
+    /**
+     * 夜间手电：按钮必须拉起**透明 Activity**，而不是发广播。
+     *
+     * 这条测试锁的是一个真实故障，而且已经错过两次：
+     *  · 投给 SystemUI 的 Hook → 预览占着摄像头，必然 CAMERA_IN_USE；
+     *  · 投给应用进程的 Receiver → 夜间进程已被回收，广播根本到不了，
+     *    日志里连一行都没有，用户只看到「点了没反应」。
+     *
+     * 点击通知是用户操作，`PendingIntent.getActivity` 由系统强制拉起进程，
+     * 这是唯一有保证的投递方式。进程在前台时收预览、点灯也都合法。
+     */
     @Test
-    public void torchAction_targetsSystemUiWithToken() {
+    public void torchAction_launchesTransparentActivity() {
         SafeWalkNotificationManager m = new SafeWalkNotificationManager(ctx);
         m.flashlightSuggest();
 
@@ -76,15 +86,30 @@ public class NotificationTargetTest {
         assertTrue("夜间照明通知没有动作按钮", n.actions.length > 0);
 
         ShadowPendingIntent spi = shadowOf(n.actions[0].actionIntent);
-        assertTrue("手电按钮必须是广播", spi.isBroadcastIntent());
+        assertTrue("手电按钮必须是 Activity：广播无法保证拉起被回收的进程",
+                spi.isActivityIntent());
 
         Intent saved = spi.getSavedIntent();
-        assertEquals("io.github.wumisc.safewalk.OPEN_TORCH", saved.getAction());
-        assertEquals("广播必须显式指定 SystemUI 包名，否则 Hook 收不到",
-                "com.android.systemui", saved.getPackage());
-        assertEquals("缺少令牌会让接收器拒绝执行",
-                SafeWalkPrefKey.BROADCAST_TOKEN,
-                saved.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN));
+        assertEquals("按钮必须发 APP_TORCH_ON（开关量，不是 toggle）",
+                "io.github.wumisc.safewalk.APP_TORCH_ON", saved.getAction());
+        assertNotNull("必须显式指定组件", saved.getComponent());
+        assertEquals("io.github.wumisc.safewalk",
+                saved.getComponent().getPackageName());
+        assertEquals("按钮必须落到透明的手电页",
+                "io.github.wumisc.safewalk.TorchActionActivity",
+                saved.getComponent().getClassName());
+        assertTrue("透明页必须在独立任务栈里启动，否则会盖在用户正在用的页面上",
+                (saved.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0);
+    }
+
+    /** 手电开关动作的常量必须与 Manifest 里注册的 intent-filter 一致 */
+    @Test
+    public void torchActionConstants_matchManifest() {
+        assertEquals("io.github.wumisc.safewalk.APP_TORCH_ON", TorchActionReceiver.ACTION_TORCH_ON);
+        assertEquals("io.github.wumisc.safewalk.APP_TORCH_OFF", TorchActionReceiver.ACTION_TORCH_OFF);
+        // App 与 Hook 两条通道不能混用同一个 action，否则接收方分不清该走哪条
+        assertFalse(TorchActionReceiver.ACTION_TORCH_ON.equals(
+                io.github.wumisc.safewalk.torch.TorchConstantsKt.ACTION_OPEN_TORCH));
     }
 
     /** 所有通知都必须带 contentIntent，否则点通知主体毫无反应 */

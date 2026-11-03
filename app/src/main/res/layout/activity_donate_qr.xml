@@ -1,44 +1,85 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:background="@drawable/bg_xuanzhi"
     android:fitsSystemWindows="true"
-    android:padding="16dp"
-    android:gravity="center_horizontal">
+    android:fillViewport="true"
+    android:scrollbars="none">
 
-    <TextView
-        android:id="@+id/tv_title"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="📱 捐赠二维码"
-        android:textColor="@color/text_primary"
-        android:textSize="26sp"
-        android:textStyle="bold" />
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="28dp">
 
-    <TextView
-        android:id="@+id/tv_subtitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="如果觉得好用，请作者喝杯奶茶"
-        android:textColor="@color/text_hint"
-        android:textSize="13sp" />
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="💝 支持捐赠"
+            android:textColor="@color/text_primary"
+            android:textSize="26sp"
+            android:textStyle="bold" />
 
-    <ImageView
-        android:id="@+id/iv_qr"
-        android:layout_width="240dp"
-        android:layout_height="240dp"
-        android:layout_marginTop="30dp"
-        android:contentDescription="捐赠二维码" />
+        <TextView
+            android:id="@+id/tv_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="如果觉得好用，请作者喝杯奶茶"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:text="微信扫一扫即可捐赠"
-        android:textColor="@color/text_hint"
-        android:textSize="13sp" />
+        <!-- 支付宝 -->
+        <ImageView
+            android:id="@+id/iv_qr_alipay"
+            android:layout_width="248dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter"
+            android:contentDescription="支付宝捐赠二维码" />
 
-</LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="支付宝 · 扫一扫"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
+
+        <!-- 微信 -->
+        <ImageView
+            android:id="@+id/iv_qr_wechat"
+            android:layout_width="248dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter"
+            android:contentDescription="微信捐赠二维码" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="微信支付 · 扫一扫"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:gravity="center"
+            android:text="长按二维码可保存到相册"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+</ScrollView>

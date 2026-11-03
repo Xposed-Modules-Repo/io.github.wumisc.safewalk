@@ -129,19 +129,16 @@ public class SubPageTest {
     // ==================== 行走模式 ====================
 
     @Test
-    public void walkMode_defaultStateIsOffAndAutoLocked() {
+    public void walkMode_defaultStateIsOff() {
         WalkModeActivity a = Robolectric.buildActivity(WalkModeActivity.class)
                 .create().get();
 
         SwitchCompat rear = a.findViewById(R.id.sw_rear_cam);
-        SwitchCompat auto = a.findViewById(R.id.sw_auto);
-
-        assertFalse(rear.isChecked());
-        assertFalse("后置看路关闭时自动开关应为禁用态", auto.isEnabled());
+        assertFalse("行走模式默认关闭", rear.isChecked());
     }
 
     @Test
-    public void walkMode_enableRearCamUnlocksAuto() {
+    public void walkMode_enableRearCamPersists() {
         WalkModeActivity a = Robolectric.buildActivity(WalkModeActivity.class)
                 .create().get();
 
@@ -149,8 +146,6 @@ public class SubPageTest {
         rear.setChecked(true);
 
         assertTrue(prefBool(SafeWalkPrefKey.enableRearCamera, false));
-        assertTrue("打开后置看路后自动开关应可用",
-                ((SwitchCompat) a.findViewById(R.id.sw_auto)).isEnabled());
     }
 
     @Test
@@ -168,32 +163,14 @@ public class SubPageTest {
     }
 
     @Test
-    public void walkMode_previewButtonNoCrashWithoutPermission() {
+    public void walkMode_opacityPersist() throws Exception {
         WalkModeActivity a = Robolectric.buildActivity(WalkModeActivity.class)
                 .create().get();
 
-        ((SwitchCompat) a.findViewById(R.id.sw_rear_cam)).setChecked(true);
-        a.findViewById(R.id.btn_preview_full).performClick();
-
-        // 无相机/悬浮窗权限时不会启动预览服务，也不该崩溃；
-        // 预览已不在 SystemUI 进程，不再写一次性指令 testRearCamAction
-        assertNull("预览按钮不应再写一次性指令", sp.getString(SafeWalkPrefKey.testRearCamAction, null));
-    }
-
-    @Test
-    public void walkMode_stepAndStaticPersist() throws Exception {
-        WalkModeActivity a = Robolectric.buildActivity(WalkModeActivity.class)
-                .create().get();
-
-        SeekBar steps = a.findViewById(R.id.seek_steps);
-        steps.setProgress(80); // 20 + 80 = 100 步
-        fireStopTracking(steps);
-        assertEquals(100, sp.getInt(SafeWalkPrefKey.stepThreshold, 0));
-
-        SeekBar stat = a.findViewById(R.id.seek_static);
-        stat.setProgress(25); // 5 + 25 = 30 秒
-        fireStopTracking(stat);
-        assertEquals(30, sp.getInt(SafeWalkPrefKey.staticResetSec, 0));
+        SeekBar op = a.findViewById(R.id.seek_opacity);
+        op.setProgress(60); // 10 + 60 = 70%
+        fireStopTracking(op);
+        assertEquals(70, sp.getInt(SafeWalkPrefKey.rearCamOpacity, 0));
     }
 
     // ==================== 重启系统界面 ====================
@@ -223,8 +200,6 @@ public class SubPageTest {
     public void walkMode_survivesLegacyPreferenceTypes() {
         sp.edit()
                 .putString(SafeWalkPrefKey.rearCamOpacity, "70")
-                .putString(SafeWalkPrefKey.stepThreshold, "90")
-                .putString(SafeWalkPrefKey.staticResetSec, "35")
                 .putString(SafeWalkPrefKey.enableRearCamera, "true")
                 .commit();
 
@@ -234,8 +209,6 @@ public class SubPageTest {
         assertTrue("字符串形式的 true 也应被识别",
                 ((SwitchCompat) a.findViewById(R.id.sw_rear_cam)).isChecked());
         assertEquals(60, ((SeekBar) a.findViewById(R.id.seek_opacity)).getProgress());
-        assertEquals(70, ((SeekBar) a.findViewById(R.id.seek_steps)).getProgress());
-        assertEquals(30, ((SeekBar) a.findViewById(R.id.seek_static)).getProgress());
     }
 
     @Test

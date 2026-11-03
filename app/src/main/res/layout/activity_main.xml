@@ -432,6 +432,28 @@
                         android:textSize="15sp" />
                 </com.google.android.material.card.MaterialCardView>
 
+                <!-- 诊断日志开关磁贴：点一下开/关切换 -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/btn_toggle_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    app:cardBackgroundColor="@color/card_bg"
+                    app:cardCornerRadius="12dp"
+                    app:cardElevation="0dp"
+                    android:clickable="true"
+                    android:focusable="true">
+                    <TextView
+                        android:id="@+id/tv_toggle_log"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:padding="14dp"
+                        android:text="🪵 诊断日志：开"
+                        android:textColor="@color/text_primary"
+                        android:textSize="15sp" />
+                </com.google.android.material.card.MaterialCardView>
+
             </LinearLayout>
         </ScrollView>
 

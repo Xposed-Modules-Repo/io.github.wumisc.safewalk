@@ -194,6 +194,15 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!--
+                自动跟随步行（2.10.1 加回，可选）。
+
+                2.10 曾把自动模式整体删除，只留手动常显——那是因为旧的自动实现
+                不可预期：拿不到传感器数据时永远不显示，判不准时闪一下就没了。
+                现在的自动模式复用 Hook 提醒用的同一路步态判定（滑动窗口步数），
+                且行为可预期：判定为行走 → 显示，判定为静止 → 收起；
+                判不出来时开关还在，用户随时可以切回手动常显兜底。
+            -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/card_auto"
                 android:layout_width="match_parent"
@@ -235,7 +244,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="自动检测步行"
+                            android:text="自动跟随步行"
                             android:textColor="@color/text_primary"
                             android:textSize="15sp"
                             android:textStyle="bold" />
@@ -245,7 +254,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="走起来自动开，停下自动收"
+                            android:text="走起来自动显示，停下自动收起"
                             android:textColor="@color/text_hint"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -407,91 +416,11 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- ===== 实时预览 ===== -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:layout_marginStart="4dp"
-                android:text="实时预览"
-                android:textColor="@color/text_hint"
-                android:textSize="13sp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/btn_preview_full"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_action_chip"
-                    android:gravity="center"
-                    android:text="全屏预览"
-                    android:textColor="@color/primary"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/btn_preview_small"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_action_chip"
-                    android:gravity="center"
-                    android:text="小窗预览"
-                    android:textColor="@color/primary"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/btn_preview_close"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_action_chip"
-                    android:gravity="center"
-                    android:text="关闭预览"
-                    android:textColor="@color/seal_red"
-                    android:textSize="13sp" />
-            </LinearLayout>
-
-            <!-- 预览链路分步诊断：Hook 端每走一步推一条，黑屏卡在哪一步直接可读 -->
-            <TextView
-                android:id="@+id/tv_preview_stage"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:visibility="gone"
-                android:text="预览诊断："
-                android:textColor="@color/primary"
-                android:textSize="12sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="由本应用直接调起相机，立即生效"
-                android:textColor="@color/text_muted"
-                android:textSize="11sp" />
-
-            <!-- ===== 步行判定 ===== -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:layout_marginStart="4dp"
-                android:text="步行判定（高级）"
-                android:textColor="@color/text_hint"
-                android:textSize="13sp" />
-
+            <!-- ===== 步态灵敏度 ===== -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="22dp"
                 app:cardBackgroundColor="@color/card_bg"
                 app:cardCornerRadius="14dp"
                 app:cardElevation="0dp"
@@ -505,47 +434,62 @@
                     android:padding="14dp">
 
                     <TextView
-                        android:id="@+id/tv_steps"
+                        android:id="@+id/tv_gait_steps"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="5 分钟内累计 50 步触发判定"
+                        android:text="连续走 5 步才弹出预览"
                         android:textColor="@color/text_body"
                         android:textSize="14sp" />
 
                     <SeekBar
-                        android:id="@+id/seek_steps"
+                        android:id="@+id/seek_gait_steps"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:max="180"
-                        android:progress="30" />
+                        android:layout_marginTop="10dp"
+                        android:max="8" />
 
                     <TextView
-                        android:id="@+id/tv_static"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:text="静置 20 秒判定为停下"
+                        android:text="越小越灵敏（2~10），太大刷手机更不容易误触"
+                        android:textColor="@color/text_hint"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/tv_gait_stop"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="停下后 10 秒收起预览"
                         android:textColor="@color/text_body"
                         android:textSize="14sp" />
 
                     <SeekBar
-                        android:id="@+id/seek_static"
+                        android:id="@+id/seek_gait_stop"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:max="55"
-                        android:progress="15" />
+                        android:layout_marginTop="10dp"
+                        android:max="25" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="步数越小越灵敏，静置越短收得越快"
+                        android:text="停下多少秒后收起（5~30 秒）"
                         android:textColor="@color/text_hint"
                         android:textSize="11sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
+
+            <!-- 预览链路分步诊断：服务端每走一步推一条，黑屏卡在哪一步直接可读 -->
+            <TextView
+                android:id="@+id/tv_preview_stage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:visibility="gone"
+                android:text="预览诊断："
+                android:textColor="@color/primary"
+                android:textSize="12sp" />
 
             <!-- ===== 维护 ===== -->
             <TextView

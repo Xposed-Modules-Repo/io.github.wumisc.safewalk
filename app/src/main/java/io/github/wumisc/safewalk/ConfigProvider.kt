@@ -53,6 +53,7 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.rearCamOpacity,
             SafeWalkPrefKey.rearCamCorner,
             SafeWalkPrefKey.travelMode,
+            SafeWalkPrefKey.enableAutoTravelMode,
             SafeWalkPrefKey.stepThreshold,
             SafeWalkPrefKey.staticResetSec,
             SafeWalkPrefKey.torchStaticMinutes,

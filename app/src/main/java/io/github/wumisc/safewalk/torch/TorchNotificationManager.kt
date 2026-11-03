@@ -30,6 +30,10 @@ class TorchNotificationManager(private val context: Context) {
 
     companion object {
         private const val TAG = "SafeWalk-Torch"
+        /** 本模块包名：跳转主页时用 */
+        private const val APP_PKG = "io.github.wumisc.safewalk"
+        /** Hook 宿主包名：手电按钮的广播要投给它 */
+        private const val SYSTEMUI_PKG = "com.android.systemui"
     }
 
     /**
@@ -88,28 +92,34 @@ class TorchNotificationManager(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // 按钮：发广播，系统进程里的receiver接收处理（系统进程有权限访问摄像头）
-        // 接收器为了跨进程是 EXPORTED 的，必须带令牌，否则任何应用都能点亮闪光灯
-        val turnOnIntent = Intent("io.github.wumisc.safewalk.OPEN_TORCH").apply {
-            setPackage("com.android.systemui")
+        // 按钮：落点是**应用进程里的透明 Activity**。
+        //
+        // 这条通知来自静置提醒，夜间应用进程很可能已经被回收。
+        // 广播能不能把进程拉起来取决于厂商后台策略，而点击通知是用户操作，
+        // getActivity 一定会拉起进程——这是唯一有保证的方式。
+        // 同时也解决了「预览占着摄像头」：Activity 在前台时收预览、点灯都合法。
+        val turnOnIntent = Intent(io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_ON).apply {
+            setClassName(APP_PKG, "$APP_PKG.TorchActionActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(
                 io.github.wumisc.safewalk.SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
                 io.github.wumisc.safewalk.SafeWalkPrefKey.BROADCAST_TOKEN
             )
         }
-        val turnOnPi = PendingIntent.getBroadcast(
+        val turnOnPi = PendingIntent.getActivity(
             context, 100, turnOnIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val turnOffIntent = Intent("io.github.wumisc.safewalk.CLOSE_TORCH").apply {
-            setPackage("com.android.systemui")
+        val turnOffIntent = Intent(io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_OFF).apply {
+            setClassName(APP_PKG, "$APP_PKG.TorchActionActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(
                 io.github.wumisc.safewalk.SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
                 io.github.wumisc.safewalk.SafeWalkPrefKey.BROADCAST_TOKEN
             )
         }
-        val turnOffPi = PendingIntent.getBroadcast(
+        val turnOffPi = PendingIntent.getActivity(
             context, 200, turnOffIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

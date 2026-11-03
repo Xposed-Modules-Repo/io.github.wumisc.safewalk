@@ -18,6 +18,20 @@ object SafeWalkPrefKey {
     const val enableSitHealthRemind = "enableSitHealthRemind" // 久坐提醒
     const val enableSocialTipCard = "enableSocialTipCard"    // 社交礼仪提示
     const val enableNightTorch = "enableNightTorch"          // 夜间手电提醒
+    /** 夜间自动开灯：夜里+暗光(lux<阈值)判定出门走路时直接点亮手电，亮着不开。默认关 */
+    const val enableNightTorchAuto = "enableNightTorchAuto"
+    /** 夜间时段起点(小时 0-23)，默认 22 点 */
+    const val nightTorchStartHour = "nightTorchStartHour"
+    /** 夜间时段终点(小时 0-23)，默认 6 点 */
+    const val nightTorchEndHour = "nightTorchEndHour"
+    /** 诊断日志总开关：关掉后不再写日志文件，省 I/O 省电。默认开 */
+    const val enableDiagLog = "enableDiagLog"
+    /** 步态确认步数：连续走够这么多步才弹预览（2~10），默认 5 */
+    const val gaitConfirmSteps = "gaitConfirmSteps"
+    /** 停下后多少秒收起预览（5~30），默认 10 */
+    const val gaitStopSec = "gaitStopSec"
+    /** 基于定位自动识别出行模式：开启后不再手动选，由定位地点自动切换。默认关 */
+    const val enableAutoTravelMode = "enableAutoTravelMode"
 
     // ===== 行走模式 =====
     /** 行走模式总开关：走路时用后置摄像头看路况。 */

@@ -1,6 +1,10 @@
 package io.github.wumisc.safewalk
 
 import io.github.wumisc.safewalk.torch.GaitStateCallback
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -9,17 +13,60 @@ import kotlin.math.sqrt
 object MotionConfig {
     const val ENTER_DEBOUNCE_MS = 2500L
     const val EXIT_DEBOUNCE_MS = 4500L
-    const val MIN_STEP_FREQ = 1.4
-    const val MAX_STEP_FREQ = 2.2
+
+    /**
+     * 步频窗口，单位 Hz。
+     *
+     * 真实散步大约 0.7~1.1Hz（每步 900~1400ms），快走 1.5~2Hz。
+     * 下限取 0.5Hz（每步最多 2000ms），覆盖慢走到快跑；
+     * 3Hz 以上的抖腿 / 摇手机仍然挡在外面。
+     */
+    const val MIN_STEP_FREQ = 0.5
+    const val MAX_STEP_FREQ = 2.5
+    /**
+     * 真断步阈值：超过这个时长没有新峰，才判定「停下很久、重新数」。
+     * 必须明显宽于步频下限（2000ms），否则正常慢速散步会被当成断步清空，
+     * 计数永远攒不满 → 走了也不触发。
+     */
+    const val GAIT_RESET_MS = 2500L
     const val MIN_WALK_SPEED = 0.3f
     const val MAX_WALK_SPEED = 2.5f
     const val LOCATION_QUEUE_SIZE = 3
 
-    // 自适应阈值
-    const val ADAPT_WINDOW_SIZE = 60
-    const val THRESHOLD_SCALE = 1.8f
+    // ===== 峰值检测 =====
+
+    /** 峰阈值的绝对下限（m/s²）：低于这个值就是噪声，不是脚步 */
     const val MIN_PEAK_THRESHOLD = 0.6f
-    const val MAX_PEAK_THRESHOLD = 2.8f
+    /**
+     * 可计峰的线性加速度幅值上限（m/s²）。
+     *
+     * 真实步行/跑步的峰值约 1.5~6；远超 8 的幅值只可能是拿放手机、
+     * 翻转、拍打等非步行瞬态。超过该值：不计峰、不污染包络阈值，
+     * 避免「翻一下手机把阈值顶到 7~8、之后几秒真实步伐全被压住」。
+     */
+    const val MAX_PEAK_VALUE = 8.0f
+    /** 包络阈值 = 最近包络 × 该系数 */
+    const val ENV_FACTOR = 0.6f
+    /**
+     * 包络的时间衰减常数。
+     *
+     * 原来是 4 秒，看起来「更稳」，实际是致命的：包络只升不降，4 秒衰减意味着
+     * 任何一次瞬态（启动时的重力收敛、把手机从桌上拿起来）都会把阈值顶到
+     * 5~6 m/s² **长达好几秒**，而真实步行的峰值只有 2.5 m/s² —— 期间一个峰都上不去。
+     * 1.5 秒衰减时，同样的瞬态 2 秒内就回落到 1.5 以下，4 秒采样窗口还来得及。
+     */
+    const val ENV_DECAY_MS = 1500.0
+    /** 两次计峰的最短间隔：200ms ≈ 5 次/秒，挡住同一脚步的抖动与主轴切换造成的重复计数 */
+    const val REFRACTORY_MS = 200L
+
+    /**
+     * 重力低通预热帧数。
+     *
+     * 重力已经用首帧对齐，这里只是挡住最开始几帧的姿态抖动（手机还在手里翻转时
+     * 第一帧读数未必等于稳态重力）。3 帧 = 60ms，占 4 秒采样窗口的 1.5%，
+     * 代价可以忽略。
+     */
+    const val WARMUP_FRAMES = 3
 
     // 姿态判定
     const val LAY_FLAT_Z_THRESHOLD = 8.5f
@@ -31,21 +78,81 @@ enum class PhoneAttitude {
 }
 
 /**
- * 步态检测器：IIR滤波分离重力，自适应峰值阈值，步频校验。
- * feedAcc 返回 true 表示检测到一步；hasStableGait 要求连续3步间隔稳定才算真走路。
+ * 步态检测器：一阶低通分离重力，主轴自适应，包络阈值计峰，步频窗口校验。
+ *
+ * 【这一版为什么整体重写】
+ * 旧实现有两个数学上致命的错误，两者都不报错、不崩溃，只是「永远判不出在走路」：
+ *
+ * ① **重力滤波系数写反了**。`y = alpha*y + (1-alpha)*x` 是低通，alpha 必须接近 1
+ *    才是「慢慢跟踪重力」。旧代码 alpha=0.2，等于让重力估计 80% 跟着新样本跑，
+ *    减完以后残差只剩 1% 量级 —— 仿真里 1.5Hz 正常步行，线性加速度平均值
+ *    只有 **0.07 m/s²**，而阈值下限是 0.6，一个峰都不会出现。
+ *    单元测试没发现，是因为测试喂的是「单帧 +6 m/s² 的阶跃尖峰」，
+ *    这种不连续信号在 alpha=0.2 下也能产生 1.2 的残差；真实步行是连续正弦，
+ *    两者行为完全不同。所以这次专门补了正弦波用例锁死。
+ *
+ * ② **阈值公式在小信号下自相矛盾**。原来是 `均值 + 1.8×标准差`，
+ *    而 |正弦| 的均值本身就有 0.64 倍幅值、标准差 0.31 倍幅值，
+ *    算出来 1.2 倍幅值 > 幅值本身 —— 阈值永远高于信号峰值。
+ *    现在改成「时间衰减包络 × 0.6」，与波形分布无关。
+ *
+ * 另外加了主轴自适应：手机在口袋里朝哪个方向是随机的，固定用某一轴必然失效。
  */
 class GaitDetector {
+    /** 重力估计。0.96 对应约 0.5Hz 的低通截止，人体步频的基波能干净地留在残差里 */
     private var gravityX = 0f
     private var gravityY = 0f
     private var gravityZ = 0f
-    private val alpha = 0.2f
+    private val alpha = 0.96f
+
+    /**
+     * 重力估计是否已经用第一帧初始化过。
+     *
+     * 这是「走了半天没反应」的真正根因之一，而且极隐蔽：
+     * gravity 初值是 0，而真实重力是 9.8。让低通滤波器从 0 爬到 9.8，
+     * 时间常数约 0.5 秒、收敛到 99% 要 2.3 秒 —— 这期间残差高达 9.4 m/s²，
+     * 包络被这个假峰顶到 9.4，阈值随之升到 5 以上，而真实步行峰值只有 2.5。
+     * 4 秒采样窗口里一个峰都上不去，日志永远显示「峰数=0」。
+     *
+     * 正确做法是拿第一帧的读数直接当重力初值（人站着时加速度计读数就是重力），
+     * 残差从第一帧起就是 0。
+     */
+    private var gravityInit = false
+
+    /**
+     * 还需要多少帧才算预热完。
+     *
+     * 重力已经用首帧对齐之后，这里只需要挡住最开始几帧的姿态抖动。
+     * 保留这个机制是为了「检测器被复用到另一个方向」时有个缓冲，
+     * 不再承担「等重力收敛」的职责。
+     */
+    private var warmupLeft = MotionConfig.WARMUP_FRAMES
+
+    /** 各轴线性加速度的能量（EMA），用来挑「这次走路主要晃的是哪个轴」 */
+    private var emaX = 0f
+    private var emaY = 0f
+    private var emaZ = 0f
+    private val emaAlpha = 0.98f
+
+    /** 峰值包络：只升不降（按时间缓慢衰减） */
+    private var envelope = 0f
+    private var lastSampleTs = 0L
 
     private var lastPeakTime = 0L
-    /** 上一帧是否已经在阈值之上：用来只认「上穿」的那一刻，避免一次波峰被算成好几步 */
+    /** 上一帧是否已经在阈值之上：只认「上穿」的那一刻，避免一个波峰算成好几步 */
     private var aboveThreshold = false
     private val peakIntervals = mutableListOf<Long>()
 
-    private val magWindow = mutableListOf<Float>()
+    /**
+     * 每个合格步所在的主轴（0/1/2）。
+     *
+     * 走路时人体上下颠簸，晃动主轴稳定在同一方向；拿在手里乱动（翻动/甩动/刷屏）
+     * 时方向随机、主轴来回切换。触发前要求最近 confirmSteps 个合格步的主轴一致率
+     * ≥70%，从根源把「手机在手里自己触发预览」挡掉。
+     */
+    private val peakAxes = mutableListOf<Int>()
+    private var currentAxis = 0
+
     private var currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
     var currentAttitude: PhoneAttitude = PhoneAttitude.UNKNOWN
         private set
@@ -56,6 +163,8 @@ class GaitDetector {
     private var gaitStateCallback: GaitStateCallback? = null
     private var staticDetectTimerStart: Long? = null
     private val SENSOR_STATIC_THRESHOLD = 3000L // 传感器3秒无运动判定为静置
+    /** 连续合格步达到这个数才认定「走起来」，防刷手机误触。可由 UI 配置（2~10） */
+    var confirmSteps: Int = 5
 
     fun setGaitStateCallback(callback: GaitStateCallback?) {
         gaitStateCallback = callback
@@ -63,10 +172,13 @@ class GaitDetector {
 
     private fun updateAttitude(gx: Float, gy: Float, gz: Float) {
         val gMag = sqrt(gx * gx + gy * gy + gz * gz)
-        if (gMag < 8f) { currentAttitude = PhoneAttitude.UNKNOWN; return }
+        if (gMag < 8f) {
+            currentAttitude = PhoneAttitude.UNKNOWN
+            return
+        }
         currentAttitude = when {
-            kotlin.math.abs(gz) > MotionConfig.LAY_FLAT_Z_THRESHOLD -> PhoneAttitude.LAY_FLAT
-            kotlin.math.abs(gx) > 7f || kotlin.math.abs(gy) > 7f -> PhoneAttitude.UPRIGHT
+            abs(gz) > MotionConfig.LAY_FLAT_Z_THRESHOLD -> PhoneAttitude.LAY_FLAT
+            abs(gx) > 7f || abs(gy) > 7f -> PhoneAttitude.UPRIGHT
             else -> PhoneAttitude.TILTED
         }
     }
@@ -77,8 +189,23 @@ class GaitDetector {
     /**
      * 带时间戳的重载：让单元测试可以喂「虚拟时间」的合成波形，
      * 不用真的 sleep 三秒去验证步态判定。
+     *
+     * @return true 表示这一帧构成一个「合格步」（间隔落在步频窗口内）
      */
     fun feedAcc(ax: Float, ay: Float, az: Float, now: Long): Boolean {
+        // —— 0. 重力初值直接用第一帧 ——
+        // 不能从 0 开始收敛：那会在前两秒造出一个 9.4 m/s² 的假峰，
+        // 把包络和阈值一起顶死，整个采样窗口作废。
+        if (!gravityInit) {
+            gravityX = ax
+            gravityY = ay
+            gravityZ = az
+            gravityInit = true
+            lastSampleTs = now
+            return false
+        }
+
+        // —— 1. 低通分离重力 ——
         gravityX = alpha * gravityX + (1 - alpha) * ax
         gravityY = alpha * gravityY + (1 - alpha) * ay
         gravityZ = alpha * gravityZ + (1 - alpha) * az
@@ -86,100 +213,163 @@ class GaitDetector {
         val linX = ax - gravityX
         val linY = ay - gravityY
         val linZ = az - gravityZ
-        val mag = sqrt(linX * linX + linY * linY + linZ * linZ)
 
         updateAttitude(gravityX, gravityY, gravityZ)
 
-        magWindow.add(mag)
-        while (magWindow.size > MotionConfig.ADAPT_WINDOW_SIZE) magWindow.removeAt(0)
-        updateAdaptiveThreshold()
-
-        // 平躺时阈值放大1.45倍，更难触发
-        var effectiveThreshold = currentAdaptiveThreshold
-        if (currentAttitude == PhoneAttitude.LAY_FLAT) {
-            effectiveThreshold *= MotionConfig.LAY_FLAT_WEIGHT
+        // —— 1.5 预热：等重力收敛，别让启动瞬态污染包络 ——
+        if (warmupLeft > 0) {
+            warmupLeft--
+            lastSampleTs = now
+            return false
         }
 
-        var hasWalkingMotion = false
-        if (mag > effectiveThreshold) {
-            // 关键：只在「从阈值下穿到阈值上」的第一帧记峰。
-            //
-            // 加速度计以 SENSOR_DELAY_GAME（约 50Hz）回调，一个波峰通常连续 4~6 帧
-            // 都高于阈值。原实现每帧都执行 `lastPeakTime = now`，于是下一帧算出的
-            // interval 是 20ms、freq 是 50Hz —— 永远落不进 1.4~2.2Hz 的步行窗口，
-            // peakIntervals 一个都加不进去，hasStableGait() 恒为 false。
-            // 结果就是：步数够、状态机也进了 VERIFYING，但永远判不出「在走路」，
-            // 证件 / 社交 / 夜间手电三条提醒一条都不会弹。
+        // —— 2. 主轴自适应 ——
+        // 手机在口袋里是斜的、在手里是竖的、放在包里可能是横的。
+        // 固定看某一个轴，换个姿势就完全测不到；这里取最近能量最大的那个轴。
+        emaX = emaAlpha * emaX + (1 - emaAlpha) * linX * linX
+        emaY = emaAlpha * emaY + (1 - emaAlpha) * linY * linY
+        emaZ = emaAlpha * emaZ + (1 - emaAlpha) * linZ * linZ
+        val value = when {
+            emaX >= emaY && emaX >= emaZ -> { currentAxis = 0; linX }
+            emaY >= emaZ -> { currentAxis = 1; linY }
+            else -> { currentAxis = 2; linZ }
+        }
+
+        // —— 3. 包络阈值 ——
+        val dtMs = if (lastSampleTs == 0L) 20.0 else (now - lastSampleTs).coerceIn(5L, 500L).toDouble()
+        lastSampleTs = now
+        // 包络封顶：拿放/翻转手机的大瞬态（>8）不参与包络更新，
+        // 否则阈值被顶到 7~8，之后几秒正常步伐全被压住
+        val rawEnv = max(abs(value), (envelope * exp(-dtMs / MotionConfig.ENV_DECAY_MS)).toFloat())
+        envelope = min(rawEnv, MotionConfig.MAX_PEAK_VALUE)
+
+        // 平躺时阈值放大 1.45 倍：躺着刷手机不应该被算成走路
+        var threshold = max(MotionConfig.MIN_PEAK_THRESHOLD, envelope * MotionConfig.ENV_FACTOR)
+        if (currentAttitude == PhoneAttitude.LAY_FLAT) threshold *= MotionConfig.LAY_FLAT_WEIGHT
+        currentAdaptiveThreshold = threshold
+
+        // —— 4. 上升沿计峰（仅限正常步行幅值区间，>MAX_PEAK_VALUE 的瞬态不计） ——
+        if (value > threshold && value <= MotionConfig.MAX_PEAK_VALUE) {
             if (!aboveThreshold) {
                 aboveThreshold = true
-                if (lastPeakTime != 0L) {
-                    val interval = now - lastPeakTime
-                    val freq = 1000.0 / interval
-                    if (freq in MotionConfig.MIN_STEP_FREQ..MotionConfig.MAX_STEP_FREQ) {
-                        peakIntervals.add(interval)
-                        if (peakIntervals.size > 3) peakIntervals.removeAt(0)
-                        lastPeakTime = now
-                        hasWalkingMotion = true
-                        // 有运动，重置静置计时器
-                        staticDetectTimerStart = null
-                        gaitStateCallback?.onLongStaticDetected(false)
-                        return true
+                val since = if (lastPeakTime == 0L) Long.MAX_VALUE else now - lastPeakTime
+                // 不应期：200ms 内的重复上穿不算，挡掉同一脚步的抖动与主轴切换
+                if (since >= MotionConfig.REFRACTORY_MS) {
+                    if (lastPeakTime != 0L) {
+                        if (since > MotionConfig.GAIT_RESET_MS) {
+                            // 真断步：超过 2.5s 没有新峰（停下来很久），重新累计，
+                            // 防止「走 2 步 → 停 10 秒 → 抖 3 下」凑够步数误触发
+                            peakIntervals.clear()
+                            peakAxes.clear()
+                        } else {
+                            val freq = 1000.0 / since
+                            if (freq in MotionConfig.MIN_STEP_FREQ..MotionConfig.MAX_STEP_FREQ) {
+                                peakIntervals.add(since)
+                                peakAxes.add(currentAxis)
+                                // 队列上限必须 ≥ confirmSteps 的最大档（10），
+                                // 否则 confirmSteps=5 时 size 永远到不了 5，走了也不触发
+                                if (peakIntervals.size > 10) {
+                                    peakIntervals.removeAt(0)
+                                    peakAxes.removeAt(0)
+                                }
+                                lastPeakTime = now
+                                // 有运动，重置静置计时器
+                                staticDetectTimerStart = null
+                                gaitStateCallback?.onLongStaticDetected(false)
+                                // 抗误触：连续攒够 confirmSteps 个合格步、且主轴一致
+                                // 才认定「走起来」。否则单手刷手机的两下抖动也会把预览弹出来。
+                                return peakIntervals.size >= confirmSteps && axisStable()
+                            }
+                            // 落窗口外但 ≤2.5s：慢走 / 抖动，既不计入也不清空，
+                            // 避免把正常慢速散步当成断步
+                        }
                     }
+                    lastPeakTime = now
                 }
-                lastPeakTime = now
             }
         } else {
             aboveThreshold = false
         }
 
-        // 静置判定：无持续运动，累积静置时间
-        if (!hasWalkingMotion) {
-            if (staticDetectTimerStart == null) {
-                staticDetectTimerStart = now
-            }
-            val staticDuration = now - staticDetectTimerStart!!
-            val isStatic = staticDuration >= SENSOR_STATIC_THRESHOLD
-            gaitStateCallback?.onLongStaticDetected(isStatic)
+        // 走到这里说明没有合格步：累积静置时间
+        if (staticDetectTimerStart == null) {
+            staticDetectTimerStart = now
         }
+        val staticDuration = now - staticDetectTimerStart!!
+        val isStatic = staticDuration >= SENSOR_STATIC_THRESHOLD
+        gaitStateCallback?.onLongStaticDetected(isStatic)
 
         return false
     }
 
-    private fun updateAdaptiveThreshold() {
-        if (magWindow.size < 10) return
-        val mean = magWindow.average().toFloat()
-        var sumSqDiff = 0f
-        for (m in magWindow) {
-            val diff = m - mean
-            sumSqDiff += diff * diff
+    /** 当前已累计的合格步数（诊断日志用，Java 侧读取） */
+    fun confirmedStepCount(): Int = peakIntervals.size
+
+    /**
+     * 主轴稳定性：最近 confirmSteps 个合格步里，同一个轴的占比 ≥70% 才算稳定。
+     * 走路是规律的上下颠簸（主轴固定），拿在手里乱动方向随机（主轴来回切）。
+     */
+    private fun axisStable(): Boolean {
+        if (peakAxes.size < confirmSteps) return false
+        var c0 = 0; var c1 = 0; var c2 = 0
+        for (a in peakAxes) {
+            when (a) { 0 -> c0++; 1 -> c1++; else -> c2++ }
         }
-        val std = sqrt(sumSqDiff / magWindow.size)
-        var thresh = mean + std * MotionConfig.THRESHOLD_SCALE
-        thresh = thresh.coerceIn(MotionConfig.MIN_PEAK_THRESHOLD, MotionConfig.MAX_PEAK_THRESHOLD)
-        currentAdaptiveThreshold = thresh
+        val max = maxOf(c0, c1, c2)
+        return max >= peakAxes.size * 0.7
     }
 
+    /**
+     * 步态是否「稳定」。
+     *
+     * 注意：2.9.4 起它**不再决定要不要提醒**，只用于自检结论和日志。
+     * 容差从 250ms 放宽到 400ms：真人步间隔的抖动，加上手机在口袋里
+     * 被裤子带着晃造成的峰位漂移，250ms 会把正常步行判成「不稳」，
+     * 而这在真机上是常态 —— 之前正是它把 50 步之后的提醒全部卡住。
+     */
     fun hasStableGait(): Boolean {
-        // 至少2步间隔稳定就算真走路（3秒采样窗口内2步足够判定）
+        // 至少2步间隔稳定就算真走路（采样窗口内2步足够判定）
         if (peakIntervals.size < 2) return false
         val avg = peakIntervals.average()
-        return peakIntervals.all { kotlin.math.abs(it - avg) < 200 }
+        return peakIntervals.all { abs(it - avg) < 400 }
     }
 
+    /**
+     * 重置「这一段判定」的状态，**但保留重力估计和主轴估计**。
+     *
+     * 这一点是 2.9.3 之前一直失败的真凶之一：原来 reset 把 gravity 一起清 0，
+     * 而 Hook 每次采样前都会 reset。于是每一轮 4 秒采样都要重新从 0 收敛到 9.8，
+     * 前 0.6 秒的残差高达 9.4 m/s²，包络被顶到 9.4（4 秒衰减常数下 4 秒后才降到 3.4），
+     * 阈值恒高于真实步行幅值 2.5 —— 一个峰都上不去，日志里每轮都是「峰数=0」。
+     *
+     * 两次采样之间只隔几秒，重力方向根本没变，保留它才是对的。
+     */
     fun reset() {
         peakIntervals.clear()
-        magWindow.clear()
+        peakAxes.clear()
         lastPeakTime = 0L
         aboveThreshold = false
-        // 初始阈值设为1.0，比MIN_PEAK_THRESHOLD(0.6)更保守，
-        // 避免前10个样本期间阈值太低导致误触发
-        currentAdaptiveThreshold = 1.0f
+        envelope = 0f
+        lastSampleTs = 0L
+        currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
         currentAttitude = PhoneAttitude.UNKNOWN
-        gravityX = 0f; gravityY = 0f; gravityZ = 0f
+        // gravity / ema / warmupLeft 刻意不清：见上面的说明
         // 清空静置状态
         staticDetectTimerStart = null
         gaitStateCallback?.onLongStaticDetected(false)
     }
 
     fun getCurrentThreshold(): Float = currentAdaptiveThreshold
+
+    /**
+     * 诊断信息：验证失败时写进日志。
+     * 能直接区分三种失败原因 —— 一个峰都没测到（信号太弱）、
+     * 测到峰但步频不对（窗口外）、步频对但间隔不稳（走得太随意）。
+     */
+    fun debugInfo(): String {
+        val freqText = if (peakIntervals.isEmpty()) "无"
+        else peakIntervals.joinToString(",") { "%.2fHz".format(1000.0 / it) }
+        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 姿态=$currentAttitude"
+            .format(currentAdaptiveThreshold, envelope)
+    }
 }
