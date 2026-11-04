@@ -3,137 +3,77 @@
 > 海阔天空，勇敢去走。
 
 纯本地、无服务器的**出行感知** LSPosed 模块。不依赖 GMS，不联网，不上传任何数据；
-用手机自带的加速度计判断你「是不是真的在走路」，再决定要不要提醒你。
+用手机自带加速度计判断「你是不是真的在走路」，再决定要不要提醒你。
 
-- 运行环境：**HyperOS / Android 12+（minSdk 30，targetSdk 35）**
-- 作用域：**只需勾选「系统界面」**，不需要系统框架
+- 运行环境：**HyperOS / Android 12+**（minSdk 33，targetSdk 35）
+- 作用域：**只需勾选「系统界面（SystemUI）」**，不需要系统框架
 - 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**2.10.2**（开发线 2.10.4：防误触主轴稳定 / 定位自动识别出行模式 / 试验区权限修复）
+- 当前版本：**2.10.2**
 
 ---
 
-## ✨ 它能做什么
+## ✨ 功能一览
 
-| 功能 | 触发条件 | 说明 |
+| 功能 | 触发 | 说明 |
 |---|---|---|
-| 🔋 电量预警 | 电量 ≤ 15% 且正在步行 | 提醒尽快充电，1 小时冷却 |
-| 🪪 证件提醒 | 确认持续步行后 | 提醒证件贴身放好，每日 1 次 |
-| 🪑 久坐提醒 | 停止走动满 2 小时 | 提醒起身活动，每日 1 次 |
-| 🔦 夜间提醒 | 22:00~06:00 且正在步行 | 通知直接带「手电筒」按钮，点了就亮 |
-| 🤝 社交礼仪 | 确认持续步行后 | 按出行模式（求职/约会/聚会/旅游）给 3 条提示 |
-| 🚶 行走模式 | 开始步行（或常开） | 后置摄像头把身后路况叠在屏幕上 |
-| 🚑 车祸预警 | 检测到剧烈撞击 | 全屏急救卡 + 60 秒倒计时，无响应自动求助 |
+| 🔋 电量预警 | 电量 ≤15% 且步行中 | 提醒充电，1h 冷却 |
+| 🪪 证件提醒 | 确认持续步行 | 证件贴身放好，每日 1 次 |
+| 🪑 久坐提醒 | 停止走动满 2h | 起身活动，每日 1 次 |
+| 🔦 夜间提醒 | 22:00~06:00 步行中 | 通知带「手电筒」按钮，一键开灯 |
+| 🤝 社交礼仪 | 确认持续步行 | 按求职/约会/聚会/旅游给 3 条提示 |
+| 🚶 行走模式 | 开始步行 | 后置摄像头把身后路况叠在屏上 |
+| 🚑 车祸预警 | 检测到剧烈撞击 | 全屏急救卡 + 60s 倒计时，无响应自动求助 |
 
-所有功能共用**同一个总开关**。总开关关闭时，二级菜单里的开关仍会保留设置，但不会生效。
-
----
-
-## 🚶 步态检测：怎么避免「床上翻身也弹提醒」
-
-步态判定跑在**应用进程**的 `WalkPreviewService`（前台服务，传感器回调不会被后台掐断），
-不在 SystemUI 里判。只在「确实在走路」时才提醒，靠**五重门槛**层层收敛：
-
-1. **幅值上限**：峰值包络 >8 m/s² 的大瞬态（拿/放/翻转手机）不计步、不顶阈值
-2. **步频窗口**：0.5~2.5Hz（覆盖慢走到快跑；3Hz 以上抖腿拒绝）
-3. **主轴稳定**：走路是规律的上下颠簸、晃动主轴固定；拿在手里乱动方向随机、主轴来回切，
-   要求最近几个合格步主轴一致率 ≥70%，从根源挡掉「手机在手里自己弹预览」
-4. **步数门槛**：连续攒够 N 个合格步才认定「走起来」（N 可调 2~10，默认 5）
-5. **断步重置**：2.5 秒没有新峰重新累计；停下超过设定秒数（可调 5~30，默认 10）收起预览
-
-> 峰值判定用自适应阈值：取最近 60 个样本的 `均值 + 1.8×标准差`，钳制在 0.6~2.8 m/s²；
-> 手机平放（重力 Z 轴 >8.5）时峰值阈值 ×1.45，翻身更难触发。
+> 所有功能共用**同一个总开关**。关闭时二级菜单里的开关保留设置但不生效。
 
 ---
 
-## 📷 行走模式：相机在 App 进程，不在系统进程
+## ⚙️ 核心机制
 
-`SystemUI` 里的 Hook 只做「指挥」（读传感器、判步态、发该显示/收起的广播），
-真正开相机、渲染画面的是 App 自己的前台服务 `WalkPreviewService`——系统界面崩溃不影响、
-系统界面没有相机权限的问题也绕开了。
+**步态检测**（跑在应用进程 `WalkPreviewService`，不在 SystemUI）：靠五重门槛层层收敛——
+幅值上限挡大瞬态、步频窗口 0.5~2.5Hz、主轴稳定一致率 ≥70%、步数门槛 N、断步重置。
+自适应阈值：最近 60 样本 `均值+1.8×标准差`，钳制 0.6~2.8 m/s²。
 
-**两种形态**
+**行走模式**：SystemUI 只做「指挥」（传感器/步态/显隐广播），App 前台服务负责开相机渲染。
+两种形态：全屏叠加（穿透）/ 角落小窗（150×260dp），形态/位置/透明度实时可调。
 
-- **全屏叠加**：整屏按设定透明度显示后方画面，触摸完全穿透
-- **角落小窗**：150×260dp，可停靠四角
+**手电筒**：夜间提醒通知直接开灯（`setTorchMode`，无需相机权限）；`TorchCallback` 全局状态同步；
+静置超时提醒关灯省电；夜间暗光（<15lx）可自动开灯。
 
-**其他特性**：形态/位置/透明度实时可调，改完立刻拉一次预览；前台是相机类应用时自动收起、
-离开后恢复；预览服务把真实显隐状态回传给 Hook，避免手动关掉一次就再也自动开不出来。
+**车祸预警**：合加速度超阈值且**连续 2 次命中**判定撞击，60s 冷却防误报；三档灵敏度（1.5/2.0/2.5g）；
+全屏急救卡 + 60s 倒计时，超时先发含位置短信、再拨紧急联系人，无权限时降级跳转不静默失败。
 
----
-
-## 🔦 手电筒
-
-- **夜间提醒带按钮**：通知上的「手电筒」点了直接开灯，走 `CameraManager.setTorchMode()`，不需要相机权限、也不用握着相机
-- **全局状态同步**：`TorchCallback` 监听真实闪光灯状态，控制中心开关手电也能同步
-- **静置省电**：手电开着且静置超过设定分钟（5~60），提醒关灯省电；夜间暗光（<15lx）可自动开灯
-- **夜间提醒门槛**：22:00~06:00 + 屏幕亮着 + 正在步行 + 预览没占着相机，才弹
-
----
-
-## 🚑 车祸预警（Pixel 风格）
-
-- **检测**：持续监听加速度，合加速度超过阈值且**连续 2 次命中**才判定为撞击，60 秒冷却防连环误报
-- **三档灵敏度**：低 ≈2.5g / 中 ≈2.0g（默认）/ 高 ≈1.5g
-- **响应**：拉起全屏急救卡 + **60 秒倒计时**；超时未点「我没事」先发含位置的求助短信、再拨紧急联系人；没有短信/通话权限时降级为跳转短信应用/拨号盘，不静默失败
-
----
-
-## 🔔 通知
-
-所有提醒统一发**高优先级通知**（`IMPORTANCE_HIGH` heads-up），可被 HyperOS 超级岛在 SystemUI 侧拦截。
-冷却按通道独立计时，一次出门可能同时收到多条不同提醒。
-
----
-
-## 🗂 日志
-
-排查问题用，默认路径：
-
-```
-/storage/emulated/0/Android/Travel safely/diag.log
-```
-
-写不进去自动逐级降级（应用私有目录 → logcat）。App 启动时会向 SystemUI 进程的 Hook 索要内存日志写进同一个文件，步态/手电/车祸判定都能看到。
-
-```bash
-adb logcat -s SafeWalk
-```
+**通知**：统一高优先级 `IMPORTANCE_HIGH` heads-up，可被 HyperOS 超级岛拦截；各通道独立冷却。
 
 ---
 
 ## 🚀 安装
 
-1. 在 LSPosed 中启用「安全出行」
-2. **作用域只勾「系统界面（SystemUI）」**，不要勾系统框架
+1. LSPosed 中启用「安全出行」
+2. 作用域**只勾「系统界面（SystemUI）」**
 3. 重启系统界面（或重启手机）
 4. 打开 App，授予「身体活动」权限（Android 13+ 另有通知权限）
 5. 打开首页总开关，再按需进二级菜单配置
 
----
-
 ## 🔧 编译
 
-需要 **JDK 17**、**Android SDK Platform 35 + Build-Tools 35.0.0**、**Gradle 8.7~8.9**（AGP 8.5.2 与 Gradle 9.x 不兼容）：
+需要 **JDK 21**、**Android SDK Platform 35**、**Gradle 9.8**（AGP 9.4.1 / Kotlin 2.4.21）：
 
 ```bash
-export JAVA_HOME=<jdk17 路径>
+export JAVA_HOME=<jdk21 路径>
 export ANDROID_HOME=<sdk 路径>
 echo "sdk.dir=$ANDROID_HOME" > local.properties
-gradle assembleDebug --no-daemon
+gradle :app:assembleDebug --no-daemon
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
-> 仓库未附带 Gradle Wrapper，请自备 Gradle 8.7~8.9。
-
----
+> 仓库未附带 Gradle Wrapper，请自备 Gradle 9.8。
 
 ## 🧪 测试
 
-- **步态判定**：纯 JVM 单元测试 `GaitDetectorPureTest`，无需真机、无需外网：
-  `gradle testDebugUnitTest --tests "io.github.wumisc.safewalk.GaitDetectorPureTest"`
-  覆盖慢走/快走触发、抖腿/静止/大瞬态/主轴切换不触发、瞬态后正常走仍触发
-- **界面与逻辑**：Robolectric 本地测试（`gradle testDebugUnitTest --no-daemon`，首次需联网拉依赖）
+- **步态判定**：纯 JVM 单元测试 `GaitDetectorPureTest`，无需真机/外网
+- **界面与逻辑**：Robolectric 本地测试 `gradle :app:testDebugUnitTest --no-daemon`（首次需联网拉依赖）
 
 ---
 
@@ -142,40 +82,21 @@ gradle assembleDebug --no-daemon
 | # | 问题 | 影响 | 状态 |
 |---|---|---|---|
 | 1 | 依赖加速度计持续监听 | 极端后台策略下传感器回调可能被掐断 | 前台服务缓解 |
-| 2 | 全屏叠加在个别 ROM 上不出画面 | 已限定为透明窗口路径（alpha 上限 0.99），仍可能被厂商悬浮窗策略拦截 | 待真机反馈 |
-| 3 | 车祸检测靠加速度阈值 | 手机脱落摔地可能误报，故留了 60 秒倒计时可取消 | 设计取舍 |
-| 4 | 配置 Provider 白名单基于包名 | 白名单包名被冒充时仍可读开关（不含隐私字段） | 残余风险可接受 |
+| 2 | 全屏叠加个别 ROM 不出画面 | 已限定透明窗口路径，仍可能被厂商悬浮窗策略拦截 | 待真机反馈 |
+| 3 | 车祸检测靠加速度阈值 | 手机脱落可能误报，留 60s 倒计时可取消 | 设计取舍 |
+| 4 | 配置 Provider 白名单基于包名 | 包名被冒充可读开关（不含隐私字段） | 残余风险可接受 |
 | 5 | 实验区入口是长按「关于」页按钮 | 新用户找不到 | 刻意保留 |
 
 ---
 
 ## 🎖️ 致敬
 
-本模块建立在 **LSPosed / Xposed** 框架之上，致敬并感谢这些伟大的开源项目与社区——
-正是他们让安卓模块生态生生不息。
+建立在 **LSPosed / Xposed** 之上，算法与架构思路参考：
 
-SafeWalk 不依赖 GMS 完成步行识别，算法与架构思路参考了以下项目：
-
-1. **bagilevi/android-pedometer** — 峰值检测、步频区间过滤、自适应阈值的基础思路
-2. **mdeguzis/StepCounter** — 滑动窗口方差统计、动态采样率省电策略
-3. **ashishb/android-step-detector** — 基于 FFT 的周期性步态识别
-4. **tonyo567/hysteresis-state-machine** — 分离式迟滞状态机，解决状态抖动切换
-5. **KalebKE/FSensor** — Madgwick/Mahony 姿态滤波、卡尔曼平滑
-6. **p-v/Android-SensorService** — 后台传感器监听、采样节流、前台服务适配
-7. **UrbanBigDataCentre/meowmotion** — 轨迹分割、停留/移动分类
-
-HyperOS / 传感器相关：
-
-8. **HyperBridge** — 超级岛自定义通知卡片思路
-9. **WidgetEnhancer** — 通知快捷按钮、系统手电筒实现思路
-10. **HyperLight** — HyperOS 悬浮通知研究
-11. **SensorFusion** — 传感器姿态融合、自适应阈值
-12. **AccStepCounter** — 低功耗计步滤波
-
-UI / 液态玻璃导航栏：
-
-13. **Kyant0/AndroidLiquidGlass** — 液态玻璃材质、拖拽阻尼交互、透镜折射、交互高光全套特效（https://github.com/Kyant0/AndroidLiquidGlass）
-14. **io.github.kyant0:backdrop-android** — Kyant0 的 backdrop 渲染库（drawBackdrop / layerBackdrop / Highlight / Shadow / InnerShadow 等底层原语）
+- **步态检测**：bagilevi/android-pedometer、mdeguzis/StepCounter、ashishb/android-step-detector、AccStepCounter、SensorFusion
+- **状态机/传感器**：tonyo567/hysteresis-state-machine、p-v/Android-SensorService、UrbanBigDataCentre/meowmotion、KalebKE/FSensor
+- **HyperOS 通知**：HyperBridge、WidgetEnhancer、HyperLight
+- **UI 液态玻璃**：[Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)、io.github.kyant0:backdrop-android
 
 > 所有代码为独立手写重构，仅借鉴思路与算法原理，未直接拷贝上述项目源码。
 
