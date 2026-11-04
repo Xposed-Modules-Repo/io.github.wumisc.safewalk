@@ -93,10 +93,10 @@ gradle :app:assembleDebug --no-daemon
 
 建立在 **LSPosed / Xposed** 之上，算法与架构思路参考：
 
+- **UI 液态玻璃**（本项目底部导航栏直接集成）：[Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) —— 液态玻璃材质、拖拽阻尼交互、透镜折射、交互高光全套特效；配套渲染库 io.github.kyant0:backdrop-android
 - **步态检测**：bagilevi/android-pedometer、mdeguzis/StepCounter、ashishb/android-step-detector、AccStepCounter、SensorFusion
 - **状态机/传感器**：tonyo567/hysteresis-state-machine、p-v/Android-SensorService、UrbanBigDataCentre/meowmotion、KalebKE/FSensor
 - **HyperOS 通知**：HyperBridge、WidgetEnhancer、HyperLight
-- **UI 液态玻璃**：[Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)、io.github.kyant0:backdrop-android
 
 > 所有代码为独立手写重构，仅借鉴思路与算法原理，未直接拷贝上述项目源码。
 
