@@ -18,9 +18,12 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
+
+import java.util.ArrayDeque;
 
 /**
  * 行走模式预览服务（**应用进程**）。
@@ -75,6 +78,29 @@ public final class WalkPreviewService extends Service {
     private boolean gaitWalking = false;
     /** 上一帧有效步的时间戳，用于静置超时判停 */
     private long lastStepTs = 0L;
+    /** 判定停下（静置超时收起）的时刻，用于「收起后冷却」防秒开死循环 */
+    private long lastStopTs = 0L;
+    /** 收起后冷却时长：冷却内需更强的持续判走才放行，打断「显示→收起→秒开」 */
+    private static final long STOP_COOLDOWN_MS = 5000L;
+
+    // ========== 防误触：硬件计步器确认 ==========
+    // 加速度计判「走」只是波形像走。拿在手里乱动、刷屏、放桌上颠，波形都像走，
+    // 只有一样东西不会骗人：系统硬件计步器（TYPE_STEP_COUNTER）——真迈步才计数。
+    // 所以加速度判走通过后，还要看「最近 10 秒硬件计步 ≥ 3 步」才显示预览。
+    // 设备无计步器 / 传感器从不回调时自动降级不拦，保证功能不被改崩。
+    private Sensor stepCounterSensor;
+    private SensorEventListener stepCounterListener;
+    private final ArrayDeque<Long> stepEventQueue = new ArrayDeque<>();
+    /** 是否收到过硬件计步事件（没收到 = 无计步器或传感器失效，不拦） */
+    private boolean stepCounterAlive = false;
+    /** 硬件计步确认窗口（毫秒）与最少步数 */
+    private static final long STEP_CONFIRM_WINDOW_MS = 10_000L;
+    private static final int STEP_CONFIRM_MIN = 2;
+    /** 启动以来计步器累计产生的步数（自本次注册起）。从未出数 = 该设备计步器不可信，停用确认 */
+    private long everSteppedTotal = 0L;
+    /** TYPE_STEP_COUNTER 是累计传感器，values[0]=总步数；记录上次回调的总步数以算增量 */
+    private long lastTotalSteps = -1L;
+
     /** 静置超过该时长判定为停下（与 Hook 默认 20s 一致） */
     private static final long GAIT_STATIC_MS = 10_000L;
     private final Handler gaitHandler = new Handler(Looper.getMainLooper());
@@ -95,6 +121,7 @@ public final class WalkPreviewService extends Service {
                 // 清零 lastStepTs：否则「超过 10s 无步」这个条件会一直成立，
                 // 每秒 tick 都重复打一条「判定停下」日志刷屏。下次真走会重新置位。
                 lastStepTs = 0L;
+                lastStopTs = now;
                 DiagLog.log("[walk] 静置超时，判定停下 → 收起预览");
                 evaluateShow();
             }
@@ -325,6 +352,7 @@ public final class WalkPreviewService extends Service {
         gaitWalking = false;
         lastStepTs = 0L;
         lastGaitDiagTs = 0L;
+        registerStepCounter();
         gaitListener = new SensorEventListener() {
             @Override
             public void onSensorChanged(SensorEvent e) {
@@ -333,7 +361,7 @@ public final class WalkPreviewService extends Service {
                 if (gait.feedAcc(e.values[0], e.values[1], e.values[2])) {
                     long now = System.currentTimeMillis();
                     lastStepTs = now;
-                    if (!gaitWalking) {
+                    if (!gaitWalking && hardwareStepConfirm() && shouldShowNow()) {
                         gaitWalking = true;
                         DiagLog.log("[walk] 检测到步行 → 显示预览");
                         evaluateShow();
@@ -366,8 +394,131 @@ public final class WalkPreviewService extends Service {
             try { sm.unregisterListener(gaitListener); } catch (Throwable ignored) {}
             gaitListener = null;
         }
+        unregisterStepCounter();
         gaitWalking = false;
         lastStepTs = 0L;
+    }
+
+    // ========== 硬件计步器（防误触确认） ==========
+
+    /** 注册系统硬件计步器：真迈步才计数，拿手机乱动不计数 */
+    private void registerStepCounter() {
+        if (stepCounterListener != null) return;
+        if (sm == null) return;
+        stepCounterSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+        if (stepCounterSensor == null) {
+            stepCounterAlive = false;
+            DiagLog.log("[gait] 无硬件计步器：防误触确认停用（纯加速度判定）");
+            return;
+        }
+        stepEventQueue.clear();
+        stepCounterAlive = false;
+        everSteppedTotal = 0L;
+        lastTotalSteps = -1L;
+        stepCounterListener = new SensorEventListener() {
+            @Override
+            public void onSensorChanged(SensorEvent e) {
+                if (e == null || e.values == null || e.values.length < 1) return;
+                long now = SystemClock.elapsedRealtime();
+                stepCounterAlive = true;
+                // TYPE_STEP_COUNTER 是累计传感器：values[0]=总步数，按增量计步
+                long total = (long) e.values[0];
+                if (lastTotalSteps < 0L) {
+                    // 首次回调只记基线，不算一步
+                    lastTotalSteps = total;
+                } else if (total > lastTotalSteps) {
+                    long delta = total - lastTotalSteps;
+                    lastTotalSteps = total;
+                    everSteppedTotal += delta;
+                    for (long i = 0; i < delta; i++) {
+                        stepEventQueue.addLast(now);
+                    }
+                }
+                while (!stepEventQueue.isEmpty()
+                        && now - stepEventQueue.peekFirst() > STEP_CONFIRM_WINDOW_MS) {
+                    stepEventQueue.pollFirst();
+                }
+            }
+            @Override
+            public void onAccuracyChanged(Sensor s, int accuracy) {}
+        };
+        try {
+            sm.registerListener(stepCounterListener, stepCounterSensor,
+                    SensorManager.SENSOR_DELAY_UI);
+        } catch (Throwable t) {
+            stepCounterListener = null;
+            stepCounterAlive = false;
+            DiagLog.log("[gait] 硬件计步器注册失败，防误触确认停用: " + t.getMessage());
+        }
+    }
+
+    private void unregisterStepCounter() {
+        if (stepCounterListener != null) {
+            try { sm.unregisterListener(stepCounterListener); } catch (Throwable ignored) {}
+            stepCounterListener = null;
+        }
+        stepEventQueue.clear();
+        stepCounterAlive = false;
+        everSteppedTotal = 0L;
+        lastTotalSteps = -1L;
+    }
+
+    /** 最近 10 秒内硬件计步数 */
+    private int stepCountInWindow() {
+        long now = SystemClock.elapsedRealtime();
+        while (!stepEventQueue.isEmpty()
+                && now - stepEventQueue.peekFirst() > STEP_CONFIRM_WINDOW_MS) {
+            stepEventQueue.pollFirst();
+        }
+        return stepEventQueue.size();
+    }
+
+    /**
+     * 硬件计步确认（自适应，绝不误杀走路）：
+     * 1) 无计步器 / 传感器从未回调 → 不拦，纯加速度判走。
+     * 2) 计步器启动后从未产生任何步数（部分 ROM 对 TYPE_STEP_COUNTER 节流，
+     *    真走路也不出数）→ 判定该设备计步器不可信，停用确认，纯加速度判走，
+     *    保证走路不显示问题不再复发。
+     * 3) 计步器正常出数 → 保留确认：10 秒内 ≥2 步放行；计步不足但持续判走
+     *    （累计步达门槛两倍）放行；否则拦（疑似拿手机乱动）。
+     */
+    private boolean hardwareStepConfirm() {
+        if (!stepCounterAlive) return true;
+        if (everSteppedTotal == 0L) {
+            DiagLog.log("[gait] 硬件计步器启动后从未计步（可信度低），防误触确认停用，纯加速度判走");
+            return true;
+        }
+        int n = stepCountInWindow();
+        if (n >= STEP_CONFIRM_MIN) return true;
+        // 计步不足但持续判走：累计步远超门槛 → 放行
+        if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2) {
+            DiagLog.log("[gait] 计步 " + n + "<" + STEP_CONFIRM_MIN
+                    + " 但持续判走（累计 " + gait.confirmedStepCount()
+                    + " 步），放行显示");
+            return true;
+        }
+        DiagLog.log("[gait] 加速度像走但硬件计步 " + n + "/" + STEP_CONFIRM_MIN
+                + "（10s内）→ 疑似拿手机乱动，不显示");
+        return false;
+    }
+
+    /**
+     * 收起后冷却（防「显示→收起→秒开」死循环，也就是用户反馈的「没完没了」）。
+     * 判定停下收起后 [STOP_COOLDOWN_MS] 内，手持乱动几秒又凑够 confirmSteps 步时
+     * **不立即显示**，必须达到「持续判走」（累计步 ≥ 门槛两倍）才放行。
+     * 真走路停下后再走，几秒内能攒满两倍步数，照常显示；手持乱动很难连续攒满，被压住。
+     */
+    private boolean shouldShowNow() {
+        long now = System.currentTimeMillis();
+        if (lastStopTs == 0L || now - lastStopTs >= STOP_COOLDOWN_MS) return true;
+        if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2) {
+            DiagLog.log("[gait] 判定停下冷却内持续判走（累计 "
+                    + gait.confirmedStepCount() + " 步），放行显示");
+            return true;
+        }
+        DiagLog.log("[gait] 判定停下冷却期内（累计 " + gait.confirmedStepCount()
+                + " 步），暂不显示，等待持续判走");
+        return false;
     }
 
     /** 把预览的真实显示状态回执给 SystemUI 里的 Hook，校准它的去重记录 */

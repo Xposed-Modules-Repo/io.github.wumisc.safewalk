@@ -1,40 +1,5 @@
 # 更新日志
 
-## [v2.10.4] - 未发布（防误触 · 定位出行模式 · 试验区权限）
-
-### 🚶 防误触：手里乱动不再弹预览
-- 幅值过滤 `MAX_PEAK_VALUE=8`：拿/放/翻转手机的大瞬态（包络 11~13）不计步、不顶阈值；
-- **主轴稳定门槛**：触发前要求最近 confirmSteps 个合格步晃动主轴一致率 ≥70%。
-  走路是规律的上下颠簸（主轴固定），拿在手里乱动方向随机（主轴来回切），
-  从根源挡掉「手机在手里自己打开预览」；
-- 步态灵敏度可调：`gaitConfirmSteps`（2~10，默认 5）、`gaitStopSec`（5~30，默认 10），
-  行走模式页新增滑条；
-- 纯 JVM 单元测试 `GaitDetectorPureTest`：慢走/快走触发、抖腿/静止/大瞬态/
-  主轴切换不触发、瞬态后正常走仍触发——全部通过，无外网可跑。
-
-### 📍 定位自动识别出行模式
-- 新增 `LocationModeEngine` + 离线词库 `travel_mode_dict.json`（关键词投票，
-  `CONFIDENCE_GAP=2`），files 可联网更新；
-- `SmartReminderActivity` 内联定位：双 Provider、30s/50m 持续监听、`VOTE_WINDOW=3` 防抖、
-  静默自动切换（`enableAutoTravelMode` 默认关，开关在智能提醒页）。
-
-### 🧪 试验区（LabActivity）功能无效修复
-- 根因：Android 13+ `POST_NOTIFICATIONS` 与 `CAMERA` 运行时权限从未申请，
-  通知测试/夜间手电提醒/手电悬浮通知全被系统静默丢弃、手电 `setTorchMode` 抛异常，
-  表现即「点了没反应」；
-- 修复：进实验区一次性申请缺失权限（`REQ_LAB_PERMS=4001`），拒绝时页面明确提示。
-
-### 🔦 手电静置提醒调优
-- 静置默认 12 分钟提醒，补弹 5min×2 次，颠簸宽限 12s；
-- 夜间暗光自动开灯（`TYPE_LIGHT` 阈值 15lx，22–6 点可配，`enableNightTorchAuto` 默认关）；
-- 编译警告清零（GaitDetector 死变量、RearCameraOverlay 迁 SessionConfiguration、
-  TorchActionActivity API34 分支）。
-
-### 🛠 其他
-- 乒乓广播去重 `lastReportedShowing`/`reportPreviewState()`；
-- 诊断日志开关 `enableDiagLog`（关于页磁贴）；
-- 夜间时段 TimePicker 可配。
-
 ## [v2.10.3] - 未发布（步态检测修复）
 
 ### 🚶 修复：自动跟随步行「只有手动好用」

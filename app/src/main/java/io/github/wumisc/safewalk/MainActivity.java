@@ -18,7 +18,7 @@ import android.widget.Toast;
  * 具体的 5 项提醒开关收进 {@link SmartReminderActivity}，
  * 行走模式等行走参数收进 {@link WalkModeActivity}。
  */
-public final class MainActivity extends Activity {
+public final class MainActivity extends androidx.activity.ComponentActivity {
 
     // ========== 磁贴状态 ==========
     private TextView tileEnableStatus, tileSmartStatus, tileWalkStatus;
@@ -28,9 +28,7 @@ public final class MainActivity extends Activity {
 
     // ========== 页面导航 ==========
     private View pageSettings, pageAbout;
-    private LinearLayout tabSettings, tabAbout;
-    private TextView tabSettingsText, tabAboutText;
-    private ImageView tabSettingsIcon, tabAboutIcon;
+    private androidx.compose.ui.platform.ComposeView composeNav;
     private boolean onPage = false;
     private boolean viewsReady = false;
 
@@ -226,14 +224,12 @@ public final class MainActivity extends Activity {
         // 底部导航
         pageSettings = findViewById(R.id.page_settings);
         pageAbout = findViewById(R.id.page_about);
-        tabSettings = findViewById(R.id.tab_settings);
-        tabAbout = findViewById(R.id.tab_about);
-        tabSettingsText = findViewById(R.id.tab_settings_label);
-        tabAboutText = findViewById(R.id.tab_about_label);
-        tabSettingsIcon = findViewById(R.id.tab_settings_icon);
-        tabAboutIcon = findViewById(R.id.tab_about_icon);
-        tabSettings.setOnClickListener(v -> switchTab(true));
-        tabAbout.setOnClickListener(v -> switchTab(false));
+        // 液态玻璃导航栏（Compose）：首页=0，关于=1。点 tab 切页面。
+        composeNav = findViewById(R.id.compose_nav);
+        MainNav.attach(composeNav, onPage ? 0 : 1, idx -> {
+            switchTab(idx == 0);
+            return kotlin.Unit.INSTANCE;
+        });
 
         // 关于页
         try {
@@ -414,12 +410,7 @@ public final class MainActivity extends Activity {
         onPage = !toSettings;
         pageSettings.setVisibility(toSettings ? View.VISIBLE : View.GONE);
         pageAbout.setVisibility(toSettings ? View.GONE : View.VISIBLE);
-        int active = getColor(R.color.primary);
-        int inactive = getColor(R.color.text_hint);
-        tabSettingsText.setTextColor(toSettings ? active : inactive);
-        tabAboutText.setTextColor(toSettings ? inactive : active);
-        tabSettingsIcon.setColorFilter(toSettings ? active : inactive);
-        tabAboutIcon.setColorFilter(toSettings ? inactive : active);
+        // 导航栏高亮态由 Compose 侧自管（点 tab 时已同步），这里只管页面显隐。
     }
 
     // ========== 保存壁纸 ==========

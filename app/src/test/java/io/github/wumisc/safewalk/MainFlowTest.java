@@ -11,8 +11,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 
 import androidx.test.core.app.ApplicationProvider;
+import androidx.test.rule.GrantPermissionRule;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -28,14 +30,14 @@ public class MainFlowTest {
 
     private Application app;
 
+    @Rule
+    public GrantPermissionRule permissionRule = GrantPermissionRule.grant(
+            android.Manifest.permission.ACTIVITY_RECOGNITION,
+            android.Manifest.permission.POST_NOTIFICATIONS);
+
     @Before
     public void setUp() {
         app = ApplicationProvider.getApplicationContext();
-        // MainActivity 有权限门槛，先授予运行时权限，否则 initUI 不会执行
-        shadowOf(app).grantPermissions(
-                android.Manifest.permission.ACTIVITY_RECOGNITION,
-                android.Manifest.permission.POST_NOTIFICATIONS);
-
         SharedPreferences sp = app.getSharedPreferences("safewalk_xsp", android.content.Context.MODE_PRIVATE);
         sp.edit().clear().commit();
         // 跳过首次启动引导弹窗

@@ -56,8 +56,14 @@ public class AcknowledgementsActivity extends Activity {
             "11. HyperLight\n" +
             "   HyperOS 悬浮通知相关研究。\n\n" +
 
+            "【液态玻璃导航栏】\n" +
+            "12. Kyant0/AndroidLiquidGlass\n" +
+            "   液态玻璃材质、拖拽阻尼交互、透镜折射、交互高光全套特效（https://github.com/Kyant0/AndroidLiquidGlass）。\n\n" +
+            "13. io.github.kyant0:backdrop-android\n" +
+            "   Kyant0 的 backdrop 渲染库（drawBackdrop / layerBackdrop / Highlight / Shadow / InnerShadow 底层原语）。\n\n" +
+
             "【姿态与GPS】\n" +
-            "12. KalebKE/FSensor\n" +
+            "14. KalebKE/FSensor\n" +
             "   Madgwick/Mahony 姿态滤波、卡尔曼 GPS 平滑算法。\n\n" +
 
             "————————————\n" +

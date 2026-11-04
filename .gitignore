@@ -17,3 +17,6 @@ local.properties
 
 # 日志与本地配置
 *.log
+
+# 构建脚本备份（勿提交）
+*.bak-*

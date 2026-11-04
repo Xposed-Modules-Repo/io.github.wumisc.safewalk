@@ -314,15 +314,21 @@ public final class SmartReminderActivity extends Activity {
                     @Override public void onStatusChanged(String p, int s, android.os.Bundle e) {}
                 };
             }
-            Location last = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-            if (last == null) last = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-            if (last != null) onAutoLocation(last);
-            // 网络定位优先（省电）；GPS 兜底。30 秒一次、位移 50 米才更新
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                    == PackageManager.PERMISSION_GRANTED) {
+            boolean fineOk = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            boolean coarseOk = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            if (coarseOk) {
+                Location last = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (last != null) onAutoLocation(last);
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 30_000L, 50f, locListener, Looper.getMainLooper());
+            }
+            if (fineOk) {
+                Location last = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                if (last != null) onAutoLocation(last);
+                // 网络定位优先（省电）；GPS 兜底。30 秒一次、位移 50 米才更新
                 lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 30_000L, 50f, locListener, Looper.getMainLooper());
             }
-            lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 30_000L, 50f, locListener, Looper.getMainLooper());
             tvAutoModeStatus.setText("已开始定位识别…");
         } catch (Throwable t) {
             DiagLog.log("[loc] 定位启动失败: " + t.getMessage());

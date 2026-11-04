@@ -172,6 +172,11 @@ HyperOS / 传感器相关：
 11. **SensorFusion** — 传感器姿态融合、自适应阈值
 12. **AccStepCounter** — 低功耗计步滤波
 
+UI / 液态玻璃导航栏：
+
+13. **Kyant0/AndroidLiquidGlass** — 液态玻璃材质、拖拽阻尼交互、透镜折射、交互高光全套特效（https://github.com/Kyant0/AndroidLiquidGlass）
+14. **io.github.kyant0:backdrop-android** — Kyant0 的 backdrop 渲染库（drawBackdrop / layerBackdrop / Highlight / Shadow / InnerShadow 等底层原语）
+
 > 所有代码为独立手写重构，仅借鉴思路与算法原理，未直接拷贝上述项目源码。
 
 ---

@@ -6,6 +6,7 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -117,6 +118,15 @@ public class LabActivity extends Activity implements SensorEventListener {
                 != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "未授予通知权限，通知类测试不会弹出；可在系统设置里开启",
                     Toast.LENGTH_LONG).show();
+        }
+        // 相机权限刚被授予：自动重试之前被卡住的预览动作（全屏/小窗/关闭）。
+        // 实验区「夜间手电提醒」的通知按钮同样依赖 CAMERA，权限到位后链路即通。
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                && pendingRearCamAction != null) {
+            String retry = pendingRearCamAction;
+            pendingRearCamAction = null;
+            log("相机权限已授予，自动重试预览: " + retry);
+            sendRearCamTestAction(retry);
         }
     }
 
@@ -260,6 +270,12 @@ public class LabActivity extends Activity implements SensorEventListener {
     }
 
     private boolean torchOn = false;
+
+    /** 预览指令暂存：等相机权限授予后自动重试（实验区预览/手电都依赖 CAMERA） */
+    private String pendingRearCamAction = null;
+    /** 实验区临时打开预览开关前的原值，关闭预览时恢复，避免污染用户配置 */
+    private boolean rearCamWasEnabled = false;
+    private boolean rearCamOverridden = false;
 
     private static final String SYSTEMUI_PKG = "com.android.systemui";
 
@@ -555,17 +571,34 @@ public class LabActivity extends Activity implements SensorEventListener {
             boolean camOk = checkSelfPermission(android.Manifest.permission.CAMERA)
                     == android.content.pm.PackageManager.PERMISSION_GRANTED;
             boolean overlayOk = android.provider.Settings.canDrawOverlays(this);
-            if (!camOk || !overlayOk) {
-                if (!camOk) requestPermissions(new String[]{android.Manifest.permission.CAMERA}, 2001);
-                else Toast.makeText(this, "先到系统设置开启「显示在其他应用上层」权限", Toast.LENGTH_LONG).show();
-                log("预览缺少权限（相机/悬浮窗），已请求");
+            if (!camOk) {
+                // 相机权限：实验区预览/手电都依赖。原来用独立 code 2001 请求，
+                // 而 onRequestPermissionsResult 只处理 4001 —— 授权后既不记录也不自动重试，
+                // 用户点「预览」弹一次权限框、授予后却没反应，看起来就是「失效」。
+                // 统一走 REQ_LAB_PERMS，并记下待执行动作，授权回调里自动重试。
+                pendingRearCamAction = action;
+                requestPermissions(new String[]{android.Manifest.permission.CAMERA}, REQ_LAB_PERMS);
+                log("预览缺少相机权限，已请求（授权后自动重试: " + action + "）");
+                return;
+            }
+            if (!overlayOk) {
+                Toast.makeText(this, "预览需要悬浮窗权限：到系统设置 → 应用 → SafeWalk → 显示在其他应用上层 开启",
+                        Toast.LENGTH_LONG).show();
+                log("预览缺少悬浮窗权限，请到系统设置开启");
                 return;
             }
             String mode = "open_full".equals(action) ? "fullscreen"
                     : ("open_small".equals(action) ? "smallwindow" : null);
             if (mode == null) {
                 WalkPreviewService.send(this, WalkPreviewService.ACTION_HIDE, null);
+                restoreRearCamSwitch();
             } else {
+                // 关键：实验区预览必须绕过「行走模式开关」。
+                // WalkPreviewService.applyFromConfig 第一行就判 enableRearCamera，
+                // 关着时直接 hide —— 实验区只发 SHOW 指令不写开关，开关默认 false，
+                // 于是预览永远出不来（用户看到的「点了没反应」就是这个）。
+                // SHOW 前把开关临时打开并记下原值，关闭预览时恢复。
+                overrideRearCamSwitch(mode);
                 WalkPreviewService.start(this);
                 WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, mode);
             }
@@ -578,6 +611,26 @@ public class LabActivity extends Activity implements SensorEventListener {
     private void openRearCamFull() { sendRearCamTestAction("open_full"); }
     private void openRearCamSmall() { sendRearCamTestAction("open_small"); }
     private void closeRearCam() { sendRearCamTestAction("close"); }
+
+    /** 实验区临时打开预览开关，并同步配置给 Hook（关闭预览时恢复原值） */
+    private void overrideRearCamSwitch(String mode) {
+        SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+        if (!rearCamOverridden) {
+            rearCamWasEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false);
+            rearCamOverridden = true;
+        }
+        sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, true).commit();
+        sp.edit().putString(SafeWalkPrefKey.rearCamMode, mode).commit();
+        SafeWalkConfig.exportConfig(this);
+    }
+
+    private void restoreRearCamSwitch() {
+        if (!rearCamOverridden) return;
+        SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+        sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, rearCamWasEnabled).commit();
+        SafeWalkConfig.exportConfig(this);
+        rearCamOverridden = false;
+    }
 
     @Override protected void onResume() {
         super.onResume();

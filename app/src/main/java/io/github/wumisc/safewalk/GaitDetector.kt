@@ -278,7 +278,16 @@ class GaitDetector {
                                 gaitStateCallback?.onLongStaticDetected(false)
                                 // 抗误触：连续攒够 confirmSteps 个合格步、且主轴一致
                                 // 才认定「走起来」。否则单手刷手机的两下抖动也会把预览弹出来。
-                                return peakIntervals.size >= confirmSteps && axisStable()
+                                if (peakIntervals.size >= confirmSteps && axisStable()) {
+                                    // 平躺（床上/沙发平放刷手机）姿态不判走：走路时手机随身体
+                                    // 上下摆动会转成 TILTED/UPRIGHT，稳定 LAY_FLAT 基本是平放
+                                    // 误触。步仍累计，姿态转正后照常触发，不误杀走路。
+                                    if (currentAttitude == PhoneAttitude.LAY_FLAT) {
+                                        return false
+                                    }
+                                    return true
+                                }
+                                return false
                             }
                             // 落窗口外但 ≤2.5s：慢走 / 抖动，既不计入也不清空，
                             // 避免把正常慢速散步当成断步
