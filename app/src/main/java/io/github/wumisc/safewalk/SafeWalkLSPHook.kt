@@ -303,6 +303,34 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private fun staticResetMs() = pref(SafeWalkPrefKey.staticResetSec, 20) * 1000L
 
     // ========== Hook 入口 ==========
+
+    /** 成功挂上的初始化锚点数量：0 表示只能靠后面的轮询兜底 */
+    @Volatile
+    private var anchorsHooked = 0
+
+    /** 第一个真正触发初始化的入口，只记一次（用户反馈 ROM 差异时看这一行） */
+    @Volatile
+    private var initTrigger = ""
+
+    @Volatile
+    private var contextFallbackStarted = false
+
+    /**
+     * Hook SystemUI 进程，**三个锚点并联**，谁先命中都能起来。
+     *
+     * 以前只有 `SystemUIApplication.onCreate` 一个点：OEM 把这个类换掉、或者改了
+     * 启动顺序，模块就整个静默失效，日志里只留一行「找不到 SystemUIApplication 类」，
+     * 用户看到的现象是「装了但什么都不动」。
+     *
+     * 现在三层：
+     * 1. `SystemUIApplication.onCreate` —— AOSP 与多数 ROM 的主入口
+     * 2. `Instrumentation.callApplicationOnCreate` —— 不认类名，任何 Application 都必经，
+     *    ROM 改了 Application 类名也拦不住
+     * 3. `SystemUIService.onCreate` —— SystemUI 自己的 Service，启动很早，作为旁证
+     *
+     * 三个都不中还有第四条路：进程内起线程反射 `ActivityThread` 自取 Context（见
+     * [startContextFallback]）。四条全废才是真的没戏。
+     */
     override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
         Log.i("SafeWalk", "===== Hook 加载到进程: ${lp.packageName} =====")
         diag("===== Hook 加载到进程: ${lp.packageName} =====")
@@ -314,30 +342,151 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         Log.i("SafeWalk", "成功挂载至 SystemUI【系统界面】进程")
         diag("成功挂载至 SystemUI【系统界面】进程")
 
-        // 和最好版一致：Hook SystemUIApplication.onCreate，在onCreate里初始化
-        try {
+        // ---- 锚点 1：SystemUIApplication.onCreate（主入口） ----
+        hookAnchor("SystemUIApplication.onCreate") {
             val appCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
                 "com.android.systemui.SystemUIApplication",
                 lp.classLoader
-            )
-            if (appCls != null) {
-                de.robv.android.xposed.XposedHelpers.findAndHookMethod(
-                    appCls, "onCreate",
-                    object : de.robv.android.xposed.XC_MethodHook() {
-                        override fun afterHookedMethod(param: MethodHookParam) {
-                            val appCtx = param.thisObject as? Context ?: return
-                            Log.i("SafeWalk", "SystemUIApplication.onCreate 触发，开始初始化")
-                            init(appCtx)
-                        }
+            ) ?: return@hookAnchor false
+            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
+                appCls, "onCreate",
+                object : de.robv.android.xposed.XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val appCtx = param.thisObject as? Context ?: return
+                        triggerInit(appCtx, "SystemUIApplication.onCreate")
                     }
-                )
-                Log.i("SafeWalk", "Hook SystemUIApplication.onCreate 成功")
-            } else {
-                Log.e("SafeWalk", "找不到 SystemUIApplication 类")
-            }
-        } catch (e: Exception) {
-            Log.e("SafeWalk", "Hook SystemUIApplication 失败", e)
+                }
+            )
+            true
         }
+
+        // ---- 锚点 2：Instrumentation.callApplicationOnCreate（兜住 OEM 改类名） ----
+        hookAnchor("Instrumentation.callApplicationOnCreate") {
+            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
+                "android.app.Instrumentation",
+                lp.classLoader,
+                "callApplicationOnCreate",
+                android.app.Application::class.java,
+                object : de.robv.android.xposed.XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val appCtx = param.args.getOrNull(0) as? Context ?: return
+                        triggerInit(appCtx, "Instrumentation.callApplicationOnCreate")
+                    }
+                }
+            )
+            true
+        }
+
+        // ---- 锚点 3：SystemUIService.onCreate（旁路，启动极早） ----
+        hookAnchor("SystemUIService.onCreate") {
+            val svcCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.android.systemui.SystemUIService",
+                lp.classLoader
+            ) ?: return@hookAnchor false
+            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
+                svcCls, "onCreate",
+                object : de.robv.android.xposed.XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val svcCtx = param.thisObject as? Context ?: return
+                        triggerInit(svcCtx, "SystemUIService.onCreate")
+                    }
+                }
+            )
+            true
+        }
+
+        // ---- 第四条路：锚点全没命中时，自己从 ActivityThread 摸 Context ----
+        startContextFallback()
+    }
+
+    /** 挂一个锚点，成功/失败都留日志。返回 false 表示该类在这台机器上不存在（不算错误） */
+    private fun hookAnchor(name: String, block: () -> Boolean) {
+        try {
+            if (block()) {
+                anchorsHooked++
+                Log.i("SafeWalk", "Hook $name 成功")
+                diag("[hook] 锚点已挂上: $name")
+            } else {
+                Log.w("SafeWalk", "Hook 点不存在: $name")
+                diag("[hook] 锚点不存在（该 ROM 无此入口）: $name")
+            }
+        } catch (t: Throwable) {
+            Log.e("SafeWalk", "Hook $name 失败", t)
+            diag("[hook] 锚点挂载失败: $name → ${t.javaClass.simpleName}: ${t.message}")
+        }
+    }
+
+    /**
+     * 所有锚点的统一落点。
+     *
+     * 三个锚点可能先后都触发（正常现象），[runInit] 自己有幂等保护，这里只负责
+     * 记下「第一个命中的是谁」——用户反馈"某 ROM 上没反应"时，这一行能立刻说明
+     * 是哪个入口活了、还是根本没有入口。
+     */
+    private fun triggerInit(appCtx: Context, source: String) {
+        if (initSucceeded) return
+        if (initTrigger.isEmpty()) {
+            initTrigger = source
+            Log.i("SafeWalk", "初始化触发源: $source")
+            diag("[hook] 初始化触发源: $source")
+        }
+        init(appCtx)
+    }
+
+    /**
+     * Context 兜底通道：不依赖任何 Hook 点，直接反射拿当前进程的 Application。
+     *
+     * 适用于锚点全部挂不上的 ROM。每 500ms 试一次，最多 20 秒；拿到就初始化并
+     * 立即退出线程。锚点已生效时会提前返回，不会白跑（前 8 秒还会先等一等，
+     * 正常机型 2 秒内就初始化完成，这个线程基本不会真正开始轮询）。
+     */
+    private fun startContextFallback() {
+        if (contextFallbackStarted) return
+        contextFallbackStarted = true
+        val t = Thread({ contextFallbackLoop() }, "SafeWalk-ctx-fallback")
+        t.isDaemon = true
+        t.start()
+    }
+
+    /** 兜底轮询的主体（独立函数，避免在 lambda 里用带标签的 return） */
+    private fun contextFallbackLoop() {
+        // 锚点挂上了就多给点时间，别和正常路径抢
+        val graceMs = if (anchorsHooked > 0) 8_000L else 1_000L
+        var waited = 0L
+        while (waited < graceMs) {
+            if (initSucceeded) return
+            sleepQuietly(500L)
+            waited += 500L
+        }
+        var tries = 0
+        while (tries < 40) {
+            if (initSucceeded) return
+            val app = currentApplication()
+            if (app != null) {
+                diag("[hook] 兜底通道拿到 Context（第 ${tries + 1} 次；锚点命中 $anchorsHooked 个），触发初始化")
+                triggerInit(app, "ActivityThread 轮询兜底")
+                return
+            }
+            tries++
+            sleepQuietly(500L)
+        }
+        diag("[hook] ⚠️ 兜底轮询 20 秒仍拿不到 Context：本进程内模块无法启动")
+    }
+
+    private fun sleepQuietly(ms: Long) {
+        try {
+            Thread.sleep(ms)
+        } catch (_: InterruptedException) {
+        }
+    }
+
+    /** 反射取当前进程的 Application；还没 attach 时返回 null */
+    private fun currentApplication(): Context? = try {
+        val atCls = Class.forName("android.app.ActivityThread")
+        val thread = atCls.getMethod("currentActivityThread").invoke(null)
+        atCls.getMethod("getApplication").invoke(thread) as? Context
+    } catch (_: Throwable) {
+        null
     }
 
     private fun init(appCtx: Context) {
@@ -1373,33 +1522,178 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var lastCameraCheckTs = 0L
     private var cameraInFront = false
 
+    /** 上次成功的检测层级（1..4），下次优先用它，别每次都从失败的那层开始试 */
+    private var camDetectLayer = 0
+
+    /** 四级全失败只报一次，避免每 5 秒刷一行日志 */
+    private var camDetectBroken = false
+
+    /** 上一次因哪个相机包让路，用于「进入/离开」只记一次日志 */
+    private var lastCamAvoidPkg: String? = null
+
     private fun cameraInForeground(): Boolean {
         val now = System.currentTimeMillis()
         if (now - lastCameraCheckTs < 5_000L) return cameraInFront
         lastCameraCheckTs = now
-        cameraInFront = isCameraAppInForeground()
-        return cameraInFront
+
+        val pkg = foregroundPackage()
+        val inCam = pkg != null && isCameraPackage(pkg)
+        if (inCam) {
+            if (lastCamAvoidPkg != pkg) {
+                lastCamAvoidPkg = pkg
+                diag("[cam] 前台是相机应用 $pkg → 让路收起预览")
+            }
+        } else {
+            lastCamAvoidPkg = null
+            if (pkg == null && !camDetectBroken) {
+                camDetectBroken = true
+                diag("[cam] ⚠️ 四级前台检测全部失败：相机避让失效（在相机界面悬浮窗不会收起）")
+            }
+        }
+        cameraInFront = inCam
+        return inCam
     }
 
-    /** 反射查前台是否相机类应用（原在 RearCameraOverlay 上，相机搬走后逻辑收编到这里） */
-    private fun isCameraAppInForeground(): Boolean {
-        return try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val atm = atmClass.getMethod("getInstance").invoke(null)
-            val info = atmClass.getMethod("getFocusedRootTaskInfo").invoke(atm) ?: return false
-            val topActivity = info.javaClass.getField("topActivity").get(info) ?: return false
-            val pkg = topActivity.javaClass.getField("packageName").get(topActivity) as? String
-                ?: return false
-            if (CAMERA_PACKAGES.contains(pkg)) return true
-            pkg.contains("camera", ignoreCase = true) && !pkg.contains("safewalk", ignoreCase = true)
-        } catch (_: Throwable) {
-            false
+    /**
+     * 取前台应用包名，**四级降级**，任意一级拿到就用。
+     *
+     * 1. `ActivityTaskManager.getFocusedRootTaskInfo().topActivity` —— Android 10+ 主流
+     * 2. `ActivityTaskManager.getTasks(1)` —— 部分 ROM 屏蔽了 focused 接口，但 getTasks 还能用
+     * 3. `ActivityManager.getRunningTasks(1)` —— 老 API，Android 10+ 一般只返回自己，
+     *    但系统进程（SystemUI uid 1000）常能拿到
+     * 4. `UsageStatsManager.queryEvents` —— 最后兜底，按最近一次 RESUMED 事件推断
+     *
+     * 原来只有第 1 级，抛异常被 `catch (_: Throwable) { false }` 吞掉：表现是
+     * 「在相机界面悬浮窗不收起，挡住取景」，而日志里干干净净什么都看不到。
+     *
+     * 四级全失败返回 null —— 调用方据此**不避让**（宁可显示，也不要因为检测坏了
+     * 就永远不显示），并记一条一次性告警。
+     */
+    private fun foregroundPackage(): String? {
+        // 上次成功的层级优先：正常机型每次都只跑第 1 级，坏的那几级不会再被反复踩
+        val order: IntArray = if (camDetectLayer in 1..4) {
+            intArrayOf(camDetectLayer) + (1..4).filter { it != camDetectLayer }
+        } else {
+            intArrayOf(1, 2, 3, 4)
         }
+        for (layer in order) {
+            val pkg = try {
+                when (layer) {
+                    1 -> pkgFromFocusedRootTask()
+                    2 -> pkgFromTasks()
+                    3 -> pkgFromRunningTasks()
+                    else -> pkgFromUsageEvents()
+                }
+            } catch (_: Throwable) {
+                null
+            }
+            if (!pkg.isNullOrEmpty()) {
+                if (camDetectLayer != layer) {
+                    camDetectLayer = layer
+                    diag("[cam] 前台检测启用第 $layer 级（${camLayerName(layer)}）")
+                }
+                return pkg
+            }
+        }
+        return null
+    }
+
+    private fun camLayerName(layer: Int): String = when (layer) {
+        1 -> "getFocusedRootTaskInfo"
+        2 -> "ActivityTaskManager.getTasks"
+        3 -> "ActivityManager.getRunningTasks"
+        else -> "UsageStatsManager"
+    }
+
+    private fun pkgFromFocusedRootTask(): String? {
+        val atmCls = Class.forName("android.app.ActivityTaskManager")
+        val atm = atmCls.getMethod("getInstance").invoke(null)
+        val info = atmCls.getMethod("getFocusedRootTaskInfo").invoke(atm)
+        return pkgOfTaskInfo(info)
+    }
+
+    private fun pkgFromTasks(): String? {
+        val atmCls = Class.forName("android.app.ActivityTaskManager")
+        val atm = atmCls.getMethod("getInstance").invoke(null)
+        // 各版本签名不一致：getTasks(int) / (int, boolean) / (int, boolean, boolean)
+        val m = atmCls.methods.firstOrNull {
+            it.name == "getTasks" && it.parameterTypes.isNotEmpty()
+        } ?: return null
+        val args = arrayOfNulls<Any>(m.parameterTypes.size)
+        args[0] = 1
+        for (i in 1 until args.size) {
+            args[i] = if (m.parameterTypes[i] == java.lang.Boolean.TYPE) false else null
+        }
+        val list = m.invoke(atm, *args) as? List<*> ?: return null
+        return pkgOfTaskInfo(list.firstOrNull())
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pkgFromRunningTasks(): String? {
+        val c = ctx ?: return null
+        val am = c.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return null
+        val top = am.getRunningTasks(1)?.firstOrNull() ?: return null
+        return top.topActivity?.packageName ?: top.baseActivity?.packageName
+    }
+
+    private fun pkgFromUsageEvents(): String? {
+        val c = ctx ?: return null
+        val usm = c.getSystemService(Context.USAGE_STATS_SERVICE)
+            as? android.app.usage.UsageStatsManager ?: return null
+        val now = System.currentTimeMillis()
+        val events = usm.queryEvents(now - 15_000L, now) ?: return null
+        val ev = android.app.usage.UsageEvents.Event()
+        // package -> 最后一次"进入前台"的时间；一旦收到后台/停止事件就移除
+        val foregroundTs = HashMap<String, Long>()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(ev)
+            val pkgName = ev.packageName ?: continue
+            when (ev.eventType) {
+                1 -> foregroundTs[pkgName] = ev.timeStamp               // MOVE_TO_FOREGROUND / ACTIVITY_RESUMED
+                2, 23 -> foregroundTs.remove(pkgName)                   // MOVE_TO_BACKGROUND / ACTIVITY_STOPPED
+            }
+        }
+        return foregroundTs.maxByOrNull { it.value }?.key
+    }
+
+    /** 从 RootTaskInfo / RunningTaskInfo 里掏 `topActivity.packageName` */
+    private fun pkgOfTaskInfo(taskInfo: Any?): String? {
+        if (taskInfo == null) return null
+        for (fieldName in arrayOf("topActivity", "baseActivity", "origActivity")) {
+            val comp = try {
+                taskInfo.javaClass.getField(fieldName).get(taskInfo)
+            } catch (_: Throwable) {
+                continue
+            } ?: continue
+            val pkg = try {
+                comp.javaClass.getField("packageName").get(comp) as? String
+            } catch (_: Throwable) {
+                null
+            }
+            if (!pkg.isNullOrEmpty()) return pkg
+        }
+        return null
+    }
+
+    /**
+     * 是否「会全屏占用取景」的相机类应用。
+     *
+     * 只收相机本体，**不收微信 / 支付宝 / 抖音 / 云闪付**这些「带扫码但主要不是
+     * 取景」的应用：那会让悬浮窗在聊天、支付这些最常用的场景里全收起来，等于功能失效。
+     */
+    private fun isCameraPackage(pkg: String): Boolean {
+        if (pkg.contains("safewalk", ignoreCase = true)) return false
+        if (CAMERA_PACKAGES.contains(pkg)) return true
+        return pkg.contains("camera", ignoreCase = true)
     }
 
     private val CAMERA_PACKAGES = setOf(
-        "com.android.camera", "com.huawei.camera", "com.miui.camera",
-        "com.xiaomi.camera", "com.oplus.camera", "com.vivo.camera",
-        "com.samsung.android.camera", "com.oneplus.camera",
-        "com.google.android.GoogleCamera"
+        "com.android.camera", "com.android.camera2", "com.huawei.camera",
+        "com.hihonor.camera", "com.miui.camera", "com.xiaomi.camera",
+        "com.oplus.camera", "com.coloros.camera", "com.vivo.camera",
+        "com.bbk.camera", "com.samsung.android.camera", "com.sec.android.app.camera",
+        "com.oneplus.camera", "com.google.android.GoogleCamera",
+        "com.meizu.camera", "com.sonyericsson.android.camera",
+        "com.motorola.camera", "com.motorola.camera2", "com.asus.camera",
+        "com.zte.camera", "com.org.codeaurora.camera", "com.mediatek.camera"
     )}

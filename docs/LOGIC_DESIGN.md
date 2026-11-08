@@ -55,17 +55,34 @@
 
 ## 2. 启动与初始化链
 
-### 2.1 入口
+### 2.1 入口（四层，任一命中即可启动）
 
 ```
 LSPosed 加载模块
- → SafeWalkLSPHook.handleLoadPackage()            [SafeWalkLSPHook.kt:188]
-    ├─ lapackageName != "com.android.systemui" → 直接 return（只认 SystemUI）
-    ├─ findClassIfExists("com.android.systemui.SystemUIApplication")
-    │    找不到 → 只写一行日志，模块静默失效            [:217-219]
-    └─ findAndHookMethod(onCreate) → afterHookedMethod
-          → init(appCtx)                              [:206-215]
+ → SafeWalkLSPHook.handleLoadPackage()            [SafeWalkLSPHook.kt:334]
+    ├─ packageName != "com.android.systemui" → 直接 return（只认 SystemUI）
+    │
+    ├─ 锚点 1  SystemUIApplication.onCreate          [:349-362]
+    │     AOSP 与多数 ROM 的主入口
+    ├─ 锚点 2  Instrumentation.callApplicationOnCreate  [:365-380]
+    │     不认类名，任何 Application 都必经 → OEM 改类名也拦不住
+    ├─ 锚点 3  SystemUIService.onCreate             [:383-398]
+    │     SystemUI 自己的 Service，启动极早，作为旁路
+    │         ↓ 三个锚点统一走 triggerInit(ctx, 来源)
+    │         ↓ init() → postDelayed(2000ms) → runInit()（有幂等保护）
+    │
+    └─ 兜底通道  startContextFallback()             [:402, 443-479]
+          独立守护线程，反射 ActivityThread.currentApplication() 自取 Context
+          锚点已挂上 → 先等 8 秒；一个都没挂上 → 1 秒后立刻开始
+          每 500ms 试一次，最多 40 次（20 秒）；拿到就 triggerInit，随即退出
 ```
+
+**为什么要有四层**：原来只有锚点 1。OEM 换掉 `SystemUIApplication` 类、或改了启动顺序，
+模块就整个静默失效，日志里只留一行「找不到 SystemUIApplication 类」——用户看到的现象是
+「装了但什么都不动」，且没有任何其他线索。现在任一层命中都能起来，第一个命中的来源会写进日志
+（`[hook] 初始化触发源: …`），排查时一眼能看出这台 ROM 走的是哪条路。
+
+四个入口都只调 `triggerInit`，最终落到自带幂等保护的 `runInit`，**不会重复初始化**（见 §2.2）。
 
 ### 2.2 init 做了什么（`init()` → `postDelayed(2000ms)` → `runInit()`）
 
@@ -293,10 +310,42 @@ Hook **不再**用自己进程的 `walking` 决定显隐——因为它在多数
 |---|---|---|
 | 1 | `!masterEnabled() \|\| !enableRearCamera` | `previewUntil=0`，发 **HIDE** |
 | 2 | `now < torchHoldUntil`（点灯后 60 秒）或 `TorchCallback` 报手电开 | **不干预**（return，不发任何指令） |
-| 3 | 前台是相机类应用（反射 `getFocusedRootTaskInfo`，**5 秒节流**） | `previewUntil=0`，发 **HIDE** |
+| 3 | 前台是相机类应用（**四级降级检测**，5 秒节流） | `previewUntil=0`，发 **HIDE** |
 | 4 | 其他 | `maybeAutoStartPreview()` → 发 **SHOW**（语义是"让路解除，可以恢复了"） |
 
-相机包名清单：`com.android.camera` / `com.huawei.camera` / `com.miui.camera` / `com.xiaomi.camera` / `com.oplus.camera` / `com.vivo.camera` / `com.samsung.android.camera` / `com.oneplus.camera` / `com.google.android.GoogleCamera`，外加"包名含 camera 且不含 safewalk"的兜底匹配。
+#### 第 3 步的前台检测怎么做的（`foregroundPackage`）
+
+原来只有一级 `ActivityTaskManager.getFocusedRootTaskInfo()`，抛异常被 `catch (_: Throwable) { false }`
+吞掉：表现是「在相机界面悬浮窗不收起、挡住取景」，而日志里干干净净。现在四级降级，**任意一级拿到就用**：
+
+| 级 | 接口 | 适用 |
+|---|---|---|
+| 1 | `ActivityTaskManager.getFocusedRootTaskInfo().topActivity` | Android 10+ 主流，正常机型都走这条 |
+| 2 | `ActivityTaskManager.getTasks(1)`（反射遍历方法签名，兼容 1/2/3 参数版本） | focused 接口被 ROM 屏蔽时 |
+| 3 | `ActivityManager.getRunningTasks(1)` | 老 API；普通应用只能拿到自己，系统进程常能拿到 |
+| 4 | `UsageStatsManager.queryEvents(近 15 秒)`，取"最后动作是进入前台"的包 | 前三级全废时的兜底推断 |
+
+- **上次成功的层级会被记住**（`camDetectLayer`），下次直接用，不再反复踩失败路径；换级时写一行
+  `[cam] 前台检测启用第 N 级（接口名）`。
+- 四级全失败 → 返回 `null` → **不避让**（宁可显示，也不要因为检测坏了就永远不显示），并只告警一次：
+  `[cam] ⚠️ 四级前台检测全部失败：相机避让失效`。
+- 命中相机时按包名去重记一行：`[cam] 前台是相机应用 <包名> → 让路收起预览`。
+
+相机包名清单（22 个，覆盖华米 OV 荣耀三星魅族索尼摩托华硕中兴 + 高通/联发科参考相机）：
+`com.android.camera` / `com.android.camera2` / `com.huawei.camera` / `com.hihonor.camera` /
+`com.miui.camera` / `com.xiaomi.camera` / `com.oplus.camera` / `com.coloros.camera` /
+`com.vivo.camera` / `com.bbk.camera` / `com.samsung.android.camera` / `com.sec.android.app.camera` /
+`com.oneplus.camera` / `com.google.android.GoogleCamera` / `com.meizu.camera` /
+`com.sonyericsson.android.camera` / `com.motorola.camera` / `com.motorola.camera2` /
+`com.asus.camera` / `com.zte.camera` / `com.org.codeaurora.camera` / `com.mediatek.camera`，
+外加"包名含 camera 且不含 safewalk"的关键字兜底。
+
+> **刻意不收微信 / 支付宝 / 抖音 / 云闪付**：它们虽然带扫码，但主要不是取景。把它们算进避让清单，
+> 等于悬浮窗在最常用的聊天、支付场景里全收起来，功能直接失效。
+>
+> `RearCameraOverlay.isCameraAppInForeground()` 那份重复实现已删除（相机搬到 `WalkPreviewService`
+> 后它就没有调用方了），避免两份反射逻辑各自漂移。
+
 
 ### 6.3 App 侧显隐决策（`evaluateShow`）
 
@@ -560,14 +609,22 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 |---|---|---|
 | `===== Hook 加载到进程:` | LSPosed 把模块加载进了这个进程 | 模块没装好 / 没勾作用域 |
 | `成功挂载至 SystemUI【系统界面】进程` | 包名匹配成功 | 作用域勾错了（不是 SystemUI） |
-| `Hook SystemUIApplication.onCreate 成功` | Hook 点命中 | ROM 类名不同（`找不到 SystemUIApplication 类`） |
-| `SystemUIApplication.onCreate 触发，开始初始化` | 真的走到 init | Hook 命中但没进 init |
+| `Hook SystemUIApplication.onCreate 成功` | Hook 点命中 | ROM 类名不同（见下面「锚点不存在」） |
+| `[hook] 锚点已挂上: <名字>` | 该入口可用（三个锚点各自一行） | 三个锚点全都不见了 = 该 ROM 结构差异极大 |
+| `[hook] 锚点不存在（该 ROM 无此入口）: <名字>` | 该类/方法在这台机器上不存在（不算错误） | — |
+| `[hook] 锚点挂载失败: <名字> → 异常` | 挂载抛异常，但不是致命（还有别的锚点） | — |
+| `[hook] 初始化触发源: <名字>` | **第一个**真正把模块拉起来的入口 | 有锚点但没有这行 = 锚点挂了却没被调用 |
+| `[hook] 兜底通道拿到 Context（第 n 次；锚点命中 N 个）` | 靠反射轮询救活，N=0 说明三条锚点全废 | 这条出现 = 该 ROM 值得单独适配 |
+| `[hook] ⚠️ 兜底轮询 20 秒仍拿不到 Context` | 四条路全废，模块无法启动 | — |
 | `init 已执行过，跳过重复初始化` | 幂等生效 | — |
 | `core init: 第 n 次尝试` | 核心步骤（Context + 日志）成功 | 只有下面的重试行 = Context 都拿不到 |
 | `❌ 初始化失败（核心步骤，第 n 次）: …` | 核心步骤抛异常，将退避重试 | — |
 | `↻ Ns 后重试初始化（已失败 n 次）` | 重试已排期（2s→60s 退避，最多 20 次） | — |
 | `❌ 初始化步骤失败[名字]: …` | 某一步单独挂了，其余照常跑 | — |
 | `❌ 注册广播失败[名字]: …` | 该接收器没注册上，下次 init 重试会补 | 对应功能失联 |
+| `[cam] 前台检测启用第 n 级（接口名）` | 前台检测降级了，第 1 级在这台机器上不可用 | — |
+| `[cam] ⚠️ 四级前台检测全部失败：相机避让失效` | 拿不到前台包名，选择不避让 | 这条出现 = 相机界面会挡取景 |
+| `[cam] 前台是相机应用 <包名> → 让路收起预览` | 避让生效（按包名去重，进入时一条） | 在相机里悬浮窗不收 = 检测没识别出该包 |
 | `✅ 计步器已注册:` | 系统计步器可用 | — |
 | `✅ 加速度计计步已启用（原因：…）` | 兜底在跑 | 两路都没跑 = 永远没步数 |
 | `🚶 计步中：窗口 x/50 步` | 每 15 秒一条，确实在计步 | 计数一直不涨 = 传感器/权限问题 |
@@ -632,7 +689,7 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 
 ## 13. 已知问题（按严重度，供后续维护）
 
-> **2026-11-08 已修掉三条 P0 与一条 P2**（见 13.1）。13.2 是仍然存在的，修之前不要以为"文档写了就是已解决"。
+> **2026-11-08 已修掉三条 P0、两条 P1 与一条 P2**（见 13.1）。13.2 是仍然存在的，修之前不要以为"文档写了就是已解决"。
 
 ### 13.1 已修复（2026-11-08）
 
@@ -641,7 +698,12 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 | **P0-1** | `inited = true` 写在 `try` **之前**，后续任何一步抛异常都只 log 不重试，该进程永久停在"已初始化"的假状态 | 拆成 `initRunning` / `initSucceeded` 两个标志；核心步骤失败走**退避重试**（2s→4s→…→封顶 60s，最多 20 次）；其余步骤用 `step("名字"){}` 逐段兜底，单步失败只损失那一步 | `SafeWalkLSPHook.kt` `runInit()` / `step()` / `scheduleInitRetry()` |
 | **P0-2** | 主线程跨进程 `query` Provider，App 被回收时会把 App 冷启动，主线程等 Binder 数百 ms~数秒 → 掉帧甚至 ANR | 配置读取全部挪到单线程池 `SafeWalk-config`（daemon）；`configJson` 改成 `@Volatile` 快照，**只在后台整体替换、主线程只读引用**；读完回主线程再重算 `updateCrashDetection` / `updateOverlay`；`configLoading` 去重，失败保留旧快照并 10 秒后重试 | `refreshConfig()` / `configExecutor` |
 | **P0-3** | 广播令牌硬编码 + 接收器全 exported：反编译拿到 token 就能反复发 `RESTART_SYSTEMUI` 杀 SystemUI（黑屏 DoS）、静默点灯、刷配置 | 新增 **signature 级权限** `io.github.wumisc.safewalk.permission.CONTROL`；SystemUI 侧 6 个导出接收器统一走 `registerExportedWithPermission()`，**系统在分发阶段就校验发送方签名**，第三方广播根本到不了代码。令牌保留为第二道校验 | `AndroidManifest.xml`、`ReceiverCompat.registerExportedWithPermission()`、`registerOnce()` |
+| **P1-1** | Hook 单点、零兜底：只挂 `SystemUIApplication.onCreate`，OEM 改类名/启动点就整模块静默失效 | 改成**四层入口并联**：① `SystemUIApplication.onCreate` ② `Instrumentation.callApplicationOnCreate`（不认类名） ③ `SystemUIService.onCreate` ④ 守护线程反射 `ActivityThread.currentApplication()` 轮询兜底。全部落到幂等的 `triggerInit()`，第一个命中的来源写日志 | `handleLoadPackage()` / `hookAnchor()` / `triggerInit()` / `startContextFallback()`（§2.1） |
+| **P1-2** | `cameraInForeground` 只有一级反射，抛异常被吞成 `false` → 相机避让失效、悬浮窗挡取景，且日志无痕 | 改成**四级降级检测**（`getFocusedRootTaskInfo` → `ActivityTaskManager.getTasks` → `getRunningTasks` → `UsageStatsManager`），记住上次成功的层级、换级写日志；四级全失败时**不避让 + 一次性告警**；相机包名清单从 9 个扩到 22 个 | `foregroundPackage()` 及 4 个 `pkgFrom*`（§6.2） |
 | **P2-3** | `enableDiagLog` 不在 `ConfigProvider.WHITELIST`，Hook 侧永远读默认 `true` → 关掉日志开关后 SystemUI 侧仍在写 | 加入白名单（它只是开关，不含隐私），`exportConfig` 会自动带上 | `ConfigProvider.kt` `WHITELIST` |
+
+**顺带清理**：`RearCameraOverlay.isCameraAppInForeground()` 与它的 `CAMERA_PACKAGES` 已删除——
+相机搬到 `WalkPreviewService` 后这份实现**没有任何调用方**，留着只会和 Hook 侧的新逻辑各自漂移。
 
 **P0-3 的一个边界**：这套权限只能护住 **App → SystemUI** 方向（发送方是模块自己，持有签名权限）。反方向 **SystemUI → App** 的广播（预览状态回执、日志回传、重启 ACK）发送方是系统界面，它拿不到我们的签名权限，所以 App 侧的接收器**仍然只能靠令牌**。被伪造的后果限于"让悬浮窗显隐错乱 / 往日志里灌文本"，不涉及杀进程或开摄像头。
 
@@ -649,14 +711,23 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 
 | 级别 | 问题 | 位置 | 后果 | 建议改法 |
 |---|---|---|---|---|
-| **P1-1** | Hook 单点、零兜底 | `SafeWalkLSPHook.kt:301-321` | OEM 改类名/启动点 → 整模块静默失效，日志只一行"找不到类" | 加 `SystemUIService.onCreate` / `Application.attach` 二级锚点 |
-| **P1-2** | `cameraInForeground` 反射可能恒 false | `:1357` | 隐藏 API，部分 ROM 抛异常被吞 → 相机避让失效，悬浮窗挡取景 | 加 `getTasks` / `UsageStatsManager` 兜底，并显式验证 |
 | **P2-1** | 加速度计常开 | `:400`、`:649` | 与 v2.1"平均 <1Hz"的说法矛盾，功耗需实测 | 若实测偏高，考虑息屏降采样或只在候选窗口开 |
 | **P2-2** | `DiagLog.appendLine` 同步写文件在调用方线程 | `DiagLog.kt:207` | tick 里写日志会有主线程 I/O 抖动 | 改成单线程串行队列 + 批量 flush |
 | **P2-3** | App 侧接收器仍只能靠令牌（反方向 SystemUI → App 不受签名权限保护） | `CrashAlertReceiver` / `LogBridgeReceiver` / `TorchActionReceiver` 等 | 第三方拿到令牌可伪造"预览状态回执 / 日志文本 / 点灯请求" | 若要彻底解决，需 per-install 随机令牌（Hook 从导出的配置里读），改动面 20+ 处 |
 | **P2-4** | 久坐依赖 `lastStepTs != 0` | `:944` | 开机后没走过一次就永不提醒久坐 | 可接受（有意保守），但要在 UI 说明 |
 | **P2-5** | `walking` 只写不读 | `:40`、`:559`、`:770`、`:780`、`:1106` | 死变量，容易误导后续维护者以为它在控制显隐 | 删除，或改成只用于日志 |
 | **P2-6** | `minSdk 33` 让 `ReceiverCompat` 的 API<33 分支成死代码 | `ReceiverCompat.kt` | 无害，但读代码时会以为在兼容 11/12 | 保留（防降 minSdk），注释说明 |
+
+**P1 修复的验证要点**（真机上看日志即可判断走的是哪条路）：
+
+| 日志 | 含义 |
+|---|---|
+| `[hook] 锚点已挂上: SystemUIApplication.onCreate` | 正常机型，主入口可用 |
+| `[hook] 初始化触发源: Instrumentation.callApplicationOnCreate` | OEM 改了 Application 类名，靠锚点 2 兜住 |
+| `[hook] 兜底通道拿到 Context（第 N 次；锚点命中 0 个）` | 三条锚点全部失效，靠反射轮询救活——**说明该 ROM 值得单独适配** |
+| `[hook] ⚠️ 兜底轮询 20 秒仍拿不到 Context` | 四条路全废，模块无法启动 |
+| `[cam] 前台检测启用第 N 级（接口名）` | 前台检测降级了，第 1 级在这台机器上不可用 |
+| `[cam] ⚠️ 四级前台检测全部失败` | 相机避让失效（悬浮窗在相机界面不收起） |
 
 ---
 

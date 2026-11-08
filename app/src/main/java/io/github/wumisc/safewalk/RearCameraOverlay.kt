@@ -56,19 +56,6 @@ class RearCameraOverlay(
         const val CORNER_TR = "top_right"
         const val CORNER_TL = "top_left"
 
-        /** 常见相机应用包名前缀，用于前台避让判断 */
-        private val CAMERA_PACKAGES = setOf(
-            "com.android.camera",
-            "com.huawei.camera",
-            "com.miui.camera",
-            "com.xiaomi.camera",
-            "com.oplus.camera",
-            "com.vivo.camera",
-            "com.samsung.android.camera",
-            "com.oneplus.camera",
-            "com.google.android.GoogleCamera"
-        )
-
         /**
          * close 之后至少等这么久再 open。
          *
@@ -410,27 +397,6 @@ class RearCameraOverlay(
         }
         val dm = ctx.resources.displayMetrics
         return dm.widthPixels to dm.heightPixels
-    }
-
-    /**
-     * 前台是否相机类应用。
-     * 命中时 Hook 端会暂时收起悬浮窗，避免挡住取景框。
-     */
-    fun isCameraAppInForeground(): Boolean {
-        return try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val atm = atmClass.getMethod("getInstance").invoke(null)
-            val info = atmClass.getMethod("getFocusedRootTaskInfo").invoke(atm) ?: return false
-            val topActivity = info.javaClass.getField("topActivity").get(info) ?: return false
-            val pkg = topActivity.javaClass.getField("packageName").get(topActivity) as? String
-                ?: return false
-
-            if (CAMERA_PACKAGES.contains(pkg)) return true
-            // 部分 ROM 用厂商自有相机包名，退化为包名关键字匹配
-            pkg.contains("camera", ignoreCase = true) && !pkg.contains("safewalk", ignoreCase = true)
-        } catch (_: Throwable) {
-            false
-        }
     }
 
     private fun teardown() {

@@ -1,6 +1,6 @@
 # 更新日志
 
-## [未发布] - 2026-11-08 稳定性加固（三条 P0）
+## [未发布] - 2026-11-08 稳定性加固（三条 P0 + 两条 P1）
 
 ### 🛡 修复：初始化失败一次就永久失效
 
@@ -40,12 +40,45 @@ App 已被回收时这一次 query 还会把它冷启动起来，耗时几百毫
 `enableDiagLog` 不在 `ConfigProvider.WHITELIST` 里，Hook 侧
 `pref(enableDiagLog, true)` 永远拿默认值 `true`。已加入白名单。
 
+### 🪝 修复：Hook 只有单一入口，ROM 一改类名就整模块静默失效
+
+原来只挂 `SystemUIApplication.onCreate`。OEM 换掉这个类、或改了 SystemUI 的启动
+顺序，模块就完全不动，日志里只留一行「找不到 SystemUIApplication 类」——用户看到
+的现象是「装了但什么都不动」，且没有任何其他线索。
+
+现在改成**四层入口并联**，任一层命中都能起来：
+1. `SystemUIApplication.onCreate`（AOSP 与多数 ROM 的主入口）
+2. `Instrumentation.callApplicationOnCreate`（不认类名，任何 Application 都必经）
+3. `SystemUIService.onCreate`（SystemUI 自己的 Service，启动极早）
+4. 守护线程反射 `ActivityThread.currentApplication()` 轮询兜底（每条锚点都没挂上时
+   1 秒后开始，挂上了则先等 8 秒；每 500ms 试一次，最多 20 秒）
+
+四条路都汇到自带幂等保护的 `triggerInit()`，不会重复初始化。第一个命中的来源会写进
+日志（`[hook] 初始化触发源: …`），排查时一眼能看出这台 ROM 走的是哪条路。
+
+### 📷 修复：相机前台检测只有一级反射，失败就在相机界面挡住取景
+
+`cameraInForeground` 原来只调 `ActivityTaskManager.getFocusedRootTaskInfo()`，
+抛异常被 `catch (_: Throwable) { false }` 吞掉：表现是「在相机界面悬浮窗不收起、
+挡住取景」，而日志里干干净净什么都看不到。
+
+现在四级降级，任意一级拿到就用：`getFocusedRootTaskInfo` →
+`ActivityTaskManager.getTasks(1)` → `ActivityManager.getRunningTasks(1)` →
+`UsageStatsManager.queryEvents`（按最近一次 RESUMED 事件推断）。会记住上次成功的
+层级、只在换级时写一行日志；四级全失败时**选择不避让**（宁可显示，也不要因为检测
+坏了就永远不显示）并只告警一次。相机包名清单从 9 个扩到 22 个（覆盖华米 OV 荣耀
+三星魅族索尼摩托华硕中兴 + 高通/联发科参考相机）。
+
+顺带删掉 `RearCameraOverlay.isCameraAppInForeground()` 那份**零调用方**的重复实现
+（相机搬到 `WalkPreviewService` 后它就没人用了），避免两份反射逻辑各自漂移。
+
 改动文件：
-- `SafeWalkLSPHook.kt`：`runInit()` / `step()` / `scheduleInitRetry()` / `registerControlReceivers()` / `registerOnce()` / `startTick()`；`refreshConfig()` 改异步
+- `SafeWalkLSPHook.kt`：`runInit()` / `step()` / `scheduleInitRetry()` / `registerControlReceivers()` / `registerOnce()` / `startTick()`；`refreshConfig()` 改异步；新增 `hookAnchor()` / `triggerInit()` / `startContextFallback()` / `currentApplication()` / `foregroundPackage()` 及 4 个 `pkgFrom*`
+- `RearCameraOverlay.kt`：删除零调用方的 `isCameraAppInForeground()` 与 `CAMERA_PACKAGES`
 - `ReceiverCompat.kt`：新增 `registerExportedWithPermission()`
 - `AndroidManifest.xml`：声明 `permission.CONTROL`
 - `ConfigProvider.kt`：白名单加入 `enableDiagLog`
-- `docs/LOGIC_DESIGN.md`：§2.2 / §10 / §11.4 / §13 同步更新
+- `docs/LOGIC_DESIGN.md`：§2.1 / §6.2 / §10 / §11.4 / §13 同步更新
 
 ## [v2.10.3] - 未发布（步态检测修复）
 
