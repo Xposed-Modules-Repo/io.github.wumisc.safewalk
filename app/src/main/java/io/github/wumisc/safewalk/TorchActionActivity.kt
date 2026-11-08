@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_OFF
+import io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_ON
 
 /**
  * 手电通知按钮的落点（**Activity**，不是广播）。
@@ -37,6 +38,32 @@ class TorchActionActivity : Activity() {
     @Suppress("DEPRECATION") // else 分支为 minSdk30–33 的有意兼容路径
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 先鉴权再做事。这个页面是 exported 的（通知 PendingIntent 必须能跨进程拉起），
+        // 而它一被执行就会点亮闪光灯 —— 不校验的话，任意应用 startActivity 一个
+        // 空 Intent 就能悄悄开灯（耗电、给偷拍打光），或者把用户正用的灯熄掉。
+        //
+        // 两条判据：
+        // ① action 必须在白名单里（原来写的是 `action != OFF` 就算开灯，
+        //    于是 null / 任意 action 都会去开灯）；
+        // ② 调用方必须可信：API 34+ 用 launchedFromUid，低版本退回广播令牌
+        //    （getLaunchedFromUid 是 API 34 才有的方法，33 上根本不存在）。
+        val action = intent?.action
+        val enable: Boolean = when (action) {
+            ACTION_APP_TORCH_ON -> true
+            ACTION_APP_TORCH_OFF -> false
+            else -> {
+                DiagLog.log("[torch] 透明页被非法 action 拉起（${action ?: "null"}），拒绝")
+                finish()
+                return
+            }
+        }
+        if (!isTrustedCaller()) {
+            DiagLog.log("[torch] 透明页被不可信来源拉起，拒绝")
+            finish()
+            return
+        }
+
         // 透明页：不画任何东西，只为拿到一次「前台身份」
         // Android 14(34) 起 overridePendingTransition 被废弃，改用 overrideActivityTransition
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -45,8 +72,6 @@ class TorchActionActivity : Activity() {
             overridePendingTransition(0, 0)
         }
 
-        val action = intent?.action
-        val enable = action != ACTION_APP_TORCH_OFF
         val app = applicationContext
         DiagLog.init(app)
         DiagLog.log("[torch] 通知按钮(Activity): ${if (enable) "开灯" else "关灯"}")
@@ -82,5 +107,35 @@ class TorchActionActivity : Activity() {
             Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         } catch (_: Throwable) {
         }
+    }
+
+    /**
+     * 调用方是否可信：系统进程 / 系统 uid 段 / 本应用自己。
+     *
+     * `Activity.getLaunchedFromUid()` 直到 **API 34** 才存在，minSdk 是 33，
+     * 所以在 Android 13 上取不到 uid，只能退回广播令牌（由通知方写入 extra）。
+     * 这不是完美的门禁，但比「完全不校验」强得多，而且两条路径都堵住了
+     * 「空 Intent 就能点灯」这个最容易利用的入口。
+     */
+    private fun isTrustedCaller(): Boolean {
+        val uid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                launchedFromUid
+            } catch (_: Throwable) {
+                -1
+            }
+        } else {
+            -1
+        }
+        if (uid == android.os.Process.SYSTEM_UID ||
+            uid == android.os.Process.myUid() ||
+            uid in 1 until android.os.Process.FIRST_APPLICATION_UID
+        ) return true
+        val token = try {
+            intent?.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
+        } catch (_: Throwable) {
+            null
+        }
+        return token != null && token == SafeWalkPrefKey.BROADCAST_TOKEN
     }
 }

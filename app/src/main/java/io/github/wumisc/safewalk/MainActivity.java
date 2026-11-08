@@ -47,6 +47,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 优先 /storage/emulated/0/Android/Travel safely/，写不进自动降级
         DiagLog.init(getApplicationContext());
 
+        // 上次在实验区临时打开过预览、又没点「关闭预览」就退出（甚至进程被杀）时，
+        // 备份会留在 SP 里。必须在 initUI 之前还原，否则首页会先按旧值渲染一遍。
+        LabActivity.recoverStaleOverride(this);
+
         // 界面先建起来，权限再异步申请。
         // 之前缺权限直接 return，用户看到的是一整页空白磁贴，像是「App 坏了」。
         initUI();
@@ -225,8 +229,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         pageSettings = findViewById(R.id.page_settings);
         pageAbout = findViewById(R.id.page_about);
         // 液态玻璃导航栏（Compose）：首页=0，关于=1。点 tab 切页面。
+        // 注意 onPage=false 表示当前停在**首页**，所以初始值必须是 0；
+        // 原来写成 onPage ? 0 : 1，一进来高亮就落在「关于」上。
         composeNav = findViewById(R.id.compose_nav);
-        MainNav.attach(composeNav, onPage ? 0 : 1, idx -> {
+        MainNav.attach(composeNav, onPage ? 1 : 0, idx -> {
             switchTab(idx == 0);
             return kotlin.Unit.INSTANCE;
         });
@@ -407,10 +413,14 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     private void switchTab(boolean toSettings) {
+        // toSettings=true  → 首页（page_settings，四宫格磁贴），导航栏 index 0
+        // toSettings=false → 关于（page_about），     导航栏 index 1
         onPage = !toSettings;
         pageSettings.setVisibility(toSettings ? View.VISIBLE : View.GONE);
         pageAbout.setVisibility(toSettings ? View.GONE : View.VISIBLE);
-        // 导航栏高亮态由 Compose 侧自管（点 tab 时已同步），这里只管页面显隐。
+        // 高亮必须在这里同步：滑动切页（dispatchTouchEvent）不经过 Compose 的
+        // onTabSelected，只写界面显隐的话导航栏会一直停在上一个 tab 上。
+        MainNav.select(toSettings ? 0 : 1);
     }
 
     // ========== 保存壁纸 ==========

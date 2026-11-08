@@ -17,7 +17,8 @@
     <color name="accent_camera">#1B3A5C</color>
     <color name="button_bg">#EDE6D6</color>
     <color name="nav_bg">#FFFCF5</color>
-    <color name="ic_launcher_background">#1A2036</color>
+    <!-- 自适应图标背景：取自新图标（雨伞插画）四角的深夜蓝，与前景图透明外沿无缝衔接 -->
+    <color name="ic_launcher_background">#0A2542</color>
     <color name="seal_red">#C8392E</color>
     <color name="beyond_orange">#D4820A</color>
     <color name="bg_overlay">#70FFFFFF</color>

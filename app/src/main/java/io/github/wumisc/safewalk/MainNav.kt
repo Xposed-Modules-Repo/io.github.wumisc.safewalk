@@ -6,10 +6,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,6 +34,24 @@ import com.kyant.backdrop.catalog.components.LiquidBottomTabs
  */
 object MainNav {
 
+    /**
+     * 导航栏当前选中项的外部可写状态。
+     *
+     * 为什么需要它：`selected` 原本只是 Compose 内部的 `remember` 状态，
+     * 只有「点 tab」这一条路径会更新它。于是左右滑动切页（走
+     * MainActivity.switchTab）、或者代码里主动切页时，页面已经换了，
+     * 底部高亮还停在上一个 tab 上 —— 用户看到的就是「滑了但导航栏没反应」。
+     * 现在把状态句柄暴露出来，让 Activity 侧也能驱动高亮。
+     */
+    @Volatile
+    private var selectedState: androidx.compose.runtime.MutableIntState? = null
+
+    /** 由 Activity 侧调用，把高亮同步到指定 tab（0=首页，1=关于） */
+    @JvmStatic
+    fun select(index: Int) {
+        selectedState?.intValue = index
+    }
+
     private fun navIcon(name: String, pathData: String): ImageVector =
         ImageVector.Builder(
             name = name,
@@ -54,14 +70,17 @@ object MainNav {
     @JvmStatic
     fun attach(composeView: ComposeView, initialSelected: Int, onSelect: (Int) -> Unit) {
         composeView.setContent {
-            var selected by remember { mutableIntStateOf(initialSelected) }
+            val state = remember { mutableIntStateOf(initialSelected) }
+            // 把句柄交给 Activity 侧；用 SideEffect 保证只在组合成功后赋值
+            androidx.compose.runtime.SideEffect { selectedState = state }
+            val selected = state.intValue
             // 折射源 backdrop：交给导航栏内部使用（自身 tabsBackdrop 折射）
             val backdrop = rememberLayerBackdrop()
 
             LiquidBottomTabs(
                 selectedTabIndex = { selected },
                 onTabSelected = { index ->
-                    selected = index
+                    state.intValue = index
                     onSelect(index)
                 },
                 backdrop = backdrop,
@@ -70,7 +89,7 @@ object MainNav {
             ) {
                 val items = listOf(IconHome to "首页", IconAbout to "关于")
                 items.forEachIndexed { index, (icon, label) ->
-                    LiquidBottomTab({ selected = index; onSelect(index) }) {
+                    LiquidBottomTab({ state.intValue = index; onSelect(index) }) {
                         Icon(
                             imageVector = icon,
                             contentDescription = label,

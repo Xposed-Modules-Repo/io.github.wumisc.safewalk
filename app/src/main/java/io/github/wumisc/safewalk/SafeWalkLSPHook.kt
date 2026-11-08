@@ -178,6 +178,15 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         const val SIT_REMIND_MS = 2 * 60 * 60 * 1000L  // 久坐2小时
         const val DAILY_COOLDOWN = 24 * 60 * 60 * 1000L // 每日冷却
         const val BATTERY_COOLDOWN = 60 * 60 * 1000L   // 电量1小时冷却
+
+        /**
+         * 「显示/收起预览」指令的去重保鲜期。
+         *
+         * App 进程被系统直接杀掉时不会走 onDestroy，回执永远不来，
+         * 只发变化的去重会把 lastSentShow 永久锁死。超过这个时间就无条件补发一次，
+         * 让状态能自愈 —— 一条本地广播，成本可以忽略。
+         */
+        const val OVERLAY_RESYNC_MS = 60_000L
         const val NIGHT_START_HOUR = 22  // 夜间开始
         const val NIGHT_END_HOUR = 6      // 夜间结束
 
@@ -1338,6 +1347,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 避免每 2 秒一次跨进程广播白白耗电。
      */
     private var lastSentShow: Boolean? = null
+    /** 上一次真正发出显示/收起指令的时刻，用于 [OVERLAY_RESYNC_MS] 的保鲜期补发 */
+    private var lastSentAt = 0L
 
     private fun updateOverlay() {
         if (!masterEnabled() || !pref(SafeWalkPrefKey.enableRearCamera, false)) {
@@ -1423,8 +1434,16 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
     private fun sendOverlayCmd(show: Boolean) {
-        if (lastSentShow == show) return
+        val now = System.currentTimeMillis()
+        // 去重，但带「保鲜期」：同一条指令超过 [OVERLAY_RESYNC_MS] 就重发一次。
+        //
+        // 只靠「只发变化」太脆——App 进程被系统直接杀掉时不会走 onDestroy，
+        // 回执永远不来，lastSentShow 就会永久停在 true，之后所有「该显示」
+        // 都被去重吞掉，用户看到的是「预览突然再也不出来了」。
+        // 一分钟补发一次的成本可以忽略（一条本地广播），换来的是状态自愈。
+        if (lastSentShow == show && now - lastSentAt < OVERLAY_RESYNC_MS) return
         lastSentShow = show
+        lastSentAt = now
         try {
             ctx?.sendBroadcast(
                 Intent(

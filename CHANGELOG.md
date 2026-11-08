@@ -1,5 +1,86 @@
 # 更新日志
 
+## [未发布] - 2026-11-08 界面统一 + 一批交互/安全问题
+
+### 🎨 界面：所有二级页面统一到「医疗急救卡」版式
+
+原来每个页面各写一套视觉：首页是米黄底 + 圆角磁贴 + emoji 图标框，智能提醒是
+每项一张圆角卡，致敬名单是一整块纯文本，实验区是代码里硬编码颜色。改一个颜色
+要改四五处。现在统一为「灰底页 + 平角白卡片 + 1px 分隔线 + 24sp 粗标题」，
+公共属性抽进 `res/values/styles.xml`（`RowStyle` / `RowTitle` / `RowHint` /
+`RowChevron` / `RowDivider` / `CardStyle` / `SectionLabel`）。
+
+- 首页：四个磁贴改成一张卡片里的四行（总开关 / 智能提醒 / 行走模式 / 急救卡），带右侧箭头
+- 关于：五个入口 + 诊断日志开关 + 实验区入口，全部行式化
+- 智能提醒：六个独立圆角卡合并为一张卡片，XML 从 774 行降到约 420 行
+- 行走模式：同样行式化，显示参数/步态参数分组
+- 致敬名单：整块文本改成「分区小标题 + 白卡片 + 行」，并见下条
+
+### 🔗 致敬名单：补链接、标注采纳状态
+
+原页面是一个 TextView 拼出来的长文本，链接点不了，也看不出某个项目到底有没有被用上。
+现在每一条都带**可点击的仓库地址**与**采纳状态**（直接集成 / 已落地 / 部分落地 /
+仅参考 / 仓库已失效），说明里写明对应到哪个机制。
+
+核对结果：原名单里 `mdeguzis/StepCounter`、`ashishb/android-step-detector`、
+`tonyo567/hysteresis-state-machine`、`p-v/Android-SensorService` 四个仓库在 GitHub
+上**已不存在（404）**，因此不再挂链接并降级为「仅参考」；`ashishb` 的替代地址为
+`huuphuoc1396/android-step-detector`。同时补上了实际在用的三个 Maven 依赖
+（`Kyant0/AndroidLiquidGlass`、`backdrop-android`、`miuix-*`）。
+
+### 🧪 实验区：日志区放大 + 注入链路自检
+
+- 调试日志区原来写死 300px（约 100dp），1080p 屏上只够看四五行；改成屏幕高度的
+  42%（最少 280dp）、字号 11→12sp、可长按选择文本，并新增「清空」按钮
+- 新增「注入链路自检」：逐条核对当前版本的初始化链（日志回传 / 锚点挂载 /
+  初始化入口 / 核心初始化 / 透明自启页 / 前台检测降级 / 步数探针），
+  缺失项直接给出排查方向
+- 新增「预览服务状态」：一键看 `isAlive()` / `isPreviewShowing()`
+- 按钮列表改成表驱动（分组 + 文案 + 动作），加一项只加一行
+
+### 🐞 底部导航：滑动切页后高亮不同步
+
+`MainNav` 的 `selected` 只是 Compose 内部 `remember` 状态，只有点 tab 才会更新；
+左右滑动走 `MainActivity.switchTab()`，于是页面换了、高亮还停在原处。
+现在 `MainNav.select(index)` 暴露给 Activity，`switchTab()` 里同步；
+顺带修掉初始索引写反（`onPage ? 0 : 1` → 一进来高亮落在「关于」）。
+
+### 🛡 预览「黑过一次就再也不回来」
+
+`RearCameraOverlay` 看门狗与 `recoverCamera` 都是**先 `reportFailure()` 再 `hide()`**，
+而回执读的是 `overlay.getShowing()`，于是发出去的是 `showing=true`，紧接着窗口才收起、
+却不再有第二次回执。Hook 侧 `lastSentShow` 永久停在 `true`，之后每条「该显示」都被
+去重吞掉 —— 默认又是手动常显模式，用户看到的就是「预览突然再也不出来了」。
+现在两处都改成**先 hide 再报错**；另外给 `sendOverlayCmd` 加了 60 秒保鲜期，
+即使 App 被系统直接杀掉（不走 onDestroy）也能自动重发、让状态自愈。
+
+### 🛡 实验区把「行走模式」永久打开
+
+实验区为了绕过开关检查，会把 `enableRearCamera` 强制写成 `true`，但只在点
+「关闭预览」时还原，`onDestroy` 什么都不做，原始值还只是实例字段 ——
+用户点过一次预览直接返回，行走模式就常开了，回到桌面还可能自己糊上全屏摄像头画面。
+现在备份写进 SharedPreferences，`onStop`（仅 `isFinishing()`）自动还原，
+并在 `MainActivity.onCreate` 里兜底恢复上次残留。
+
+### 🛡 手电透明页可被任意应用拉起
+
+`TorchActionActivity` 是 `exported` 的（通知 PendingIntent 必须能跨进程拉起），
+但页内**完全没有调用方校验**，且 `enable = action != ACTION_APP_TORCH_OFF` ——
+action 为 null 也算「开灯」。任意应用 startActivity 一个空 Intent 就能点亮闪光灯。
+现在：action 必须在白名单内（否则直接退出），并校验调用方 uid（API 34+ 的
+`launchedFromUid`）或广播令牌。
+
+### 🛡 App 侧跨进程入口只靠硬编码令牌
+
+`CrashAlertReceiver` / `LogBridgeReceiver` / `TorchActionReceiver` /
+`WalkPreviewService` 的动态接收器 / `SystemUiRestarter` 的 ACK 接收器，
+原来只比对反编译就能拿到的字符串令牌。伪造一条 `CRASH_DETECTED` 足以让急救卡
+走完倒计时、真的发短信与拨号。现在统一走 `ReceiverCompat.isTrustedCommand()`：
+API 34+ 先用 `getSentFromUid()` 校验发送方必须是系统进程/系统 uid 段/本应用，
+令牌退化为第二道校验（API 33 上 `getSentFromUid` 不存在，仍以令牌为主）。
+
+---
+
 ## [未发布] - 2026-11-08 构建验证 + Gradle Wrapper
 
 ### 🔧 新增：Gradle Wrapper（锁定 9.6.0）

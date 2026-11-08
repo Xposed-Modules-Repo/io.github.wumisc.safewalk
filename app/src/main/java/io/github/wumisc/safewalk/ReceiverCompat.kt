@@ -69,4 +69,48 @@ object ReceiverCompat {
             ctx.registerReceiver(receiver, filter, permission, null)
         }
     }
+
+    /**
+     * 判断一条广播的发送方是否可信（系统进程 / 系统 uid 段 / 本应用自己）。
+     *
+     * 为什么需要：App 侧的这几个接收器（撞击、手电、日志回传、预览指令）必须
+     * EXPORTED 才能收 SystemUI 的消息，但导出之后任何应用都能往同一个 action
+     * 发广播。原先唯一的门禁是源码里写死的字符串令牌，反编译就能拿到——
+     * 伪造一条 CRASH_DETECTED 足以让急救卡倒计时结束、真的发短信和拨号。
+     *
+     * `getSentFromUid()` 是 **API 34** 才有的方法，所以：
+     * · 返回 `true`  → 确认可信，放行；
+     * · 返回 `false` → 确认不可信，直接丢弃；
+     * · 返回 `null`  → 拿不到身份（API 33 及以下），调用方继续用令牌兜底。
+     */
+    @JvmStatic
+    fun senderIsTrusted(receiver: BroadcastReceiver): Boolean? {
+        if (android.os.Build.VERSION.SDK_INT < 34) return null
+        return try {
+            val uid = receiver.sentFromUid
+            uid == android.os.Process.SYSTEM_UID ||
+                    uid == android.os.Process.myUid() ||
+                    uid in 1 until android.os.Process.FIRST_APPLICATION_UID
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * 统一的跨进程入口鉴权：先看发送方 uid，再验令牌。
+     *
+     * 两步都要过：uid 挡掉普通应用（API 34+），令牌挡掉同 uid 段但非预期的发送方，
+     * 并在 API 33 及以下独自承担全部防护。
+     */
+    @JvmStatic
+    fun isTrustedCommand(receiver: BroadcastReceiver, token: String?): Boolean =
+        isTrustedCommand(receiver, token, SafeWalkPrefKey.BROADCAST_TOKEN)
+
+    /** 同上，但允许指定别的令牌（例如「重启系统界面」那条通道有自己的令牌） */
+    @JvmStatic
+    fun isTrustedCommand(receiver: BroadcastReceiver, token: String?, expected: String?): Boolean {
+        val byUid = senderIsTrusted(receiver)
+        if (byUid == false) return false
+        return expected != null && token == expected
+    }
 }

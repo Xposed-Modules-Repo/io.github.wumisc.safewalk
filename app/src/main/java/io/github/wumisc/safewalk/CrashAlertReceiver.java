@@ -28,9 +28,12 @@ public class CrashAlertReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context c, Intent i) {
-        if (!SafeWalkPrefKey.BROADCAST_TOKEN.equals(
-                i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN))) {
-            Log.w("SafeWalk", "[crash] 撞击广播令牌不匹配，忽略");
+        // 双重校验：API 34+ 先看发送方 uid（必须是系统进程或本应用），再验令牌。
+        // 这里必须拦住伪造广播——一条假的 CRASH_DETECTED 会让急救卡走完倒计时，
+        // 真的给紧急联系人发短信、真的拨号，代价远不止「弹个卡片」。
+        if (!ReceiverCompat.isTrustedCommand(this,
+                i == null ? null : i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN))) {
+            Log.w("SafeWalk", "[crash] 撞击广播鉴权失败（发送方不可信或令牌不匹配），忽略");
             return;
         }
         Log.w("SafeWalk", "[crash] 收到撞击广播，拉起急救卡");

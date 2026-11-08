@@ -24,9 +24,10 @@ public class LogBridgeReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context c, Intent i) {
         if (i == null) return;
-        if (!SafeWalkPrefKey.BROADCAST_TOKEN.equals(
+        // 同 CrashAlertReceiver：uid 优先（API 34+），令牌兜底（API 33）
+        if (!ReceiverCompat.isTrustedCommand(this,
                 i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN))) {
-            Log.w("SafeWalk", "[logbridge] 令牌不匹配，丢弃");
+            Log.w("SafeWalk", "[logbridge] 鉴权失败，丢弃");
             return;
         }
         String text = i.getStringExtra(DiagLog.EXTRA_LOG_TEXT);

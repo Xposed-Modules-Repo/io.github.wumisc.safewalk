@@ -29,9 +29,10 @@ class TorchActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         if (action != ACTION_TORCH_ON && action != ACTION_TORCH_OFF) return
-        // 与其它跨进程入口保持一致：没令牌一律忽略
-        if (intent.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
-            != SafeWalkPrefKey.BROADCAST_TOKEN
+        // uid 优先（API 34+）+ 令牌兜底：否则任意应用发一条广播就能点灯/熄灯
+        if (!ReceiverCompat.isTrustedCommand(
+                this, intent.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
+            )
         ) return
 
         val app = context.applicationContext

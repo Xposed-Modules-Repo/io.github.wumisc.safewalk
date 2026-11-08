@@ -61,7 +61,10 @@ public final class SystemUiRestarter {
         BroadcastReceiver ackReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent i) {
-                if (i != null && TOKEN.equals(i.getStringExtra(EXTRA_TOKEN))) {
+                // 伪造一条 ACK 会让 App 以为「已经重启」，从而跳过 su 兜底、
+                // 告诉用户重启成功而实际什么都没发生。所以同样要验发送方。
+                if (i != null && ReceiverCompat.isTrustedCommand(this,
+                        i.getStringExtra(EXTRA_TOKEN), TOKEN)) {
                     acked[0] = true;
                 }
             }

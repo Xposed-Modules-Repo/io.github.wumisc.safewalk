@@ -1,40 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    致敬名单。
+    版式与「医疗急救卡」统一：灰底页 + 平角白卡片 + 行间分隔，标题层级一致。
+    条目由 AcknowledgementsActivity 按数据表动态生成 —— 十几个条目全写成静态 XML
+    会变成几百行重复标签，加一条就得复制一遍，这才是「代码不规范」的根源。
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_xuanzhi"
+    android:background="#F2F2F7"
     android:fitsSystemWindows="true"
-    android:padding="16dp">
+    android:padding="16dp"
+    android:paddingTop="40dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="🎖️ 致敬名单"
-            android:textColor="@color/text_primary"
-            android:textSize="26sp"
+            android:text="致敬名单"
+            android:textColor="#1D1D1D"
+            android:textSize="24sp"
             android:textStyle="bold" />
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="感谢所有开源开发者的贡献"
-            android:textColor="@color/text_hint"
-            android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/tv_ack_list"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:lineSpacingExtra="6dp"
-            android:textColor="@color/text_body"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="SafeWalk 是面向 HyperOS / Android 的 LSPosed 出行感知模块，实现不依赖 GMS 的步行状态识别。下面逐条列出参考来源，并标注它到底有没有落进这个项目的代码里。"
+            android:textColor="#8E8E93"
             android:textSize="13sp" />
+
+        <LinearLayout
+            android:id="@+id/container_ack"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:lineSpacingExtra="4dp"
+            android:text="核对说明：本页链接与「采纳状态」于 2026-11-08 逐条核对。其中 4 个仓库在 GitHub 上已不存在（404），因此不再提供链接、并降级标注为「仅参考」——不在页面上挂一个点不开的地址。凡标注「直接集成 / 已落地 / 部分落地」的条目，都能在源码里对应到具体机制。"
+            android:textColor="#8E8E93"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:lineSpacingExtra="4dp"
+            android:text="声明：除底部导航栏直接集成第三方组件外，SafeWalk 其余代码为独立手写实现，仅借鉴思路与算法原理，未直接拷贝源码。遵循 AGPL-3.0 许可证开源。"
+            android:textColor="#8E8E93"
+            android:textSize="12sp" />
 
     </LinearLayout>
 </ScrollView>

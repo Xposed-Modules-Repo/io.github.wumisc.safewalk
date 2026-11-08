@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        「医疗急救卡」版式的公共样式。
+
+        为什么抽成 style：首页、关于、致敬名单、实验区原来各写各的 padding、
+        字号和颜色，改一次全局要改四五处，还容易漏。现在统一在这里定义，
+        所有二级页面共用同一套行式布局（灰底页 + 白卡片 + 1px 分隔线）。
+    -->
+
+    <!-- 一行：可点击、左右留白 16dp、上下 14dp、按下有水波纹 -->
+    <style name="RowStyle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingLeft">16dp</item>
+        <item name="android:paddingRight">16dp</item>
+        <item name="android:paddingTop">14dp</item>
+        <item name="android:paddingBottom">14dp</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <!-- 行标题：16sp 近黑，和急救卡字段标签同一级 -->
+    <style name="RowTitle">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#1D1D1D</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- 行副标题 / 右侧说明文字 -->
+    <style name="RowHint">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#8E8E93</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <!-- 右侧箭头 -->
+    <style name="RowChevron">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:text">›</item>
+        <item name="android:textColor">#C7C7CC</item>
+        <item name="android:textSize">20sp</item>
+    </style>
+
+    <!-- 行间分隔线：左起 16dp 缩进，和 iOS / 急救卡一致 -->
+    <style name="RowDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1px</item>
+        <item name="android:layout_marginLeft">16dp</item>
+        <item name="android:background">#F2F2F7</item>
+    </style>
+
+    <!-- 白卡片容器：垂直排列、无圆角（与急救卡一致） -->
+    <style name="CardStyle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:background">#FFFFFF</item>
+    </style>
+
+    <!-- 区块小标题 -->
+    <style name="SectionLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">20dp</item>
+        <item name="android:layout_marginBottom">8dp</item>
+        <item name="android:textColor">#8E8E93</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+</resources>

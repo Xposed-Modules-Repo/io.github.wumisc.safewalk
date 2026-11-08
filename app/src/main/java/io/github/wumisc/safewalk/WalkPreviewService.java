@@ -244,8 +244,15 @@ public final class WalkPreviewService extends Service {
         hookCmdReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent i) {
-                if (!SafeWalkPrefKey.BROADCAST_TOKEN.equals(
-                        i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN))) return;
+                // 这条通道能直接开关用户的摄像头，只靠硬编码令牌不够：
+                // 反编译拿到字符串就能静默开相机（隐私事故）或强制关掉预览。
+                // API 34+ 先按发送方 uid 判断，低版本退回令牌。
+                if (i == null || !ReceiverCompat.isTrustedCommand(this,
+                        i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN))) {
+                    DiagLog.log("[walk] 预览指令鉴权失败，丢弃: "
+                            + (i == null ? "null intent" : i.getAction()));
+                    return;
+                }
                 String action = i.getAction();
                 if (ACTION_HOOK_SHOW.equals(action)) {
                     // 让路解除：恢复信号。具体显不显示由本服务按自身 walking 决定

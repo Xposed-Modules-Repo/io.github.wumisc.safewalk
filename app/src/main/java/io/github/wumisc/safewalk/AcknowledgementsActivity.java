@@ -1,74 +1,282 @@
 package io.github.wumisc.safewalk;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * 致敬名单页面：列出所有参考的开源项目。
+ * 致敬名单。
+ *
+ * ## 这一页为什么重写
+ *
+ * 原来整页只有一个 TextView，把十几条项目名和说明拼成一个字符串：链接点不了，
+ * 也完全看不出「这个项目到底有没有真的被用上」。现在改成数据驱动 ——
+ * 每条带三样东西：**项目名、可点击的仓库地址、采纳状态**。
+ *
+ * ## 采纳状态的判定依据
+ *
+ * · {@link #ADOPTED_INTEGRATED} 依赖里真的挂着，不是「参考」
+ * · {@link #ADOPTED_FULL}       核心机制能在源码里指出对应实现
+ * · {@link #ADOPTED_PARTIAL}    只借了一部分，另一部分明确没做
+ * · {@link #ADOPTED_REFERENCE}  只是思路来源，代码里没有对应实现
+ * · {@link #ADOPTED_GONE}       仓库已不存在，不再挂链接
+ *
+ * 2026-11-08 逐条访问 GitHub API 核对时，原名单里有 4 个仓库返回 404，
+ * 因此降级为「仅参考 · 仓库已失效」，避免用户在页面上点到一个打不开的地址。
  */
 public class AcknowledgementsActivity extends Activity {
+
+    private static final int C_TITLE = 0xFF1D1D1D;
+    private static final int C_SUB = 0xFF8E8E93;
+    private static final int C_LINK = 0xFF007AFF;
+    private static final int C_OK = 0xFF34C759;
+    private static final int C_PARTIAL = 0xFFFF9500;
+    private static final int C_GONE = 0xFFB0B0B5;
+    private static final int C_CARD = 0xFFFFFFFF;
+    private static final int C_DIVIDER = 0xFFF2F2F7;
+
+    private static final String ADOPTED_INTEGRATED = "直接集成";
+    private static final String ADOPTED_FULL = "已落地";
+    private static final String ADOPTED_PARTIAL = "部分落地";
+    private static final String ADOPTED_REFERENCE = "仅参考";
+    private static final String ADOPTED_GONE = "仅参考 · 仓库已失效";
+
+    private float density;
+
+    /** 一条致谢条目 */
+    private static final class Item {
+        final String name;
+        final String desc;
+        final String status;
+        /** null 表示没有可访问的公开地址 */
+        final String url;
+
+        Item(String name, String desc, String status, String url) {
+            this.name = name;
+            this.desc = desc;
+            this.status = status;
+            this.url = url;
+        }
+    }
+
+    /** 一个分区：小标题 + 若干条目 */
+    private static final class Section {
+        final String title;
+        final Item[] items;
+
+        Section(String title, Item[] items) {
+            this.title = title;
+            this.items = items;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_acknowledgements);
+        density = getResources().getDisplayMetrics().density;
 
-        TextView tv = findViewById(R.id.tv_ack_list);
-        tv.setText(
-            "SafeWalk 是面向 HyperOS / Android 的 LSPosed 出行感知模块，" +
-            "实现不依赖 GMS 的步行状态识别。项目大量参考优秀开源项目的算法、架构思路，" +
-            "特此感谢各位开发者的贡献：\n\n" +
+        LinearLayout container = findViewById(R.id.container_ack);
+        for (Section s : buildSections()) {
+            container.addView(buildSectionHeader(s.title));
+            container.addView(buildSectionCard(s.items));
+        }
+    }
 
-            "【步态检测】\n" +
-            "1. bagilevi/android-pedometer\n" +
-            "   纯加速度计步器经典实现：峰值检测、步频区间过滤、自适应阈值的基础思路。\n\n" +
+    /** 全部致谢数据。要改条目只动这里，不用碰布局。 */
+    private List<Section> buildSections() {
+        List<Section> out = new ArrayList<>();
 
-            "2. mdeguzis/StepCounter\n" +
-            "   滑动窗口方差统计实现、根据运动状态动态切换传感器采样率的省电策略。\n\n" +
+        out.add(new Section("直接依赖（不是「参考」，是装进项目里的库）", new Item[]{
+                new Item("Kyant0/AndroidLiquidGlass",
+                        "底部导航栏本体。液态玻璃材质、拖拽阻尼、透镜折射、交互高光整套特效，"
+                                + "本项目的 LiquidBottomTabs 直接取自它。",
+                        ADOPTED_INTEGRATED, "https://github.com/Kyant0/AndroidLiquidGlass"),
+                new Item("io.github.kyant0:backdrop-android",
+                        "Maven 依赖 2.0.1。drawBackdrop / layerBackdrop / Shadow / InnerShadow 等渲染原语，"
+                                + "导航栏的模糊与折射都建立在这套原语上。",
+                        ADOPTED_INTEGRATED, null),
+                new Item("top.yukonga.miuix.kmp:miuix-*",
+                        "Maven 依赖 0.9.4（blur / ui / squircle）。液态玻璃模糊、方角与超椭圆容器；"
+                                + "compileSdk 需要 37、Java 需要 21，也是被它拉上来的。",
+                        ADOPTED_INTEGRATED, null),
+        }));
 
-            "3. ashishb/android-step-detector\n" +
-            "   基于 FFT 频谱分析识别周期性步态的方案。\n\n" +
+        out.add(new Section("步态检测", new Item[]{
+                new Item("bagilevi/android-pedometer",
+                        "纯加速度计计步的经典实现。峰值检测 + 步频区间过滤 + 自适应阈值的整体思路，"
+                                + "对应 GaitDetector.feedAcc() 里的包络阈值与 0.5~2.5Hz 步频窗口。",
+                        ADOPTED_FULL, "https://github.com/bagilevi/android-pedometer"),
+                new Item("huuphuoc1396/android-step-detector",
+                        "TYPE_STEP_DETECTOR 与 TYPE_ACCELEROMETER 两路取数的用法。本项目现在是"
+                                + "「硬件计步器 + 加速度计兜底」双路并行，在 recordStep() 里按 300ms 去重。",
+                        ADOPTED_PARTIAL, "https://github.com/huuphuoc1396/android-step-detector"),
+                new Item("mdeguzis/StepCounter",
+                        "滑动窗口统计 + 按运动状态动态切换采样率的省电策略。**只落地了窗口统计**："
+                                + "采样率至今恒为 SENSOR_DELAY_UI，动态切换没做。",
+                        ADOPTED_GONE, null),
+                new Item("ashishb/android-step-detector",
+                        "用 FFT 频谱分析识别周期性步态。**本项目没有采用 FFT**，走的是时域包络检测 ——"
+                                + "后者在低采样率下更稳，代价是抗噪差一些。",
+                        ADOPTED_GONE, null),
+                new Item("AccStepCounter / SensorFusion",
+                        "低功耗计步滤波、传感器姿态融合与自适应阈值。最终只保留了一阶低通 + 重力估计，"
+                                + "姿态融合与卡尔曼都没有落地。",
+                        ADOPTED_GONE, null),
+        }));
 
-            "4. AccStepCounter\n" +
-            "   低功耗计步滤波算法实现。\n\n" +
+        out.add(new Section("状态机", new Item[]{
+                new Item("tonyo567/hysteresis-state-machine",
+                        "分离式迟滞状态机：进入与退出各用独立计时器，避免在阈值边缘反复抖动。对应"
+                                + "GaitDetector 的 ENTER_DEBOUNCE_MS(2500ms) 与 EXIT_DEBOUNCE_MS(4500ms)。",
+                        ADOPTED_GONE, null),
+        }));
 
-            "5. SensorFusion\n" +
-            "   传感器姿态融合、自适应阈值算法。\n\n" +
+        out.add(new Section("系统服务与定位", new Item[]{
+                new Item("p-v/Android-SensorService",
+                        "后台传感器监听、系统采样节流、丢采样容错。本项目只借鉴了「注册成功也可能"
+                                + "永远没回调」这条经验，最终写成 45 秒步数探针 + 加速度计自动恢复。",
+                        ADOPTED_PARTIAL, null),
+                new Item("UrbanBigDataCentre/meowmotion",
+                        "GPS 轨迹分割、停留/移动分类、连续位移校验。**未落地**：出行模式识别走的是"
+                                + "Geocoder 反编码 + 关键词投票，没有做轨迹分割。",
+                        ADOPTED_REFERENCE, "https://github.com/UrbanBigDataCentre/meowmotion"),
+                new Item("KalebKE/FSensor",
+                        "Madgwick / Mahony 姿态滤波与卡尔曼 GPS 平滑。**未落地**：低头判定只用"
+                                + "重力 z 轴阈值，没上姿态融合。",
+                        ADOPTED_REFERENCE, "https://github.com/KalebKE/FSensor"),
+        }));
 
-            "【状态机与系统服务】\n" +
-            "6. tonyo567/hysteresis-state-machine\n" +
-            "   分离式迟滞状态机思想，独立配置进入防抖、退出防抖计时器。\n\n" +
+        out.add(new Section("HyperOS 通知", new Item[]{
+                new Item("HyperBridge / WidgetEnhancer / HyperLight",
+                        "超级岛自定义通知卡片、通知快捷按钮、悬浮通知相关研究。最终没有走超级岛，"
+                                + "用的是标准通知 + 全屏 Intent 拉起急救卡。"
+                                + "（原名单只留下缩写，未找到可访问仓库，按「仅参考」处理。）",
+                        ADOPTED_GONE, null),
+        }));
 
-            "7. p-v/Android-SensorService\n" +
-            "   Android 后台传感器监听、系统采样节流、丢采样容错方案。\n\n" +
+        return out;
+    }
 
-            "8. UrbanBigDataCentre/meowmotion\n" +
-            "   GPS 轨迹分割、停留/移动分类、连续位移校验逻辑。\n\n" +
+    // ========== 视图构造 ==========
 
-            "【HyperOS 通知】\n" +
-            "9. HyperBridge\n" +
-            "   HyperOS 超级岛自定义通知卡片引擎思路。\n\n" +
+    private TextView buildSectionHeader(String title) {
+        TextView tv = new TextView(this);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(20);
+        lp.bottomMargin = dp(8);
+        tv.setLayoutParams(lp);
+        tv.setText(title);
+        tv.setTextColor(C_SUB);
+        tv.setTextSize(13);
+        return tv;
+    }
 
-            "10. WidgetEnhancer\n" +
-            "   通知快捷按钮、系统手电筒实现思路。\n\n" +
+    /** 一个分区 = 一张白卡片，条目之间 1px 分隔线，和医疗急救卡一致 */
+    private LinearLayout buildSectionCard(Item[] items) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackgroundColor(C_CARD);
+        card.setPadding(dp(16), dp(4), dp(16), dp(4));
+        card.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-            "11. HyperLight\n" +
-            "   HyperOS 悬浮通知相关研究。\n\n" +
+        for (int i = 0; i < items.length; i++) {
+            if (i > 0) card.addView(buildDivider());
+            card.addView(buildItem(items[i]));
+        }
+        return card;
+    }
 
-            "【液态玻璃导航栏】（底部导航栏直接采用其成品组件）\n" +
-            "12. Kyant0/AndroidLiquidGlass\n" +
-            "   液态玻璃材质、拖拽阻尼交互、透镜折射、交互高光全套特效，本项目 LiquidBottomTabs 直接集成自它（https://github.com/Kyant0/AndroidLiquidGlass）。\n\n" +
-            "13. io.github.kyant0:backdrop-android\n" +
-            "   Kyant0 的 backdrop 渲染库（drawBackdrop / layerBackdrop / Highlight / Shadow / InnerShadow 底层原语）。\n\n" +
+    private View buildDivider() {
+        View v = new View(this);
+        v.setBackgroundColor(C_DIVIDER);
+        v.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
+        return v;
+    }
 
-            "【姿态与GPS】\n" +
-            "14. KalebKE/FSensor\n" +
-            "   Madgwick/Mahony 姿态滤波、卡尔曼 GPS 平滑算法。\n\n" +
+    private LinearLayout buildItem(Item item) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(0, dp(12), 0, dp(12));
 
-            "————————————\n" +
-            "声明：SafeWalk 所有代码为独立手写重构，仅借鉴思路与算法原理，" +
-            "没有直接拷贝上述项目源码。遵循 AGPL-3.0 许可证开源。"
-        );
+        // 第一行：项目名（有链接则蓝字可点）+ 采纳状态
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView name = new TextView(this);
+        name.setText(item.url != null ? item.name + " ↗" : item.name);
+        name.setTextSize(15);
+        name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        if (item.url != null) {
+            name.setTextColor(C_LINK);
+            name.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    openUrl(item.url);
+                }
+            });
+        } else {
+            name.setTextColor(C_TITLE);
+        }
+        head.addView(name, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView status = new TextView(this);
+        status.setText(item.status);
+        status.setTextSize(11);
+        status.setTextColor(statusColor(item.status));
+        status.setPadding(dp(8), 0, 0, 0);
+        head.addView(status, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        row.addView(head);
+
+        TextView desc = new TextView(this);
+        desc.setText(item.desc);
+        desc.setTextSize(12);
+        desc.setTextColor(C_SUB);
+        desc.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        dlp.topMargin = dp(4);
+        row.addView(desc, dlp);
+
+        return row;
+    }
+
+    private int statusColor(String status) {
+        if (ADOPTED_INTEGRATED.equals(status)) return C_LINK;
+        if (ADOPTED_FULL.equals(status)) return C_OK;
+        if (ADOPTED_PARTIAL.equals(status)) return C_PARTIAL;
+        return C_GONE;
+    }
+
+    private void openUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "没有可用的浏览器", Toast.LENGTH_SHORT).show();
+        } catch (Throwable t) {
+            Toast.makeText(this, "打开链接失败：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private int dp(float v) {
+        return (int) (v * density + 0.5f);
     }
 }

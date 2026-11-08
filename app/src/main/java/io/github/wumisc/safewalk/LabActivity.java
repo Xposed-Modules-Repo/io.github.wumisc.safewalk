@@ -134,74 +134,114 @@ public class LabActivity extends Activity implements SensorEventListener {
         ScrollView sv = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(40, 80, 40, 60);
-        root.setBackgroundColor(0xFFF5F0E8);
+        root.setPadding(dp(16), dp(40), dp(16), dp(40));
+        root.setBackgroundColor(0xFFF2F2F7);
         root.setFitsSystemWindows(true);
+        root.addView(title("功能实验区"));
+        root.addView(subtitle("这里的按钮只写日志、发通知、拉预览，不改动正式配置（唯一例外是「预览」会临时打开行走模式开关，离开页面自动还原）。"));
 
-        TextView title = new TextView(this);
-        title.setText("🧪 功能实验区");
-        title.setTextSize(24);
-        title.setTextColor(0xFF1B3A5C);
-        root.addView(title);
-
+        // —— 实时状态卡片 ——
         LinearLayout card = card();
-        tvStep = row(card, "本实验区步数");
+        tvStep = row(card, "实验区步数");
         tvWalkState = row(card, "行走状态");
-        tvXiaomiStep = row(card, "小米计步器");
+        tvXiaomiStep = row(card, "硬件计步器");
         root.addView(card);
 
         root.addView(btn("清空实验区步数", v -> {
-            labSteps = 0; labWalking = false;
+            labSteps = 0;
+            labWalking = false;
             log("步数已清空");
         }));
 
-        root.addView(label("—— 功能测试 ——"));
-        root.addView(btn("通知测试", v -> { testNotify("测试通知", "如果你看到这条，通知正常"); log("通知测试"); }));
-        root.addView(btn("电量预警", v -> { testNotify("电量预警", "快没电了，赶紧找个充电宝或就近充电"); log("电量预警"); }));
-        root.addView(btn("证件提醒", v -> { testNotify("证件提醒", "身份证、护照等重要证件一定要贴身放好"); log("证件提醒"); }));
-        root.addView(btn("久坐提醒", v -> { testNotify("久坐提醒", "已坐了2小时了，该起来运动运动了"); log("久坐提醒"); }));
-        root.addView(btn("社交礼仪", v -> { testNotify("社交提示", "守时，不打探隐私，不强行劝酒"); log("社交礼仪"); }));
-        root.addView(btn("手电筒开关", v -> toggleTorch()));
-        root.addView(btn("夜间手电提醒（可点开灯）", v -> testNightTorchSuggest()));
-        root.addView(btn("🔦 手电悬浮通知测试", v -> testTorchNotify()));
-        root.addView(btn("🔦 关闭手电悬浮通知", v -> dismissTorchNotify()));
-        root.addView(label("—— 行走模式预览 ——"));
-        root.addView(btn("📷 全屏预览", v -> openRearCamFull()));
-        root.addView(btn("📷 小窗预览", v -> openRearCamSmall()));
-        root.addView(btn("📷 关闭预览", v -> closeRearCam()));
-        root.addView(btn("模拟出门触发", v -> { testNotify("出门提醒", "检测到持续步行，证件已贴身放好？"); log("模拟出门触发"); }));
+        // 按钮表：分组 + 文案 + 动作，加一项只加一行，不再是一长串 addView
+        group(root, "功能测试", new Object[][]{
+                {"通知测试", (Runnable) () -> {
+                    testNotify("测试通知", "如果你看到这条，通知正常");
+                    log("通知测试");
+                }},
+                {"电量预警", (Runnable) () -> {
+                    testNotify("电量预警", "快没电了，赶紧找个充电宝或就近充电");
+                    log("电量预警");
+                }},
+                {"证件提醒", (Runnable) () -> {
+                    testNotify("证件提醒", "身份证、护照等重要证件一定要贴身放好");
+                    log("证件提醒");
+                }},
+                {"久坐提醒", (Runnable) () -> {
+                    testNotify("久坐提醒", "已坐了2小时了，该起来运动运动了");
+                    log("久坐提醒");
+                }},
+                {"社交礼仪", (Runnable) () -> {
+                    testNotify("社交提示", "守时，不打探隐私，不强行劝酒");
+                    log("社交礼仪");
+                }},
+                {"手电筒开关", (Runnable) this::toggleTorch},
+                {"夜间手电提醒（可点开灯）", (Runnable) this::testNightTorchSuggest},
+                {"手电悬浮通知测试", (Runnable) this::testTorchNotify},
+                {"关闭手电悬浮通知", (Runnable) this::dismissTorchNotify},
+        });
 
-        root.addView(label("—— 诊断日志 ——"));
-        root.addView(btn("📂 当前日志目录", v -> {
-            String st = DiagLog.status();
-            Toast.makeText(this, st, Toast.LENGTH_LONG).show();
-            log("日志目录: " + st);
-            log("探针结果: " + DiagLog.probeReport());
-        }));
-        root.addView(btn("🔓 授予「所有文件访问」（写入 Android/Travel safely）",
-                v -> openAllFilesAccess()));
-        root.addView(btn("📥 拉取系统界面日志", v -> requestHookLog()));
-        root.addView(btn("🧭 步态自检（正常走 8 秒）", v -> runGaitSelfTest()));
-        root.addView(btn("📄 查看 diag.log 末尾", v -> showLogTail()));
+        group(root, "行走模式预览", new Object[][]{
+                {"全屏预览", (Runnable) this::openRearCamFull},
+                {"小窗预览", (Runnable) this::openRearCamSmall},
+                {"关闭预览", (Runnable) this::closeRearCam},
+                {"模拟出门触发", (Runnable) () -> {
+                    testNotify("出门提醒", "检测到持续步行，证件已贴身放好？");
+                    log("模拟出门触发");
+                }},
+        });
 
-        root.addView(label("—— 调试日志 ——"));
+        group(root, "诊断日志", new Object[][]{
+                {"当前日志目录", (Runnable) () -> {
+                    String st = DiagLog.status();
+                    Toast.makeText(this, st, Toast.LENGTH_LONG).show();
+                    log("日志目录: " + st);
+                    log("探针结果: " + DiagLog.probeReport());
+                }},
+                {"授予「所有文件访问」（写入 Android/Travel safely）", (Runnable) this::openAllFilesAccess},
+                {"拉取系统界面日志", (Runnable) this::requestHookLog},
+                {"注入链路自检（对照当前版本的初始化链）", (Runnable) this::diagnoseHookChain},
+                {"预览服务状态", (Runnable) this::dumpPreviewState},
+                {"步态自检（正常走 8 秒）", (Runnable) this::runGaitSelfTest},
+                {"查看 diag.log 末尾", (Runnable) this::showLogTail},
+        });
+
+        // —— 调试日志 ——
+        root.addView(sectionLabel("调试日志"));
         tvLog = new TextView(this);
-        tvLog.setTextSize(11);
-        tvLog.setLineSpacing(2, 1f);
+        tvLog.setTextSize(12);
+        tvLog.setLineSpacing(dp(2), 1f);
         tvLog.setMovementMethod(new ScrollingMovementMethod());
-        tvLog.setBackgroundColor(0xFF1A1A1A);
-        tvLog.setTextColor(0xFF00FF00);
-        tvLog.setPadding(16, 16, 16, 16);
-        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(-1, 300);
-        llp.topMargin = 10;
+        tvLog.setTextIsSelectable(true);
+        tvLog.setBackgroundColor(0xFF1C1C1E);
+        tvLog.setTextColor(0xFF32D74B);
+        tvLog.setPadding(dp(12), dp(12), dp(12), dp(12));
+        // 原来写死 300px（约 100dp），在 1080p 屏上只够看四五行，日志一滚就看不到上下文。
+        // 改成按屏幕高度取 42%，并用 dp 保证不同密度下观感一致，最少 280dp。
+        int logH = Math.max(dp(280), (int) (getResources().getDisplayMetrics().heightPixels * 0.42f));
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, logH);
+        llp.topMargin = dp(8);
         tvLog.setLayoutParams(llp);
         root.addView(tvLog);
 
-        root.addView(btn("📋 复制日志", v -> {
-            android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        LinearLayout logBar = new LinearLayout(this);
+        logBar.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        blp.topMargin = dp(8);
+        logBar.setLayoutParams(blp);
+        logBar.addView(btnRow("复制日志", () -> {
+            android.content.ClipboardManager cm =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             cm.setPrimaryClip(android.content.ClipData.newPlainText("log", logBuf.toString()));
             Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
-        }));
+        }, 1f));
+        logBar.addView(btnRow("清空", () -> {
+            logBuf.setLength(0);
+            if (tvLog != null) tvLog.setText("");
+        }, 0f));
+        root.addView(logBar);
 
         sv.addView(root);
         setContentView(sv);
@@ -213,16 +253,92 @@ public class LabActivity extends Activity implements SensorEventListener {
         log(stepCounter != null ? "硬件计步器已注册" : "无硬件计步器");
     }
 
+    // ========== 视图构件（统一在这里，避免各处散落魔法值）==========
+
+    private TextView title(String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(24);
+        t.setTextColor(0xFF1D1D1D);
+        t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        return t;
+    }
+
+    private TextView subtitle(String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(13);
+        t.setTextColor(0xFF8E8E93);
+        t.setLineSpacing(dp(4), 1f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(8);
+        t.setLayoutParams(lp);
+        return t;
+    }
+
+    private TextView sectionLabel(String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(13);
+        t.setTextColor(0xFF8E8E93);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(24);
+        lp.bottomMargin = dp(8);
+        t.setLayoutParams(lp);
+        return t;
+    }
+
+    /**
+     * 按分组批量挂按钮。
+     *
+     * 原来是一长串 `root.addView(btn("…", v -> …))`，加一项就要复制一整行，
+     * 分组标题也散在各处。现在改成表驱动：分组名 + 每项「文案 / 动作」。
+     */
+    private void group(LinearLayout root, String header, Object[][] items) {
+        root.addView(sectionLabel(header));
+        for (Object[] it : items) {
+            root.addView(btn((String) it[0], (Runnable) it[1]));
+        }
+    }
+
+    private LinearLayout.LayoutParams btnParams(float weight) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, weight);
+        lp.topMargin = dp(8);
+        if (weight < 1f) lp.leftMargin = dp(8);
+        return lp;
+    }
+
+    /** 同一行里的按钮：既要有权重，又不能让整行撑出屏幕 */
+    private Button btnRow(String text, Runnable action, float weight) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setBackgroundColor(0xFF007AFF);
+        b.setTextColor(0xFFFFFFFF);
+        b.setOnClickListener(v -> action.run());
+        b.setLayoutParams(btnParams(weight));
+        return b;
+    }
+
     private TextView row(LinearLayout parent, String label) {
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
         TextView l = new TextView(this);
-        l.setText(label + ": ");
-        l.setTextSize(14); l.setTextColor(0xFF8B7D6B);
+        l.setText(label);
+        l.setTextSize(14);
+        l.setTextColor(0xFF1D1D1D);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        r.addView(l, lp);
         TextView v = new TextView(this);
-        v.setTextSize(14); v.setTextColor(0xFF1A1A1A);
-        r.addView(l); r.addView(v);
-        r.setPadding(0, 10, 0, 10);
+        v.setTextSize(14);
+        v.setTextColor(0xFF007AFF);
+        r.addView(v);
+        r.setPadding(0, dp(8), 0, dp(8));
         parent.addView(r);
         return v;
     }
@@ -230,33 +346,92 @@ public class LabActivity extends Activity implements SensorEventListener {
     private LinearLayout card() {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackgroundColor(0xFFFFFCF5);
-        c.setPadding(30, 20, 30, 20);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = 30;
+        c.setBackgroundColor(0xFFFFFFFF);
+        c.setPadding(dp(16), dp(8), dp(16), dp(8));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(16);
         c.setLayoutParams(lp);
         return c;
     }
 
-    private TextView label(String s) {
-        TextView t = new TextView(this);
-        t.setText(s); t.setTextSize(13); t.setTextColor(0xFF8B7D6B);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-        lp.topMargin = 30;
-        t.setLayoutParams(lp);
-        return t;
+    // ========== 自检：对照当前版本的初始化链 ==========
+
+    /**
+     * 注入链路自检。
+     *
+     * 现在的 Hook 有**四层入口**（SystemUIApplication.onCreate / Instrumentation.
+     * callApplicationOnCreate / SystemUIService.onCreate / 守护线程反射轮询）、
+     * **四级前台检测**，还有「开机自启透明页」这一环。这些在旧版实验区里完全没有
+     * 对应项——用户只能自己翻 diag.log 找关键字。这里把关键标记逐条核对一遍，
+     * 直接告诉用户卡在哪一环。
+     */
+    private void diagnoseHookChain() {
+        log("—— 注入链路自检 ——");
+        log("预览服务存活=" + WalkPreviewService.isAlive()
+                + " 正在显示=" + WalkPreviewService.isPreviewShowing());
+        requestHookLog();
+        new Thread(() -> {
+            try {
+                Thread.sleep(1800);
+            } catch (InterruptedException ignored) {
+            }
+            // 读整个 diag.log，必须离开主线程
+            String text = DiagLog.tail(900);
+            runOnUiThread(() -> checkMarkers(text));
+        }, "lab-diag").start();
     }
 
-    private Button btn(String text, Runnable l) { return btn(text, v -> l.run()); }
+    private void checkMarkers(String text) {
+        // 每条：标记字符串 / 含义 / 缺失时说明
+        mark(text, "===== 进程日志回传", "系统界面日志已回传", "没收到回传：LSPosed 作用域没勾 SystemUI，或模块未启用");
+        mark(text, "[hook] 锚点已挂上", "Hook 锚点挂载", "四个锚点全部没挂上，走的是反射轮询兜底");
+        mark(text, "[hook] 初始化触发源", "初始化入口命中", "初始化根本没跑起来");
+        mark(text, "core init", "核心初始化完成", "Context 或日志出口初始化失败（看重试日志）");
+        mark(text, "初始化步骤失败", "有步骤单独失败", "（此项出现即为问题，日志里有步骤名）");
+        mark(text, "已拉起透明自启页", "开机自启链路", "没拉起过：可能不是重启后首次进入，或系统拦了后台启动 Activity");
+        mark(text, "[cam] 前台检测启用第", "相机前台检测降级", "未降级（第 1 级可用）属正常；出现第 2~4 级说明 ROM 限制隐藏 API");
+        mark(text, "步数探针", "计步探针已触发", "45 秒内没写过探针，可能 tick 没转");
+        log("—— 自检结束，以上 ✗ 项按括号里的说明排查 ——");
+    }
+
+    private void mark(String text, String marker, String okLabel, String failHint) {
+        boolean ok = text != null && text.contains(marker);
+        log((ok ? "✓ " : "✗ ") + okLabel + (ok ? "" : " — " + failHint));
+    }
+
+    /** 预览服务的实时状态：判断「该显示却不显示」时先看这里 */
+    private void dumpPreviewState() {
+        boolean alive = WalkPreviewService.isAlive();
+        boolean showing = WalkPreviewService.isPreviewShowing();
+        log("预览服务: " + (alive ? "存活" : "未启动") + " / 画面: " + (showing ? "在显示" : "已收起"));
+        if (!alive) {
+            log("提示：点「全屏预览」会顺带把它拉起来；若仍不存活，看 diag.log 里 startForeground 相关报错");
+        } else if (!showing) {
+            log("提示：服务活着但不显示，通常是相机被别的应用占用，或开关已被关掉");
+        }
+        Toast.makeText(this, "服务=" + (alive ? "存活" : "未启动") + "，画面=" + (showing ? "显示中" : "已收起"),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private Button btn(String text, Runnable l) {
+        return btn(text, v -> l.run());
+    }
+
     private Button btn(String text, android.view.View.OnClickListener l) {
         Button b = new Button(this);
-        b.setText(text); b.setAllCaps(false);
-        b.setBackgroundColor(0xFF1B3A5C); b.setTextColor(0xFFFFFFFF);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(14);
+        b.setBackgroundColor(0xFF007AFF);
+        b.setTextColor(0xFFFFFFFF);
         b.setOnClickListener(l);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = 15;
-        b.setLayoutParams(lp);
+        b.setLayoutParams(btnParams(1f));
         return b;
+    }
+
+    private int dp(float v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     private void log(String msg) {
@@ -276,6 +451,19 @@ public class LabActivity extends Activity implements SensorEventListener {
     /** 实验区临时打开预览开关前的原值，关闭预览时恢复，避免污染用户配置 */
     private boolean rearCamWasEnabled = false;
     private boolean rearCamOverridden = false;
+
+    /**
+     * 实验区「临时打开行走模式」的备份，落在 SharedPreferences 里而不是内存字段。
+     *
+     * 原来这两个值是实例字段：实验区强制把 enableRearCamera 写成 true 之后，
+     * 用户直接返回（不走「关闭预览」按钮）就没人还原，而原始值只存在内存里，
+     * 进程一被回收就永久丢失 —— 结果是「在实验区点过一次预览，行走模式从此常开，
+     * 过一会儿全屏摄像头画面自己糊上来」。现在持久化备份，任何入口都能还原。
+     */
+    private static final String SP_LAB = "safewalk_lab";
+    private static final String KEY_BACKUP_ON = "rear_cam_backup_on";
+    private static final String KEY_BACKUP_MODE = "rear_cam_backup_mode";
+    private static final String KEY_OVERRIDDEN = "rear_cam_overridden";
 
     private static final String SYSTEMUI_PKG = "com.android.systemui";
 
@@ -612,24 +800,55 @@ public class LabActivity extends Activity implements SensorEventListener {
     private void openRearCamSmall() { sendRearCamTestAction("open_small"); }
     private void closeRearCam() { sendRearCamTestAction("close"); }
 
-    /** 实验区临时打开预览开关，并同步配置给 Hook（关闭预览时恢复原值） */
+    /** 实验区临时打开预览开关，并同步配置给 Hook（离开实验区时恢复原值） */
     private void overrideRearCamSwitch(String mode) {
-        SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+        SharedPreferences cfg = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
         if (!rearCamOverridden) {
-            rearCamWasEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false);
+            rearCamWasEnabled = SafePrefs.getBool(cfg, SafeWalkPrefKey.enableRearCamera, false);
             rearCamOverridden = true;
+            // 持久化备份：进程被回收后仍能还原，不会把开关永久留在「开」
+            getSharedPreferences(SP_LAB, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_BACKUP_ON, rearCamWasEnabled)
+                    .putString(KEY_BACKUP_MODE, SafePrefs.getString(cfg, SafeWalkPrefKey.rearCamMode, ""))
+                    .putBoolean(KEY_OVERRIDDEN, true)
+                    .commit();
         }
-        sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, true).commit();
-        sp.edit().putString(SafeWalkPrefKey.rearCamMode, mode).commit();
+        cfg.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, true).commit();
+        cfg.edit().putString(SafeWalkPrefKey.rearCamMode, mode).commit();
         SafeWalkConfig.exportConfig(this);
     }
 
     private void restoreRearCamSwitch() {
         if (!rearCamOverridden) return;
-        SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
-        sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, rearCamWasEnabled).commit();
+        SharedPreferences cfg = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+        cfg.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, rearCamWasEnabled).commit();
         SafeWalkConfig.exportConfig(this);
         rearCamOverridden = false;
+        getSharedPreferences(SP_LAB, MODE_PRIVATE).edit().clear().commit();
+    }
+
+    /**
+     * 兜底还原：上一次在实验区打开预览后进程被杀 / 崩溃，备份还留在 SP 里。
+     * 由 MainActivity 启动时调用，保证「进了实验区→没点关闭→返回」不会再留下常开的开关。
+     */
+    static void recoverStaleOverride(android.content.Context ctx) {
+        SharedPreferences lab = ctx.getSharedPreferences(SP_LAB, ctx.MODE_PRIVATE);
+        if (!lab.getBoolean(KEY_OVERRIDDEN, false)) return;
+        boolean wasOn = lab.getBoolean(KEY_BACKUP_ON, false);
+        String wasMode = lab.getString(KEY_BACKUP_MODE, null);
+        SharedPreferences cfg = ctx.getSharedPreferences("safewalk_xsp", ctx.MODE_PRIVATE);
+        SharedPreferences.Editor e = cfg.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, wasOn);
+        if (wasMode != null && !wasMode.isEmpty()) e.putString(SafeWalkPrefKey.rearCamMode, wasMode);
+        e.commit();
+        lab.edit().clear().commit();
+        SafeWalkConfig.exportConfig(ctx);
+        DiagLog.log("[lab] 恢复上次实验区临时打开的行走模式开关 → " + (wasOn ? "开" : "关"));
+    }
+
+    @Override protected void onStop() {
+        super.onStop();
+        // 只在自己真的要退出时还原（旋转/分屏切走不算），避免预览被反复关掉
+        if (isFinishing()) restoreRearCamSwitch();
     }
 
     @Override protected void onResume() {

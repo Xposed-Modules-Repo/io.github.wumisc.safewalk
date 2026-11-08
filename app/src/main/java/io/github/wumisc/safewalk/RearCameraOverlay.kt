@@ -464,8 +464,16 @@ class RearCameraOverlay(
                     "cam=${camera != null} session=${session != null} opening=$opening " +
                     "gen=$cameraGen retry=$retryCount " +
                     "surface=${surfaceTexture != null} view=${tv?.width}x${tv?.height}")
-            reportFailure(if (hasCameraPermission()) "相机没有返回画面" else "应用没有相机权限")
+            // 顺序很重要：必须先 hide() 再 reportFailure()。
+            //
+            // reportFailure 会回调外层（WalkPreviewService）去 reportPreviewState()，
+            // 而那个回执读的是 overlay.getShowing()。原来是「先报告后隐藏」，
+            // 于是回执发出去的是 showing=true，紧接着窗口才真正收起、却再也没有回执——
+            // Hook 侧的 lastSentShow 就永久卡在 true，之后每一条「该显示了」都被
+            // 去重吞掉。表现就是：预览黑过一次以后再也不自动回来，必须手动关开开关。
+            val reason = if (hasCameraPermission()) "相机没有返回画面" else "应用没有相机权限"
             hide()
+            reportFailure(reason)
         }
         frameWatchdog = r
         mainHandler.postDelayed(r, FRAME_TIMEOUT_MS)
@@ -679,8 +687,9 @@ class RearCameraOverlay(
         if (retryCount >= MAX_CAMERA_RETRY) {
             retryCount = 0
             diag("❌ $why，已重试 $MAX_CAMERA_RETRY 次仍失败，放弃")
-            reportFailure("相机没有返回画面")
+            // 同 armFrameWatchdog：先隐藏再报告，回执才不会把 showing=true 发出去
             hide()
+            reportFailure("相机没有返回画面")
             return
         }
         retryCount++

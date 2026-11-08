@@ -1,585 +1,410 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+    行走模式。
+    版式统一到「医疗急救卡」：灰底页 + 平角白卡片 + 1px 分隔线 + 24sp 粗标题。
+    原来开关、滑块、选项各自一张圆角卡，卡片间距和内边距各写各的；
+    现在统一用 styles.xml 里的 RowStyle / CardStyle / SectionLabel，参数只有一处。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@drawable/bg_xuanzhi"
-    android:fitsSystemWindows="true">
+    android:background="#F2F2F7"
+    android:fitsSystemWindows="true"
+    android:padding="16dp"
+    android:paddingTop="40dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="4dp">
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
 
         <TextView
             android:id="@+id/btn_back"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingVertical="4dp"
             android:text="‹ 返回"
-            android:textColor="@color/primary"
-            android:textSize="16sp" />
-    </LinearLayout>
+            android:textColor="#007AFF"
+            android:textSize="15sp" />
 
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="24dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="行走模式"
+            android:textColor="#1D1D1D"
+            android:textSize="24sp"
+            android:textStyle="bold" />
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/hero_walk_summary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="用后置摄像头把身后路况叠在屏幕上"
+            android:textColor="#8E8E93"
+            android:textSize="13sp" />
 
-            <!-- ===== Hero ===== -->
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="20dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/card_stroke"
-                app:strokeWidth="1dp">
+        <!-- 预览开关 -->
+        <LinearLayout style="@style/CardStyle" android:layout_marginTop="16dp">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="18dp">
-
-                    <FrameLayout
-                        android:layout_width="84dp"
-                        android:layout_height="84dp"
-                        android:background="@drawable/bg_hero_orange">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="🚶"
-                            android:textSize="38sp" />
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_marginStart="16dp"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="行走模式"
-                            android:textColor="@color/text_primary"
-                            android:textSize="22sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/hero_walk_summary"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="行走模式已关闭"
-                            android:textColor="@color/text_hint"
-                            android:textSize="13sp" />
-                    </LinearLayout>
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <!-- ===== 行走模式 ===== -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:layout_marginStart="4dp"
-                android:text="行走模式"
-                android:textColor="@color/text_hint"
-                android:textSize="13sp" />
-
-            <com.google.android.material.card.MaterialCardView
+            <LinearLayout
                 android:id="@+id/card_rear_cam"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="路况预览" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="开启后按下方方式显示后置摄像头画面" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_rear_cam"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <TextView
+                android:id="@+id/tv_cam_perm_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/card_stroke"
-                app:strokeWidth="1dp">
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="10dp"
+                android:textColor="#8E8E93"
+                android:textSize="12sp" />
+
+            <View style="@style/RowDivider" />
+
+            <!-- 显示方式 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="显示方式"
+                    android:textColor="#1D1D1D"
+                    android:textSize="15sp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="14dp">
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
 
-                    <FrameLayout
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:background="@drawable/icon_frame_orange">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="📷"
-                            android:textSize="18sp" />
-                    </FrameLayout>
-
-                    <LinearLayout
+                    <TextView
+                        android:id="@+id/chip_mode_full"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="36dp"
                         android:layout_weight="1"
-                        android:layout_marginStart="12dp"
-                        android:orientation="vertical">
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="全屏滤镜"
+                        android:textColor="#1D1D1D"
+                        android:textSize="13sp" />
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="行走模式"
-                            android:textColor="@color/text_primary"
-                            android:textSize="15sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="用后置摄像头看身后路况"
-                            android:textColor="@color/text_hint"
-                            android:textSize="12sp" />
-
-                        <!--
-                            相机权限状态。
-                            画面在 SystemUI 进程输出，需要的是「系统界面」的相机权限，
-                            本应用有没有 CAMERA 都不影响。缺权限时预览必然是黑框，
-                            以前界面上不说，用户只能得出「这功能是假的」。
-                        -->
-                        <TextView
-                            android:id="@+id/tv_cam_perm_hint"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:paddingTop="2dp"
-                            android:paddingBottom="2dp"
-                            android:visibility="gone"
-                            android:text="预览相机：检查中…"
-                            android:textColor="@color/text_muted"
-                            android:textSize="11sp"
-                            tools:ignore="TouchTargetSizeCheck" />
-                    </LinearLayout>
-
-                    <androidx.appcompat.widget.SwitchCompat
-                        app:trackTint="@color/switch_track"
-                        app:thumbTint="@color/switch_thumb"
-                        android:text=""
-                        android:id="@+id/sw_rear_cam"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
+                    <TextView
+                        android:id="@+id/chip_mode_small"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="角落小窗"
+                        android:textColor="#1D1D1D"
+                        android:textSize="13sp" />
                 </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
 
-            <!--
-                自动跟随步行（2.10.1 加回，可选）。
+            <View style="@style/RowDivider" />
 
-                2.10 曾把自动模式整体删除，只留手动常显——那是因为旧的自动实现
-                不可预期：拿不到传感器数据时永远不显示，判不准时闪一下就没了。
-                现在的自动模式复用 Hook 提醒用的同一路步态判定（滑动窗口步数），
-                且行为可预期：判定为行走 → 显示，判定为静止 → 收起；
-                判不出来时开关还在，用户随时可以切回手动常显兜底。
-            -->
-            <com.google.android.material.card.MaterialCardView
+            <!-- 小窗位置 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="16dp">
+
+                <TextView
+                    android:id="@+id/tv_corner_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="小窗位置"
+                    android:textColor="#1D1D1D"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/chip_pos_tl"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="左上"
+                        android:textColor="#1D1D1D"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_pos_tr"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="右上"
+                        android:textColor="#1D1D1D"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_pos_bl"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="左下"
+                        android:textColor="#1D1D1D"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_pos_br"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="右下"
+                        android:textColor="#1D1D1D"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- 自动跟随 -->
+        <LinearLayout style="@style/CardStyle" android:layout_marginTop="16dp">
+
+            <LinearLayout
                 android:id="@+id/card_auto"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/card_stroke"
-                app:strokeWidth="1dp">
+                style="@style/RowStyle">
 
                 <LinearLayout
-                    android:layout_width="match_parent"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="14dp">
+                    android:layout_weight="1"
+                    android:orientation="vertical">
 
-                    <FrameLayout
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:background="@drawable/icon_frame_blue">
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="自动跟随步行" />
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="🚶"
-                            android:textSize="18sp" />
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_marginStart="12dp"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="自动跟随步行"
-                            android:textColor="@color/text_primary"
-                            android:textSize="15sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/tv_auto_desc"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="走起来自动显示，停下自动收起"
-                            android:textColor="@color/text_hint"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <androidx.appcompat.widget.SwitchCompat
-                        app:trackTint="@color/switch_track"
-                        app:thumbTint="@color/switch_thumb"
-                        android:text=""
-                        android:id="@+id/sw_auto"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="走起来才显示，停下自动收起" />
                 </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
 
-            <!-- ===== 显示形态 ===== -->
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_auto"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
             <TextView
-                android:layout_width="wrap_content"
+                android:id="@+id/tv_auto_desc"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:layout_marginStart="4dp"
-                android:text="显示形态"
-                android:textColor="@color/text_hint"
-                android:textSize="13sp" />
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="10dp"
+                android:textColor="#8E8E93"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+        <!-- 显示参数 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="显示参数" />
+
+        <LinearLayout style="@style/CardStyle">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:orientation="horizontal">
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
 
                 <TextView
-                    android:id="@+id/chip_mode_full"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_choice_chip"
-                    android:gravity="center"
-                    android:text="半透明全屏"
-                    android:textColor="@color/text_body"
-                    android:textSize="13sp" />
+                    android:id="@+id/tv_opacity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="画面不透明度"
+                    android:textColor="#1D1D1D"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_opacity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="90" />
 
                 <TextView
-                    android:id="@+id/chip_mode_small"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/bg_choice_chip"
-                    android:gravity="center"
-                    android:text="角落小窗"
-                    android:textColor="@color/text_body"
-                    android:textSize="13sp" />
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="范围 10% ~ 100%，越低越能看清底下的界面"
+                    android:textColor="#8E8E93"
+                    android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- ===== 小窗位置 ===== -->
-            <TextView
-                android:id="@+id/tv_corner_title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:layout_marginStart="4dp"
-                android:text="小窗位置"
-                android:textColor="@color/text_hint"
-                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 步态参数 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="步态判定" />
+
+        <LinearLayout style="@style/CardStyle">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:orientation="horizontal">
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="14dp">
 
                 <TextView
-                    android:id="@+id/chip_pos_br"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_choice_chip"
-                    android:gravity="center"
-                    android:text="右下"
-                    android:textColor="@color/text_body"
-                    android:textSize="13sp" />
+                    android:id="@+id/tv_gait_steps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="连续走多少步算「在走路」"
+                    android:textColor="#1D1D1D"
+                    android:textSize="15sp" />
 
-                <TextView
-                    android:id="@+id/chip_pos_bl"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_choice_chip"
-                    android:gravity="center"
-                    android:text="左下"
-                    android:textColor="@color/text_body"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/chip_pos_tr"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_choice_chip"
-                    android:gravity="center"
-                    android:text="右上"
-                    android:textColor="@color/text_body"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/chip_pos_tl"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_choice_chip"
-                    android:gravity="center"
-                    android:text="左上"
-                    android:textColor="@color/text_body"
-                    android:textSize="13sp" />
+                <SeekBar
+                    android:id="@+id/seek_gait_steps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="8" />
             </LinearLayout>
 
-            <!-- ===== 透明度 ===== -->
-            <com.google.android.material.card.MaterialCardView
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/card_stroke"
-                app:strokeWidth="1dp">
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp">
 
-                <LinearLayout
+                <TextView
+                    android:id="@+id/tv_gait_stop"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="14dp">
+                    android:text="停下后多久收起预览"
+                    android:textColor="#1D1D1D"
+                    android:textSize="15sp" />
 
-                    <TextView
-                        android:id="@+id/tv_opacity"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="画面透明度 50%"
-                        android:textColor="@color/text_body"
-                        android:textSize="14sp" />
-
-                    <SeekBar
-                        android:id="@+id/seek_opacity"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:max="90"
-                        android:progress="40" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="越低越透明，越容易看清屏幕内容"
-                        android:textColor="@color/text_hint"
-                        android:textSize="11sp" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <!-- ===== 步态灵敏度 ===== -->
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/card_stroke"
-                app:strokeWidth="1dp">
-
-                <LinearLayout
+                <SeekBar
+                    android:id="@+id/seek_gait_stop"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="14dp">
+                    android:layout_marginTop="8dp"
+                    android:max="25" />
+            </LinearLayout>
 
-                    <TextView
-                        android:id="@+id/tv_gait_steps"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="连续走 5 步才弹出预览"
-                        android:textColor="@color/text_body"
-                        android:textSize="14sp" />
+            <View style="@style/RowDivider" />
 
-                    <SeekBar
-                        android:id="@+id/seek_gait_steps"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:max="8" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="越小越灵敏（2~10），太大刷手机更不容易误触"
-                        android:textColor="@color/text_hint"
-                        android:textSize="11sp" />
-
-                    <TextView
-                        android:id="@+id/tv_gait_stop"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
-                        android:text="停下后 10 秒收起预览"
-                        android:textColor="@color/text_body"
-                        android:textSize="14sp" />
-
-                    <SeekBar
-                        android:id="@+id/seek_gait_stop"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:max="25" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="停下多少秒后收起（5~30 秒）"
-                        android:textColor="@color/text_hint"
-                        android:textSize="11sp" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <!-- 预览链路分步诊断：服务端每走一步推一条，黑屏卡在哪一步直接可读 -->
             <TextView
                 android:id="@+id/tv_preview_stage"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:visibility="gone"
-                android:text="预览诊断："
-                android:textColor="@color/primary"
-                android:textSize="12sp" />
-
-            <!-- ===== 维护 ===== -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:layout_marginStart="4dp"
-                android:text="维护"
-                android:textColor="@color/text_hint"
-                android:textSize="13sp" />
-
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/card_restart_systemui"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/card_stroke"
-                app:strokeWidth="1dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="14dp">
-
-                    <FrameLayout
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:background="@drawable/icon_frame_red">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="🔄"
-                            android:textSize="18sp" />
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_marginStart="12dp"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="重启系统界面"
-                            android:textColor="@color/text_primary"
-                            android:textSize="15sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/tv_restart_desc"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="改动没生效时点这里，状态栏会消失几秒"
-                            android:textColor="@color/text_hint"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/btn_restart_systemui"
-                        android:layout_width="wrap_content"
-                        android:layout_height="32dp"
-                        android:paddingStart="14dp"
-                        android:paddingEnd="14dp"
-                        android:background="@drawable/bg_action_chip"
-                        android:gravity="center"
-                        android:text="重启"
-                        android:textColor="@color/seal_red"
-                        android:textSize="13sp" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
-                android:text="修改即时生效，无需点击保存"
-                android:textColor="@color/text_muted"
-                android:textSize="11sp"
-                android:gravity="center" />
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp"
+                android:textColor="#8E8E93"
+                android:textSize="12sp"
+                android:visibility="gone" />
 
         </LinearLayout>
-    </ScrollView>
-</LinearLayout>
+
+        <!-- 维护 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="维护" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:id="@+id/card_restart_systemui"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="重启系统界面" />
+
+                    <TextView
+                        android:id="@+id/tv_restart_desc"
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="改完模块设置后需要重启 SystemUI 才会生效" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btn_restart_systemui"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:backgroundTint="#FF3B30"
+                    android:minWidth="0dp"
+                    android:text="重启"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
