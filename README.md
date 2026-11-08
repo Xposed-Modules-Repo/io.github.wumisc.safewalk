@@ -5,10 +5,10 @@
 纯本地、无服务器的**出行感知** LSPosed 模块。不依赖 GMS，不联网，不上传任何数据；
 用手机自带加速度计判断「你是不是真的在走路」，再决定要不要提醒你。
 
-- 运行环境：**HyperOS / Android 12+**（minSdk 33，targetSdk 35）
+- 运行环境：**HyperOS / Android 13+**（minSdk 33，targetSdk 35）
 - 作用域：**只需勾选「系统界面（SystemUI）」**，不需要系统框架
 - 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**3.0**
+- 当前版本：**3.0**（2026-11-08）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
 
 ---
 
@@ -28,6 +28,18 @@
 
 ---
 
+## 🎨 界面
+
+3.0 把视觉层收敛成**一套语义 token + 一套版式**，深色模式不再是补丁：
+
+- `colors.xml` 只保留语义命名（`bg` / `card_bg` / `text_primary` / `text_body` / `text_hint` / `divider` / `chevron` / `primary` …），`values-night` 逐项覆盖，**只换值不换名**
+- 布局与代码一律读资源，没有一处硬编码色值，切换到深色不会再出现「白底刺眼」或「卡片与背景同色」的情况
+- 全部二级页面统一为「卡片 + 行列表」版式：左侧标题、右侧说明与 chevron，分隔线内缩对齐
+- 底部导航为 Compose 液态玻璃，选中态跟随左右滑动实时联动，深色下自动切换前景色
+- 窗口统一 `forceDarkAllowed=false`，避免系统二次压暗把自定义配色弄脏
+
+---
+
 ## ⚙️ 核心机制
 
 **步态检测**（跑在应用进程 `WalkPreviewService`，不在 SystemUI）：靠五重门槛层层收敛——
@@ -36,6 +48,8 @@
 
 **行走模式**：SystemUI 只做「指挥」（传感器/步态/显隐广播），App 前台服务负责开相机渲染。
 两种形态：全屏叠加（穿透）/ 角落小窗（150×260dp），形态/位置/透明度实时可调。
+**重启不用重新拨开关**：服务被杀或设备重启后，亮屏解锁时 Hook 会经一个透明中转页把预览重新拉起
+（绕开 Android 14+ 对 camera 类型前台服务的后台启动限制），无需手动进入 App 操作。
 
 **手电筒**：夜间提醒通知直接开灯（`setTorchMode`，无需相机权限）；`TorchCallback` 全局状态同步；
 静置超时提醒关灯省电；夜间暗光（<15lx）可自动开灯。
@@ -86,8 +100,9 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 
 - **步态判定**：纯 JVM 单元测试 `GaitDetectorPureTest`，无需真机/外网
 - **界面与逻辑**：Robolectric 本地测试 `./gradlew :app:testDebugUnitTest`（首次需联网拉依赖）
+- **界面截图**：`UiShotTest` 用 Robolectric 原生渲染把二级页面在浅色/深色下各出一张 PNG，落到临时目录供目视核对
 
-当前共 **9 个测试类 / 60 个用例**，全部通过（`GaitDetectorTest` 13、`GaitDetectorPureTest` 8、`SubPageTest` 13、`NotificationTargetTest` 7、`StabilityTest` 6、`MainFlowTest` 5、`PreviewWindowTest` 4、`CrashDetectorTest` 2、`DiagLogTest` 2）。
+当前共 **10 个测试类 / 62 个用例**，全部通过（`GaitDetectorTest` 13、`SubPageTest` 13、`GaitDetectorPureTest` 8、`NotificationTargetTest` 7、`StabilityTest` 6、`MainFlowTest` 5、`PreviewWindowTest` 4、`CrashDetectorTest` 2、`DiagLogTest` 2、`UiShotTest` 2）。
 
 ---
 
