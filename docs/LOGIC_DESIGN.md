@@ -67,25 +67,43 @@ LSPosed 加载模块
           → init(appCtx)                              [:206-215]
 ```
 
-### 2.2 init 做了什么（`init()` 里先 `postDelayed(2000ms)`）
+### 2.2 init 做了什么（`init()` → `postDelayed(2000ms)` → `runInit()`）
 
-| 顺序 | 动作 | 失败后果 |
-|---|---|---|
-| 1 | `if (inited) return` 幂等保护 | 防重复注册广播（一条提醒弹两次） |
-| 2 | `inited = true`（**在 try 之前**，见 §13 P0-1） | 后续任何异常都不会再重试 |
-| 3 | `DiagLog.init(ctx)` | 日志没出口，只能看 logcat |
-| 4 | `SafeWalkConfig.loadConfig(ctx)` → `configJson` | 配置为空，全部走默认值 |
-| 5 | `SafeWalkNotificationManager`、`SensorManager` | 提醒发不出 |
-| 6 | `updateCrashDetection()` 按开关启停撞击监听 | 车祸预警不可用 |
-| 7 | `startLightMonitor()` 注册环境光（lux） | 夜间自动开灯降级为发通知 |
-| 8 | `createTorchNotifyChannel` + `TorchNotificationManager.startMonitor()` + `TorchStaticReminder` | 手电静置提醒不可用 |
-| 9 | 注册 6 个跨进程广播接收器（见 §10） | 对应功能失联 |
-| 10 | `registerStepDetector()` 系统计步器 | 失败会落到加速度计兜底 |
-| 11 | `startAccFallback("恒定启用")` **无条件**启动加速度计计步 | 与系统计步器并行，300ms 去重 |
-| 12 | `registerBatteryReceiver()`（`ACTION_BATTERY_CHANGED`，非导出） | 电量预警不可用 |
-| 13 | `postDelayed(tickRunnable, 2000)` | 整套逻辑不转 |
+`init()` 只是延迟 2 秒转调 `runInit()`，真正的初始化在 `runInit()` 里，**可重试**：
 
-> **关键设计**：第 10、11 步是"两条腿走路"。历史上是"系统计步器不可用才启用兜底"，但这台设备上系统计步器**注册成功却一步都不回**（SystemUI 缺 `ACTIVITY_RECOGNITION`，注册不抛异常、只是永远没回调），结果"走半天没反应"。现在两边恒定并行，`recordStep()` 里按 300ms 去重（人走不出 3.3 步/秒）。
+```
+runInit()
+├─ synchronized(initLock)：initSucceeded → return；initRunning → return；置位 initRunning
+├─ 核心步骤（唯一会触发重试的部分）
+│    ctx = appCtx.applicationContext
+│    DiagLog.init(ctx)                          ← 失败则 coreOk=false
+├─ coreOk == true 时，逐步执行（每步独立 try，见下）
+└─ 收尾：initRunning=false；coreOk → initSucceeded=true；否则 scheduleInitRetry()
+```
+
+| 顺序 | 动作 | 失败后果 | 是否单步兜底 |
+|---|---|---|---|
+| 1 | `ctx` + `DiagLog.init` | 整个模块不可用 → 退避重试 | 否（核心） |
+| 2 | `refreshConfig(force=true)` **仅发起**，读取在 `SafeWalk-config` 后台线程 | 沿用默认值 / 旧快照 | 是 |
+| 3 | `SafeWalkNotificationManager`、`SensorManager` | 提醒发不出 / 无传感器 | 是 |
+| 4 | `updateCrashDetection()` 按开关启停撞击监听 | 车祸预警不可用 | 是 |
+| 5 | `startLightMonitor()` 注册环境光（lux） | 夜间自动开灯降级为发通知 | 是 |
+| 6 | `createTorchNotifyChannel` + `TorchNotificationManager.startMonitor()` + `TorchStaticReminder` | 手电静置提醒不可用 | 是 |
+| 7 | `registerControlReceivers()` 注册 6 个跨进程广播（见 §10） | 对应功能失联 | 是（每个接收器单独登记） |
+| 8 | `registerStepDetector()` 系统计步器 | 失败会落到加速度计兜底 | 是 |
+| 9 | `startAccFallback("恒定启用")` **无条件**启动加速度计计步 | 与系统计步器并行，300ms 去重 | 是 |
+| 10 | `registerBatteryReceiver()`（`ACTION_BATTERY_CHANGED`，非导出） | 电量预警不可用 | 是 |
+| 11 | `startTick()` | 整套逻辑不转 | 是（`tickStarted` 防止挂两条心跳） |
+
+**三个约束**（改这块之前务必读）：
+
+1. **单步失败不扩散**。以前整段包在一个 `try` 里，第一处 `registerReceiver` 抛异常会把后面计步器、广播、心跳全部跳过，现象是"模块装了但什么都不动"，日志只有一行"初始化失败"。现在 `step("名字") { }` 逐段兜底，日志能直接指出是哪一步挂了。
+2. **重试不许重复注册**。`registeredReceivers` 按名字登记，同一个接收器第二次进来直接跳过；注册失败会从表里摘掉，让下次重试还能补上。否则重试一次 = 一条提醒弹两次。
+3. **重试是退避的**。2s → 4s → 8s … 封顶 60s，最多 20 次（约 15 分钟）。SystemUI 本身残缺时无限重试只会刷爆日志、白耗电。
+
+> **关键设计**：第 8、9 步是"两条腿走路"。历史上是"系统计步器不可用才启用兜底"，但这台设备上系统计步器**注册成功却一步都不回**（SystemUI 缺 `ACTIVITY_RECOGNITION`，注册不抛异常、只是永远没回调），结果"走半天没反应"。现在两边恒定并行，`recordStep()` 里按 300ms 去重（人走不出 3.3 步/秒）。
+
+> **配置为什么不在 init 里同步读**：`contentResolver.query` 是同步 Binder 调用，App 被回收时还会把它冷启动起来，耗时几百毫秒到数秒。init 跑在主线程，卡住就是黑屏/ANR。现在 init 只 `refreshConfig(force=true)` 发起请求，结果回到主线程后再重算 `updateCrashDetection()` / `updateOverlay()`（见 §9）。
 
 ### 2.3 没有的东西（别再按旧文档找）
 
@@ -109,12 +127,12 @@ tickRunnable.run() {                    // [SafeWalkLSPHook.kt:957]
 ```
 
 - 总开关开：**2 秒**；总开关关：**5 秒**（关着还 2 秒一轮纯属白耗电）。
-- tick 里没有递归、没有阻塞等待；最重的一次操作是跨进程读配置（且被 60 秒缓存挡住，见 §9）。
+- tick 里没有递归、**没有阻塞等待**：配置读取已挪到 `SafeWalk-config` 后台线程，tick 只读内存快照（见 §9）。
 
 ### 3.1 `check()` 的执行顺序
 
 ```
-refreshConfig()                          // 60 秒缓存，只有过期才跨进程查
+refreshConfig()                          // 60 秒缓存；只在后台线程查，主线程不阻塞
 ├─ 总开关关 → 停加速度计兜底、静置计时归零、2 分钟一条日志、return
 ├─ 兜底计步意外停了（30 秒节流）→ startAccFallback("兜底未运行，自动恢复")
 ├─ 零步探针：启动 45 秒仍 0 步 → 写一条"仍没收到任何步数事件"
@@ -452,13 +470,16 @@ Hook 读：SafeWalkConfig.loadConfig(ctx)
 
 - **为什么用 Provider 而不是 XSharedPreferences**：Hook 在 SystemUI 进程，读不到 App 私有目录；`MODE_WORLD_READABLE` 早已废弃。
 - **为什么还要广播**：原来 Hook 每 10 秒跨进程查一次 Provider，会把已被系统回收的 App 进程反复拉起来——一个主打低功耗的模块自己在后台定时唤醒主人。现在写完就喊一声，轮询降级为 **60 秒**兜底（`refreshConfig` 缓存）。
-- 读失败时**保留上一份配置**，不清空（`loadConfig(ctx)?.let { configJson = it }`）。
+- **读取在后台线程**：`refreshConfig()` 只是把任务丢给 `SafeWalk-config` 单线程池，主线程立刻返回。`contentResolver.query` 是同步 Binder，App 被回收时还会被冷启动，这个等待**绝不能**发生在 SystemUI 主线程上。
+- 读完回主线程整体替换 `configJson`（`@Volatile` 引用，主线程只读、永不原地改），再重算 `updateCrashDetection()` / `updateOverlay()`。
+- 读失败时**保留上一份配置**，不清空；缓存时间戳往前拨 10 秒，让下一次 tick 尽快重试。
 
 ### 10.2 安全
 
 - `query` 只认 `/config` 路径；`isTrustedCaller()` **fail-closed**（判定不成立返回空，不是放行）。
 - 判据用 **uid** 不用包名：`myUid` / `SYSTEM_UID(1000)`；少数 ROM 给 SystemUI 独立 uid 时，要求 `uid < FIRST_APPLICATION_UID` **且** `callingPackage == com.android.systemui`。普通应用（uid ≥ 10000）永远进不来。
 - **白名单只出功能开关与显示参数**：急救卡的姓名/血型/住址/联系电话一律不导出，JSON 文件里也不带（root 一句 `cat` 就能看全）。
+- **控制类广播加签名级权限**：`io.github.wumisc.safewalk.permission.CONTROL`（`protectionLevel="signature"`）。SystemUI 侧 6 个导出接收器统一用 `registerExportedWithPermission()` 注册，系统在**分发阶段**校验发送方签名——第三方即使反编译拿到令牌字符串也发不进来。源码里那个 `safewalk-bc-2.5` 只剩第二道校验作用。
 
 ### 10.3 配置键全表
 
@@ -486,7 +507,7 @@ Hook 读：SafeWalkConfig.loadConfig(ctx)
 | `rearCamCorner` | string | "bottom_right" | 四角 | App |
 | `gaitConfirmSteps` | int | **5** | 2~10 | **仅 App** |
 | `gaitStopSec` | int | **10** | 5~30 | **仅 App** |
-| `enableDiagLog` | bool | true | — | 仅 App（见 §13 P2-3） |
+| `enableDiagLog` | bool | true | — | Hook + App |
 | `testRearCamAction` | string | "" | open_full/open_small/close | Hook |
 | `testRearCamTs` | long | 0 | 一次性指令写入时刻 | Hook |
 | `enableAutoTravelMode` | bool | false | 定位自动识别模式 | App |
@@ -542,7 +563,11 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 | `Hook SystemUIApplication.onCreate 成功` | Hook 点命中 | ROM 类名不同（`找不到 SystemUIApplication 类`） |
 | `SystemUIApplication.onCreate 触发，开始初始化` | 真的走到 init | Hook 命中但没进 init |
 | `init 已执行过，跳过重复初始化` | 幂等生效 | — |
-| `❌ 初始化失败: …` | init 某步抛异常 | — |
+| `core init: 第 n 次尝试` | 核心步骤（Context + 日志）成功 | 只有下面的重试行 = Context 都拿不到 |
+| `❌ 初始化失败（核心步骤，第 n 次）: …` | 核心步骤抛异常，将退避重试 | — |
+| `↻ Ns 后重试初始化（已失败 n 次）` | 重试已排期（2s→60s 退避，最多 20 次） | — |
+| `❌ 初始化步骤失败[名字]: …` | 某一步单独挂了，其余照常跑 | — |
+| `❌ 注册广播失败[名字]: …` | 该接收器没注册上，下次 init 重试会补 | 对应功能失联 |
 | `✅ 计步器已注册:` | 系统计步器可用 | — |
 | `✅ 加速度计计步已启用（原因：…）` | 兜底在跑 | 两路都没跑 = 永远没步数 |
 | `🚶 计步中：窗口 x/50 步` | 每 15 秒一条，确实在计步 | 计数一直不涨 = 传感器/权限问题 |
@@ -607,20 +632,30 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 
 ## 13. 已知问题（按严重度，供后续维护）
 
-> 这些是审阅当前代码时确认存在的问题，还没有修。修之前不要以为"文档写了就是已解决"。
+> **2026-11-08 已修掉三条 P0 与一条 P2**（见 13.1）。13.2 是仍然存在的，修之前不要以为"文档写了就是已解决"。
+
+### 13.1 已修复（2026-11-08）
+
+| 原编号 | 问题 | 修法 | 落点 |
+|---|---|---|---|
+| **P0-1** | `inited = true` 写在 `try` **之前**，后续任何一步抛异常都只 log 不重试，该进程永久停在"已初始化"的假状态 | 拆成 `initRunning` / `initSucceeded` 两个标志；核心步骤失败走**退避重试**（2s→4s→…→封顶 60s，最多 20 次）；其余步骤用 `step("名字"){}` 逐段兜底，单步失败只损失那一步 | `SafeWalkLSPHook.kt` `runInit()` / `step()` / `scheduleInitRetry()` |
+| **P0-2** | 主线程跨进程 `query` Provider，App 被回收时会把 App 冷启动，主线程等 Binder 数百 ms~数秒 → 掉帧甚至 ANR | 配置读取全部挪到单线程池 `SafeWalk-config`（daemon）；`configJson` 改成 `@Volatile` 快照，**只在后台整体替换、主线程只读引用**；读完回主线程再重算 `updateCrashDetection` / `updateOverlay`；`configLoading` 去重，失败保留旧快照并 10 秒后重试 | `refreshConfig()` / `configExecutor` |
+| **P0-3** | 广播令牌硬编码 + 接收器全 exported：反编译拿到 token 就能反复发 `RESTART_SYSTEMUI` 杀 SystemUI（黑屏 DoS）、静默点灯、刷配置 | 新增 **signature 级权限** `io.github.wumisc.safewalk.permission.CONTROL`；SystemUI 侧 6 个导出接收器统一走 `registerExportedWithPermission()`，**系统在分发阶段就校验发送方签名**，第三方广播根本到不了代码。令牌保留为第二道校验 | `AndroidManifest.xml`、`ReceiverCompat.registerExportedWithPermission()`、`registerOnce()` |
+| **P2-3** | `enableDiagLog` 不在 `ConfigProvider.WHITELIST`，Hook 侧永远读默认 `true` → 关掉日志开关后 SystemUI 侧仍在写 | 加入白名单（它只是开关，不含隐私），`exportConfig` 会自动带上 | `ConfigProvider.kt` `WHITELIST` |
+
+**P0-3 的一个边界**：这套权限只能护住 **App → SystemUI** 方向（发送方是模块自己，持有签名权限）。反方向 **SystemUI → App** 的广播（预览状态回执、日志回传、重启 ACK）发送方是系统界面，它拿不到我们的签名权限，所以 App 侧的接收器**仍然只能靠令牌**。被伪造的后果限于"让悬浮窗显隐错乱 / 往日志里灌文本"，不涉及杀进程或开摄像头。
+
+### 13.2 仍然存在
 
 | 级别 | 问题 | 位置 | 后果 | 建议改法 |
 |---|---|---|---|---|
-| **P0-1** | `inited = true` 写在 `try` **之前** | `SafeWalkLSPHook.kt:233` | 后面任何一步抛异常（`DiagLog.init` / `getSystemService` / `registerReceiver`）都只 log 不重试，`inited` 已锁死 → 直到 SystemUI 重启才可能恢复 | 成功后再置位，或 `tried/succeeded` 分离 + 退避重试 |
-| **P0-2** | 主线程跨进程 `query` Provider | `refreshConfig` → `SafeWalkDataStore.kt:191` | App 被回收时这条 query 会把 App 拉起来，主线程等 Binder 几百 ms~数秒 → 状态栏卡顿甚至 SystemUI ANR | 配置读取挪后台线程，tick 只读内存缓存 |
-| **P0-3** | 广播令牌硬编码 + 接收器全 exported | `SafeWalkDataStore.kt:124` `BROADCAST_TOKEN = "safewalk-bc-2.5"` | 反编译拿到 token 就能发 `RESTART_SYSTEMUI` 反复杀 SystemUI（黑屏 DoS）、静默点灯、刷配置 | per-install 随机 token，或给 receiver 加 signature 级自定义权限 |
-| **P1-1** | Hook 单点、零兜底 | `:200-222` | OEM 改类名/启动点 → 整模块静默失效，日志只一行"找不到类" | 加 `SystemUIService.onCreate` / `Application.attach` 二级锚点 |
-| **P1-2** | `cameraInForeground` 反射可能恒 false | `:1173-1186` | 隐藏 API，部分 ROM 抛异常被吞 → 相机避让失效，悬浮窗挡取景 | 加 `getTasks` / `UsageStatsManager` 兜底，并显式验证 |
-| **P2-1** | 加速度计常开 | `:328`、`:456` | 与 v2.1"平均 <1Hz"的说法矛盾，功耗需实测 | 若实测偏高，考虑息屏降采样或只在候选窗口开 |
-| **P2-2** | `DiagLog.appendLine` 同步写文件在调用方线程 | `DiagLog.kt:227` | tick 里写日志会有主线程 I/O 抖动 | 改成单线程串行队列 + 批量 flush |
-| **P2-3** | `enableDiagLog` 不在白名单 | `ConfigProvider.kt:43-67` | Hook 侧 `pref(enableDiagLog, true)` 永远拿默认 true，从 JSON 文件读的 `DiagLog.enabled` 也只在 App 进程有效 → **关掉日志开关后 SystemUI 侧仍在写** | 把 `enableDiagLog` 加进白名单，或在导出时单独带上 |
-| **P2-4** | 久坐依赖 `lastStepTs != 0` | `:775` | 开机后没走过一次就永不提醒久坐 | 可接受（有意保守），但要在 UI 说明 |
-| **P2-5** | `walking` 只写不读 | `:40`、`:366`、`:577`、`:587`、`:913` | 死变量，容易误导后续维护者以为它在控制显隐 | 删除，或改成只用于日志 |
+| **P1-1** | Hook 单点、零兜底 | `SafeWalkLSPHook.kt:301-321` | OEM 改类名/启动点 → 整模块静默失效，日志只一行"找不到类" | 加 `SystemUIService.onCreate` / `Application.attach` 二级锚点 |
+| **P1-2** | `cameraInForeground` 反射可能恒 false | `:1357` | 隐藏 API，部分 ROM 抛异常被吞 → 相机避让失效，悬浮窗挡取景 | 加 `getTasks` / `UsageStatsManager` 兜底，并显式验证 |
+| **P2-1** | 加速度计常开 | `:400`、`:649` | 与 v2.1"平均 <1Hz"的说法矛盾，功耗需实测 | 若实测偏高，考虑息屏降采样或只在候选窗口开 |
+| **P2-2** | `DiagLog.appendLine` 同步写文件在调用方线程 | `DiagLog.kt:207` | tick 里写日志会有主线程 I/O 抖动 | 改成单线程串行队列 + 批量 flush |
+| **P2-3** | App 侧接收器仍只能靠令牌（反方向 SystemUI → App 不受签名权限保护） | `CrashAlertReceiver` / `LogBridgeReceiver` / `TorchActionReceiver` 等 | 第三方拿到令牌可伪造"预览状态回执 / 日志文本 / 点灯请求" | 若要彻底解决，需 per-install 随机令牌（Hook 从导出的配置里读），改动面 20+ 处 |
+| **P2-4** | 久坐依赖 `lastStepTs != 0` | `:944` | 开机后没走过一次就永不提醒久坐 | 可接受（有意保守），但要在 UI 说明 |
+| **P2-5** | `walking` 只写不读 | `:40`、`:559`、`:770`、`:780`、`:1106` | 死变量，容易误导后续维护者以为它在控制显隐 | 删除，或改成只用于日志 |
 | **P2-6** | `minSdk 33` 让 `ReceiverCompat` 的 API<33 分支成死代码 | `ReceiverCompat.kt` | 无害，但读代码时会以为在兼容 11/12 | 保留（防降 minSdk），注释说明 |
 
 ---

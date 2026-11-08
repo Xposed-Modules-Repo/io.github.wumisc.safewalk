@@ -48,6 +48,11 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 这个字段让「手电优先」持续一小段时间，关灯或超时后预览自然恢复。
      */
     private var torchHoldUntil = 0L
+    /**
+     * 配置快照。**只在后台线程整体替换，主线程只读引用**，所以标 volatile 就够安全
+     * （没有人原地修改这个 JSONObject，永远是新对象换旧对象）。
+     */
+    @Volatile
     private var configJson: org.json.JSONObject? = null
     private var nm: SafeWalkNotificationManager? = null
     private var sm: SensorManager? = null
@@ -74,11 +79,64 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var lastTriggerTs = 0L
     private var lastBatteryWarnTs = 0L
     private var batteryReceiverRegistered = false
-    /** 防止重复初始化（重复注册广播接收器 = 一条提醒弹两次） */
+    /**
+     * 初始化状态机。
+     *
+     * 原来是 `inited = true` 写在 try **之前**：只要后面任何一步抛异常
+     * （DiagLog.init / getSystemService / registerReceiver 在部分 ROM 上都会抛），
+     * 这个 SystemUI 进程就永久停在「已初始化」的假状态——不重试、不再注册任何监听的，
+     * 模块静默失效，直到下一次重启 SystemUI 才可能恢复。
+     *
+     * 现在拆成「正在跑 / 已成功」两个标志：失败可以退避重试，只有全部核心步骤
+     * 走完才封口。
+     */
+    private val initLock = Any()
+
     @Volatile
-    private var inited = false
+    private var initRunning = false
+
+    @Volatile
+    private var initSucceeded = false
+
+    /** 核心步骤（拿 Context / 初始化日志）连续失败次数，用于退避 */
+    private var initAttempts = 0
+
+    /** 每个接收器的注册只做一次：init 重试时重复注册 = 一条提醒弹两次 */
+    private val registeredReceivers = mutableSetOf<String>()
+
+    /** tick 链是否已启动：init 重试可能走两遍，不能挂两条心跳 */
+    private var tickStarted = false
+
     // 配置缓存时间戳：避免每 2 秒跨进程查一次 Provider 把应用进程反复唤醒（耗电）
+    @Volatile
     private var lastConfigTs = 0L
+
+    /** 是否已有一次配置读取在后台飞：避免 tick 每 2 秒排一个任务 */
+    @Volatile
+    private var configLoading = false
+
+    /**
+     * 读取期间又来了强制刷新请求。
+     *
+     * 典型场景：用户连点两个开关，第二次的 ACTION_CONFIG_CHANGED 撞上第一次还没读完的
+     * 任务。直接丢掉的话新配置要等 60 秒轮询才生效——"改完开关半天不响应"。
+     * 标记一下，读完立刻再读一次。
+     */
+    @Volatile
+    private var configReloadPending = false
+
+    /**
+     * 配置读取专用单线程。
+     *
+     * `contentResolver.query` 是同步 Binder 调用，对面是 App 的 ConfigProvider；
+     * App 进程已被回收时，这一次 query 还会把它冷启动起来，耗时几百毫秒到数秒。
+     * 原来它跑在主线程的 tick 里——等于每 60 秒让 SystemUI 主线程赌一次「会不会卡住」，
+     * 卡住就是状态栏掉帧甚至 ANR。现在全部挪到这个守护线程，主线程只读内存快照。
+     */
+    private val configExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "SafeWalk-config").apply { isDaemon = true }
+        }
 
     // ========== 行走模式「开机自启」==========
     /**
@@ -147,6 +205,14 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         const val RESTART_TOKEN = "safewalk-restart-2.4"
         const val APP_PKG = "io.github.wumisc.safewalk"
 
+        /**
+         * 控制指令广播的签名级权限（在 App 的 Manifest 里用 signature 级声明）。
+         *
+         * 本进程里注册的所有 EXPORTED 接收器都挂上这个权限：系统在分发阶段
+         * 校验发送方签名，第三方应用即使拿到源码里的令牌字符串也发不进来。
+         */
+        const val CONTROL_PERMISSION = "io.github.wumisc.safewalk.permission.CONTROL"
+
         /** 诊断日志：统一走 DiagLog（logcat + 用户可见文件，多级降级落盘）。
          *  是否落盘由 refreshConfig 同步到 DiagLog.enabled 控制（companion 里读不到实例配置） */
         fun diag(msg: String) {
@@ -157,18 +223,70 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
 
     // ========== 配置读取（统一入口） ==========
 
-    /** 拉取配置，默认 60 秒内复用缓存；force=true 强制刷新 */
+    /**
+     * 拉取配置，默认 60 秒内复用缓存；force=true 强制刷新。
+     *
+     * **绝不阻塞调用方**：真正的读取在 [configExecutor] 上做，这里只负责去重和发起。
+     * 调用点全是主线程（tick / 广播回调），原来那一版在主线程直接 query Provider，
+     * App 没活着时会把它冷启动起来并等 Binder 返回——SystemUI 主线程卡在那儿，
+     * 轻则状态栏掉帧，重则 ANR。
+     *
+     * 读失败时保留上一份配置（不能把用户开关全重置成默认值），并把缓存时间戳
+     * 往前拨，让下一次 tick 尽快重试。
+     */
     private fun refreshConfig(force: Boolean = false) {
         val now = System.currentTimeMillis()
         // 配置改动会通过广播即时推过来（见 configChangedReceiver），
-        // 这里的 60 秒轮询只是兜底：原来 10 秒一次，等于每 10 秒跨进程查一次
-        // Provider，会把已经被系统回收的应用进程重新拉起来，纯属自己耗自己的电
+        // 这里的 60 秒轮询只是兜底
         if (!force && configJson != null && now - lastConfigTs < 60_000L) return
-        // 读失败时保留上一份配置，别把已有开关全部重置成默认值
-        SafeWalkConfig.loadConfig(ctx)?.let { configJson = it }
-        lastConfigTs = now
-        // 同步日志总开关：关了就不再写日志文件，省 I/O 省电
-        DiagLog.enabled = pref(SafeWalkPrefKey.enableDiagLog, true)
+        if (configLoading) {
+            // 正在读的时候又要求强制刷新：记下来，读完立刻补一次，别丢
+            if (force) configReloadPending = true
+            return
+        }
+        configLoading = true
+        val appCtx = ctx
+        try {
+            configExecutor.execute {
+                val loaded = try {
+                    SafeWalkConfig.loadConfig(appCtx)
+                } catch (t: Throwable) {
+                    Log.e("SafeWalk", "读配置异常", t)
+                    null
+                }
+                Handler(Looper.getMainLooper()).post {
+                    configLoading = false
+                    if (loaded != null) {
+                        // 整体替换引用，读侧永远看到一份完整快照
+                        configJson = loaded
+                        lastConfigTs = System.currentTimeMillis()
+                        // 同步日志总开关：关了就不再写日志文件，省 I/O 省电
+                        DiagLog.enabled = pref(SafeWalkPrefKey.enableDiagLog, true)
+                        // 配置到位后重算依赖开关的监听器与悬浮窗状态
+                        try {
+                            updateCrashDetection()
+                        } catch (_: Throwable) {
+                        }
+                        try {
+                            updateOverlay()
+                        } catch (_: Throwable) {
+                        }
+                    } else {
+                        // 读不到就先沿用旧配置，50 秒后（tick 的 60 秒兜底）再试
+                        lastConfigTs = System.currentTimeMillis() - 50_000L
+                    }
+                    if (configReloadPending) {
+                        // 读取期间被要求再读一次（连点开关）：立刻补，不要让用户等轮询
+                        configReloadPending = false
+                        refreshConfig(force = true)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            // 线程池已关闭等极端情况：不能让 tick 因为读配置而中断
+            configLoading = false
+            diag("❌ 提交配置读取任务失败: $t")
+        }
     }
 
     private fun pref(key: String, default: Boolean): Boolean = configJson?.optBoolean(key, default) ?: default
@@ -223,124 +341,218 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
     private fun init(appCtx: Context) {
-        Handler(Looper.getMainLooper()).postDelayed({
-            // 防御性：个别 ROM 会重复走 SystemUIApplication.onCreate，
-            // 重复初始化会把广播接收器注册两遍，一条提醒变两条
-            if (inited) {
-                diag("init 已执行过，跳过重复初始化")
-                return@postDelayed
-            }
-            inited = true
-            try {
-                ctx = appCtx.applicationContext
-                DiagLog.init(ctx!!)
-                // 读配置JSON文件（新版方案，不用XSharedPreferences）
-                configJson = SafeWalkConfig.loadConfig(ctx)
-                nm = SafeWalkNotificationManager(ctx!!)
-                sm = ctx!!.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-                // 车祸预警：总开关+车祸开关都开着才启动持续加速度监听
-                updateCrashDetection()
-                // 环境光监测：夜间自动开灯前判断「太黑才亮」
-                startLightMonitor()
-                // 预览已搬到 App 进程（WalkPreviewService）：Hook 这里只做步态判定，
-                // 判定结果通过广播指挥 App 显示/收起，本进程不再持有相机
+        Handler(Looper.getMainLooper()).postDelayed({ runInit(appCtx) }, 2_000L)
+    }
 
-                // 初始化手电筒通知模块
+    /**
+     * 真正执行初始化。可重入、可重试：核心步骤失败按退避重来，成功才封口。
+     *
+     * 每一步单独兜底（见 [step]）。以前整段包在一个 try 里，第一处抛异常就把后面
+     * 的计步器、广播、心跳全部跳过，现象是「模块装了但什么都不动」，日志里只有
+     * 一行「初始化失败」。现在单步失败只损失那一步，其余照常跑，并且能看出是哪一步。
+     */
+    private fun runInit(appCtx: Context) {
+        synchronized(initLock) {
+            // 防御性：个别 ROM 会重复走 SystemUIApplication.onCreate
+            if (initSucceeded) {
+                diag("init 已执行过，跳过重复初始化")
+                return
+            }
+            if (initRunning) return
+            initRunning = true
+        }
+
+        var coreOk = false
+        try {
+            ctx = appCtx.applicationContext
+            DiagLog.init(ctx!!)
+            coreOk = true
+            diag("core init: 第 ${initAttempts + 1} 次尝试")
+        } catch (t: Throwable) {
+            Log.e("SafeWalk", "初始化失败（核心步骤）", t)
+            diag("❌ 初始化失败（核心步骤，第 ${initAttempts + 1} 次）: $t")
+        }
+
+        if (coreOk) {
+            // 配置读取改到后台线程，这里只发起，不阻塞（见 refreshConfig 注释）
+            refreshConfig(force = true)
+
+            step("通知管理器") { nm = SafeWalkNotificationManager(ctx!!) }
+            step("传感器服务") {
+                sm = ctx!!.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            }
+            // 车祸预警：总开关+车祸开关都开着才启动持续加速度监听
+            step("车祸检测") { updateCrashDetection() }
+            // 环境光监测：夜间自动开灯前判断「太黑才亮」
+            step("环境光监测") { startLightMonitor() }
+            // 预览已搬到 App 进程（WalkPreviewService）：Hook 这里只做步态判定，
+            // 判定结果通过广播指挥 App 显示/收起，本进程不再持有相机
+
+            // 初始化手电筒通知模块
+            step("手电通知渠道") {
                 createTorchNotifyChannel(ctx!!)
                 torchNotifyManager = TorchNotificationManager(ctx!!)
                 torchNotifyManager?.startMonitor()
-                // 阈值直接从 Hook 已缓存的配置读，不再单独开一条 60 秒的跨进程轮询
-                torchReminder = TorchStaticReminder(torchNotifyManager!!, ctx!!) {
+            }
+            // 阈值直接从 Hook 已缓存的配置读，不再单独开一条 60 秒的跨进程轮询
+            step("手电静置提醒") {
+                val mgr = torchNotifyManager ?: return@step
+                torchReminder = TorchStaticReminder(mgr, ctx!!) {
                     (prefFloat(SafeWalkPrefKey.torchStaticMinutes, 12f) * 60_000L).toLong()
                 }
+            }
 
-                // 在系统进程里注册手电动作接收器（系统进程有权限访问摄像头）
-                val torchReceiver = object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        intent ?: return
-                        // 与 RESTART / PREVIEW 保持一致：这个接收器为了跨进程是 EXPORTED 的，
-                        // 没令牌的话任何应用发一条 OPEN_TORCH 就能把闪光灯点亮且不关
-                        if (intent.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
-                            != SafeWalkPrefKey.BROADCAST_TOKEN
-                        ) {
-                            Log.w("SafeWalk", "手电广播令牌不匹配，忽略")
-                            return
-                        }
-                        Log.i("SafeWalk", "收到手电广播: ${intent.action}")
-                        val on = when (intent.action) {
-                            "io.github.wumisc.safewalk.OPEN_TORCH" -> true
-                            "io.github.wumisc.safewalk.CLOSE_TORCH" -> false
-                            else -> return
-                        }
-                        diag("[torch] 收到${if (on) "开灯" else "关灯"}指令")
-                        if (on) {
-                            // 后视预览开在应用进程里，正占着同一颗摄像头。
-                            // 先让它让路（App 收到后立刻 close CameraDevice），
-                            // 本进程随后重试点灯——不先把预览收掉，setTorchMode
-                            // 必然 CAMERA_IN_USE，这就是「按了没反应」的全部原因。
-                            releasePreviewForTorch()
-                        }
-                        setTorchWithRetry(on, 0)
-                    }
-                }
-                torchActionReceiver = torchReceiver
-                val filter = IntentFilter().apply {
-                    addAction("io.github.wumisc.safewalk.OPEN_TORCH")
-                    addAction("io.github.wumisc.safewalk.CLOSE_TORCH")
-                }
-                // 三参数 registerReceiver 是 API 33 才有的重载，Android 11/12 上会 NoSuchMethodError
-                ReceiverCompat.registerExported(ctx!!, torchReceiver, filter)
-                Log.i("SafeWalk", "手电广播接收器注册成功")
+            // 控制类跨进程广播（手电 / 重启 / 配置变更 / 日志回传 / 预览回执）
+            step("控制广播") { registerControlReceivers() }
 
-                // 手动预览标记：App 点「预览」后暂缓自动模式的「停下就收」
-                val manualFilter = IntentFilter(ACTION_PREVIEW_MANUAL)
-                ReceiverCompat.registerExported(ctx!!, manualPreviewReceiver, manualFilter)
-
-                // 重启系统界面：App 发指令 → 回执 → 自杀，由 system_server 拉起新进程
-                val restartFilter = IntentFilter(ACTION_RESTART_SYSTEMUI)
-                ReceiverCompat.registerExported(ctx!!, restartReceiver, restartFilter)
-
-                // 配置变更：App 写完配置主动推过来，改完开关立刻生效（轮询只是兜底）
-                val configFilter = IntentFilter(SafeWalkPrefKey.ACTION_CONFIG_CHANGED)
-                ReceiverCompat.registerExported(ctx!!, configChangedReceiver, configFilter)
-
-                // 日志回传：App 启动时来要一份本进程日志，由 App 统一落盘。
-                // SystemUI 自己的外部目录是 Android/data/com.android.systemui/…，
-                // 用户根本进不去，只有回传到 App 才看得到。
-                val logFilter = IntentFilter(DiagLog.ACTION_REQUEST_LOG)
-                ReceiverCompat.registerExported(ctx!!, logRequestReceiver, logFilter)
-
-                // 预览实际状态回执：App 侧手动开/关过预览后，本进程的
-                // lastSentShow 必须跟着改，否则「去重」会把下一次显示指令吞掉
-                val previewStateFilter = IntentFilter(WalkPreviewService.ACTION_PREVIEW_STATE)
-                ReceiverCompat.registerExported(ctx!!, previewStateReceiver, previewStateFilter)
-
-                // 注册计步器（含失败检测与加速度计兜底）
-                registerStepDetector()
-                // 加速度计计步恒定开启，和系统计步器并行工作。
-                //
-                // 以前是「系统计步器失败、或 5 分钟零事件」才启用兜底，
-                // 而这台设备上 SystemUI 进程注册计步器「成功」却一步都不回
-                // （ACTIVITY_RECOGNITION 是运行时权限，模块挂在系统界面进程里拿不到，
-                //  传感器在、注册也不报错，就是永远没有回调）。
-                // 结果：走 5 分钟内一步都记不到，用户看到的就是「走半天没反应」。
-                // 现在两条腿走路，recordStep 里按 300ms 去重，谁先报算谁的。
+            // 注册计步器（含失败检测与加速度计兜底）
+            step("计步器") { registerStepDetector() }
+            // 加速度计计步恒定开启，和系统计步器并行工作。
+            //
+            // 以前是「系统计步器失败、或 5 分钟零事件」才启用兜底，
+            // 而这台设备上 SystemUI 进程注册计步器「成功」却一步都不回
+            // （ACTIVITY_RECOGNITION 是运行时权限，模块挂在系统界面进程里拿不到，
+            //  传感器在、注册也不报错，就是永远没有回调）。
+            // 结果：走 5 分钟内一步都记不到，用户看到的就是「走半天没反应」。
+            // 现在两条腿走路，recordStep 里按 300ms 去重，谁先报算谁的。
+            step("加速度计兜底") {
                 startAccFallback("恒定启用（与系统计步器并行，按 300ms 去重）")
+            }
 
-                // 注册广播接收器
+            step("电量监听") {
                 if (!batteryReceiverRegistered) {
                     registerBatteryReceiver()
                     batteryReceiverRegistered = true
                 }
-
-                // 定时轮询（对齐2.0最好版：开启时2秒，关闭时5秒）
-                Handler(Looper.getMainLooper()).postDelayed(tickRunnable, 2_000L)
-            } catch (t: Throwable) {
-                // 之前这里静默吞异常，初始化失败时日志里什么都看不到
-                Log.e("SafeWalk", "初始化失败", t)
-                diag("❌ 初始化失败: $t")
             }
-        }, 2_000L)
+
+            step("心跳") { startTick() }
+        }
+
+        synchronized(initLock) {
+            initRunning = false
+            if (coreOk) initSucceeded = true
+        }
+        if (!coreOk) scheduleInitRetry(appCtx)
+    }
+
+    /** 单步初始化兜底：一步失败不影响后面的步骤，也不会把整个 init 卡死 */
+    private inline fun step(name: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            Log.e("SafeWalk", "初始化步骤失败: $name", t)
+            diag("❌ 初始化步骤失败[$name]: $t")
+        }
+    }
+
+    /**
+     * 核心步骤失败后的退避重试：2s → 4s → 8s … 最长 60s，最多 20 次。
+     *
+     * 不能无限重试：SystemUI 若本身处于残缺状态，每 2 秒重建一次只会刷满日志、
+     * 白耗电。20 次约覆盖 15 分钟的临时性失败，之后就等下次 SystemUI 重启。
+     */
+    private fun scheduleInitRetry(appCtx: Context) {
+        initAttempts++
+        if (initAttempts > 20) {
+            diag("❌ 初始化连续失败 $initAttempts 次，停止重试（重启 SystemUI 后会重新尝试）")
+            return
+        }
+        val delay = minOf(60_000L, 2_000L shl minOf(initAttempts, 5))
+        diag("↻ ${delay / 1000}s 后重试初始化（已失败 $initAttempts 次）")
+        Handler(Looper.getMainLooper()).postDelayed({ runInit(appCtx) }, delay)
+    }
+
+    /**
+     * 注册所有「控制类」跨进程接收器。
+     *
+     * 与以前唯一的区别：全部通过 [ReceiverCompat.registerExportedWithPermission]
+     * 挂上 signature 级权限 [CONTROL_PERMISSION]。系统在**分发阶段**就校验发送方
+     * 签名，第三方应用即使反编译拿到令牌字符串也发不进来——「反复发
+     * RESTART_SYSTEMUI 把系统界面杀掉造成黑屏」那条 DoS 由此关闭。
+     *
+     * 每个接收器按名字登记，init 重试时不会重复注册（重复注册 = 一条提醒弹两次）。
+     */
+    private fun registerControlReceivers() {
+        if (ctx == null) return
+
+        // 在系统进程里注册手电动作接收器（系统进程有权限访问摄像头）
+        val torchReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                intent ?: return
+                // 权限已在系统分发阶段校验（只有同签名应用能发）；
+                // 令牌是第二道校验，防止同签名的不同构建互相误触发
+                if (intent.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
+                    != SafeWalkPrefKey.BROADCAST_TOKEN
+                ) {
+                    Log.w("SafeWalk", "手电广播令牌不匹配，忽略")
+                    return
+                }
+                Log.i("SafeWalk", "收到手电广播: ${intent.action}")
+                val on = when (intent.action) {
+                    "io.github.wumisc.safewalk.OPEN_TORCH" -> true
+                    "io.github.wumisc.safewalk.CLOSE_TORCH" -> false
+                    else -> return
+                }
+                diag("[torch] 收到${if (on) "开灯" else "关灯"}指令")
+                if (on) {
+                    // 后视预览开在应用进程里，正占着同一颗摄像头。
+                    // 先让它让路（App 收到后立刻 close CameraDevice），
+                    // 本进程随后重试点灯——不先把预览收掉，setTorchMode
+                    // 必然 CAMERA_IN_USE，这就是「按了没反应」的全部原因。
+                    releasePreviewForTorch()
+                }
+                setTorchWithRetry(on, 0)
+            }
+        }
+        torchActionReceiver = torchReceiver
+        val torchFilter = IntentFilter().apply {
+            addAction("io.github.wumisc.safewalk.OPEN_TORCH")
+            addAction("io.github.wumisc.safewalk.CLOSE_TORCH")
+        }
+        registerOnce("torch", torchReceiver, torchFilter)
+        Log.i("SafeWalk", "手电广播接收器注册完成")
+
+        // 手动预览标记：App 点「预览」后暂缓自动模式的「停下就收」
+        registerOnce("preview_manual", manualPreviewReceiver, IntentFilter(ACTION_PREVIEW_MANUAL))
+
+        // 重启系统界面：App 发指令 → 回执 → 自杀，由 system_server 拉起新进程
+        registerOnce("restart", restartReceiver, IntentFilter(ACTION_RESTART_SYSTEMUI))
+
+        // 配置变更：App 写完配置主动推过来，改完开关立刻生效（轮询只是兜底）
+        registerOnce("config", configChangedReceiver, IntentFilter(SafeWalkPrefKey.ACTION_CONFIG_CHANGED))
+
+        // 日志回传：App 启动时来要一份本进程日志，由 App 统一落盘。
+        // SystemUI 自己的外部目录是 Android/data/com.android.systemui/…，
+        // 用户根本进不去，只有回传到 App 才看得到。
+        registerOnce("log", logRequestReceiver, IntentFilter(DiagLog.ACTION_REQUEST_LOG))
+
+        // 预览实际状态回执：App 侧手动开/关过预览后，本进程的
+        // lastSentShow 必须跟着改，否则「去重」会把下一次显示指令吞掉
+        registerOnce(
+            "preview_state",
+            previewStateReceiver,
+            IntentFilter(WalkPreviewService.ACTION_PREVIEW_STATE)
+        )
+    }
+
+    private fun registerOnce(name: String, receiver: BroadcastReceiver, filter: IntentFilter) {
+        val c = ctx ?: return
+        if (!registeredReceivers.add(name)) return
+        try {
+            ReceiverCompat.registerExportedWithPermission(c, receiver, filter, CONTROL_PERMISSION)
+        } catch (t: Throwable) {
+            // 从登记表里摘掉，让下一次 init 重试还能补上
+            registeredReceivers.remove(name)
+            diag("❌ 注册广播失败[$name]: $t")
+        }
+    }
+
+    private fun startTick() {
+        if (tickStarted) return
+        tickStarted = true
+        // 定时轮询（对齐2.0最好版：开启时2秒，关闭时5秒）
+        Handler(Looper.getMainLooper()).postDelayed(tickRunnable, 2_000L)
     }
 
     // ========== 传感器回调 ==========

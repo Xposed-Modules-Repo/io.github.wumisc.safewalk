@@ -62,6 +62,9 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.torchStaticMinutes,
             SafeWalkPrefKey.enableCrashDetection,
             SafeWalkPrefKey.crashSensitivity,
+            // 日志总开关也要透传：它不在白名单里时，Hook 侧 `pref(enableDiagLog, true)`
+            // 永远拿默认值 true —— 用户关掉日志开关，SystemUI 那边照样往文件里写。
+            SafeWalkPrefKey.enableDiagLog,
             SafeWalkPrefKey.testRearCamAction,
             SafeWalkPrefKey.testRearCamTs
         )

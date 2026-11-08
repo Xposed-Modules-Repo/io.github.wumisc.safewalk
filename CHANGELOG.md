@@ -1,5 +1,52 @@
 # 更新日志
 
+## [未发布] - 2026-11-08 稳定性加固（三条 P0）
+
+### 🛡 修复：初始化失败一次就永久失效
+
+`inited = true` 原来写在 `try` **之前**，后面任何一步抛异常（`DiagLog.init` /
+`getSystemService` / `registerReceiver` 在部分 ROM 上都会），这个 SystemUI 进程
+就永久停在"已初始化"的假状态：不重试、不再注册任何监听，模块静默失效直到下次
+重启系统界面。
+
+现在拆成 `initRunning` / `initSucceeded` 两个标志，核心步骤失败按 **2s→4s→8s…
+封顶 60s、最多 20 次** 退避重试；其余每一步用 `step("名字"){}` 单独兜底，
+一处失败只损失那一步，日志能直接看出是哪步挂了。接收器按名字登记，
+重试不会重复注册（重复注册 = 一条提醒弹两次）。
+
+### 🛡 修复：主线程跨进程读配置可能拖出 ANR
+
+`contentResolver.query` 是同步 Binder 调用，对面是 App 的 `ConfigProvider`；
+App 已被回收时这一次 query 还会把它冷启动起来，耗时几百毫秒到数秒。原来它跑在
+主线程的 tick 里，等于每 60 秒让 SystemUI 主线程赌一次"会不会卡住"。
+
+现在读取全部挪到 `SafeWalk-config` 守护线程，`configJson` 改成 `@Volatile` 快照
+（后台整体替换、主线程只读），读完回主线程再重算车祸监听与悬浮窗状态。
+读失败保留旧快照，10 秒后重试。
+
+### 🛡 修复：硬编码广播令牌 → 第三方可反复杀 SystemUI
+
+反编译 APK 拿到 `safewalk-bc-2.5` 就能发 `RESTART_SYSTEMUI` 反复杀系统界面
+（黑屏 DoS）、静默点灯、刷配置。
+
+新增签名级权限 `io.github.wumisc.safewalk.permission.CONTROL`
+（`protectionLevel="signature"`），SystemUI 侧 6 个导出接收器统一改为
+`registerExportedWithPermission()` 注册，**系统在分发阶段就校验发送方签名**。
+令牌保留为第二道校验。反方向（SystemUI → App）仍只能靠令牌，见
+`docs/LOGIC_DESIGN.md` §13.1 的边界说明。
+
+### 🪵 修复：日志开关关掉后 SystemUI 侧仍在写
+
+`enableDiagLog` 不在 `ConfigProvider.WHITELIST` 里，Hook 侧
+`pref(enableDiagLog, true)` 永远拿默认值 `true`。已加入白名单。
+
+改动文件：
+- `SafeWalkLSPHook.kt`：`runInit()` / `step()` / `scheduleInitRetry()` / `registerControlReceivers()` / `registerOnce()` / `startTick()`；`refreshConfig()` 改异步
+- `ReceiverCompat.kt`：新增 `registerExportedWithPermission()`
+- `AndroidManifest.xml`：声明 `permission.CONTROL`
+- `ConfigProvider.kt`：白名单加入 `enableDiagLog`
+- `docs/LOGIC_DESIGN.md`：§2.2 / §10 / §11.4 / §13 同步更新
+
 ## [v2.10.3] - 未发布（步态检测修复）
 
 ### 🚶 修复：自动跟随步行「只有手动好用」

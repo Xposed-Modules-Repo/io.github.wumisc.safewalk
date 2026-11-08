@@ -40,4 +40,33 @@ object ReceiverCompat {
             ctx.registerReceiver(receiver, filter)
         }
     }
+
+    /**
+     * 注册「带签名权限的导出接收器」。
+     *
+     * 接收器跑在 SystemUI 进程里，为了跨进程必须 EXPORTED；但导出意味着任何应用
+     * 都能往这个 action 发广播。`broadcastPermission` 让**系统在分发阶段**就校验
+     * 发送方是否持有该权限——我们用的是 signature 级，只有和模块同签名的应用
+     * （也就是模块自己）能通过。这比字符串令牌可靠得多：令牌能反编译拿到，
+     * 签名拿不到。
+     *
+     * 版本差异：
+     * · API 33+ 必须显式带 RECEIVER_EXPORTED 标志（targetSdk 33+ 的硬性要求）；
+     * · API 30~32 只认四参数重载 `registerReceiver(r, filter, broadcastPermission, scheduler)`，
+     *   这个重载从 API 1 就有，不会 NoSuchMethodError。
+     */
+    @JvmStatic
+    @SuppressLint("NewApi", "UnspecifiedRegisterReceiverFlag")
+    fun registerExportedWithPermission(
+        ctx: Context,
+        receiver: BroadcastReceiver,
+        filter: IntentFilter,
+        permission: String
+    ) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            ctx.registerReceiver(receiver, filter, permission, null, Context.RECEIVER_EXPORTED)
+        } else {
+            ctx.registerReceiver(receiver, filter, permission, null)
+        }
+    }
 }

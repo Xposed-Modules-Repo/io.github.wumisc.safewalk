@@ -6,6 +6,24 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+        控制指令广播的签名级权限。
+
+        驻留在 SystemUI 里的 Hook 要收「点灯 / 重启系统界面 / 配置变更 / 索取日志 /
+        预览状态回执」这几类广播，为了跨进程接收器必须是 EXPORTED 的。
+        原来唯一的门禁是源码里写死的字符串令牌（safewalk-bc-2.5）：
+        任何人反编译 APK 拿到这一行，就能反复发 RESTART_SYSTEMUI 把系统界面杀掉
+        （黑屏 DoS），或者静默点亮闪光灯。
+
+        改用 signature 级权限后，系统在**分发阶段**就把第三方广播丢掉了，
+        根本轮不到我们的代码判断。令牌继续保留，作为第二道校验。
+    -->
+    <permission
+        android:name="io.github.wumisc.safewalk.permission.CONTROL"
+        android:label="SafeWalk 内部控制指令"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="io.github.wumisc.safewalk.permission.CONTROL" />
+
+    <!--
         诊断日志要写到用户看得见的 /storage/emulated/0/Android/Travel safely/。
         Android 11 起分区存储（Scoped Storage）下，普通应用**不能**在 Android/
         下创建自定义目录——mkdirs() 会失败，或者更糟：目录建出来了但写入抛 EACCES。
