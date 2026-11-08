@@ -1,5 +1,28 @@
 # 更新日志
 
+## [Unreleased] 修复：后视画面「相机被系统或策略禁用」误报
+
+### 🐞 后视预览报错原因不准确
+
+**现象**：当相机被系统/设备策略禁用（企业策略、屏幕使用时间、家长控制等）时，
+`WalkPreviewService` 弹出「SafeWalk 后视画面打不开」，原因却写成
+**「相机没有返回画面」**，与「已授予相机权限、也没被别的应用占用」的真实情况对不上，
+用户照着提示排查却怎么都修不好。
+
+**根因**：`RearCameraOverlay.openCamera()` 把 `CameraManager.openCamera` 整个包在
+`catch (t: Throwable)` 里。而相机被禁用时框架会抛 `CameraAccessException`
+（`CAMERA_DISABLED`，或经 `StateCallback.onError` 的 `ERROR_CAMERA_DISABLED`），
+这条路径既没被识别，又进了 `recoverCamera` 空转 `MAX_CAMERA_RETRY` 轮重试——
+重试对「策略禁用」永远无效，最后才兜出误导性的「没有返回画面」。
+
+**修复**：
+- 新增 `catch (e: CameraAccessException)`：识别 `CAMERA_DISABLED` 后**直接报
+  「相机被系统或策略禁用」并停止重试**（策略禁用重试无意义）；其余仍可重试的错误
+  （被占用等）维持原有限次重试。
+- `StateCallback.onError` 中识别 `ERROR_CAMERA_DISABLED`，同样直接报准确原因、不重试。
+- 报错前先 `hide()` 再 `reportFailure()`，沿用既有「先收窗再回执」顺序，避免
+  Hook 侧 `showing` 状态被错误锁死。
+
 ## [3.0] - 2026-11-08 正式版：统一版式 + 深色模式重建
 
 > 版本号从 2.10.x 跨到 3.0。原因不是功能大改，而是界面层做了一次整体收口：
