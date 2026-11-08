@@ -3,6 +3,7 @@ package io.github.wumisc.safewalk
 import android.content.Context
 import android.graphics.Outline
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -657,9 +658,35 @@ class RearCameraOverlay(
                     cancelSessionTimeout()
                     Log.e(TAG, "相机错误: $error")
                     diag("❌ 相机错误: $error")
+                    if (error == CameraDevice.StateCallback.ERROR_CAMERA_DISABLED) {
+                        // 系统/策略禁用了相机（企业策略、屏幕使用时间、家长控制等）：
+                        // 此时重试多少次都打不开，必须直接报出准确原因，
+                        // 而不是走 recoverCamera 空转几轮后弹出误导性的「相机没有返回画面」
+                        hide()
+                        reportFailure("相机被系统或策略禁用")
+                        return
+                    }
                     recoverCamera(gen, "相机错误 $error")
                 }
             }, mainHandler)
+        } catch (e: CameraAccessException) {
+            // cm.openCamera 在相机被系统/策略禁用时会同步抛 CAMERA_DISABLED
+            // （企业策略、屏幕使用时间、家长控制等）。这种失败重试也没用，
+            // 直接报出准确原因，不要走 recoverCamera 空转几轮再弹误导信息。
+            opening = false
+            Log.e(TAG, "打开相机被拒绝 reason=${e.reason}", e)
+            diag("❌ 打开相机被系统拒绝: reason=${e.reason}")
+            // openCamera 抛异常时 Surface 已经建好了，不释放就永远挂在那里
+            try { previewSurface?.release() } catch (_: Throwable) {}
+            previewSurface = null
+            lastCloseAt = android.os.SystemClock.uptimeMillis()
+            if (e.reason == CameraAccessException.CAMERA_DISABLED) {
+                hide()
+                reportFailure("相机被系统或策略禁用")
+            } else {
+                // 被占用（CAMERA_IN_USE / MAX_CAMERAS_IN_USE）等仍可重试的错误
+                recoverCamera(cameraGen, "打开相机被拒(${e.reason})")
+            }
         } catch (t: Throwable) {
             opening = false
             Log.e(TAG, "打开相机失败", t)
