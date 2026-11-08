@@ -1,5 +1,31 @@
 # 更新日志
 
+## [未发布] - 2026-11-08 构建验证 + Gradle Wrapper
+
+### 🔧 新增：Gradle Wrapper（锁定 9.6.0）
+
+仓库原来没有 wrapper，README 又写「请自备 Gradle 9.8」——但 AGP 9.4.1 的实际
+下限是 **9.6.0**，版本写错、且没有 wrapper 就意味着换台机器/换个人克隆下来
+大概率卡在 `Minimum supported Gradle version is 9.6.0` 上。
+
+现在补上 `gradlew` / `gradlew.bat` / `gradle/wrapper/`，直接 `./gradlew :app:assembleDebug`
+即可，不用先装 Gradle。
+
+### ✅ 验证：全量编译 + 单元测试通过
+
+- `:app:assembleDebug` 成功，产物 45.1 MB，Kotlin 编译**零告警**
+- `:app:testDebugUnitTest` 成功，**9 个测试类 / 60 个用例全通过**
+- APK 内 `permission.CONTROL` 确认 `protectionLevel=signature`，
+  `AutoStartActivity` 的 `exported / taskAffinity / excludeFromRecents` 均如期
+
+### 📄 文档：修正 README 编译章节
+
+原文写「Platform 35 + Gradle 9.8」，与 `compileSdk 37` / AGP 9.4.1 不符。
+已改成实测通过的版本表（JDK 21 / Gradle 9.6.0+ / android-37.2 / Build-Tools 36.0.0），
+并补了「首次拉依赖约 1.7 GB、十几分钟」与 `services.gradle.org` 不可达时的绕法。
+
+---
+
 ## [未发布] - 2026-11-08 稳定性加固（三条 P0 + 两条 P1）
 
 ### 🛡 修复：初始化失败一次就永久失效

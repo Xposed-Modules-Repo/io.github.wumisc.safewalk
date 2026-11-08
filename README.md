@@ -57,23 +57,37 @@
 
 ## 🔧 编译
 
-需要 **JDK 21**、**Android SDK Platform 35**、**Gradle 9.8**（AGP 9.4.1 / Kotlin 2.4.21）：
+工具链（版本不匹配会直接报错，不会静默降级）：
+
+| 项 | 要求 | 说明 |
+|---|---|---|
+| JDK | **21** | Miuix 是 Java 21 bytecode（class 65），JDK 17 会报错 |
+| Gradle | **9.6.0+** | AGP 9.4.1 的下限是 9.6.0；仓库已附带 Wrapper，无需自备 |
+| Android SDK Platform | **android-37.2** | `compileSdk 37` 对应新的 minor 版本平台 |
+| Build-Tools | **36.0.0** | AGP 默认；缺失时会自动下载 |
 
 ```bash
+# 只需指定 JDK 与 SDK，其余交给 wrapper
 export JAVA_HOME=<jdk21 路径>
 export ANDROID_HOME=<sdk 路径>
 echo "sdk.dir=$ANDROID_HOME" > local.properties
-gradle :app:assembleDebug --no-daemon
+
+./gradlew :app:assembleDebug        # Windows: gradlew.bat
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
-> 仓库未附带 Gradle Wrapper，请自备 Gradle 9.8。
+> **首次编译会拉全量依赖**，约 1.7 GB、十几分钟（取决于网络）；之后增量构建只要几十秒。
+> 若 `./gradlew` 卡在下载 Gradle 发行包，说明 `services.gradle.org` 不可达，
+> 可自行下载 `gradle-9.6.0-bin.zip` 放进 `~/.gradle/wrapper/dists/gradle-9.6.0-bin/<hash>/`，
+> 或者直接用本地安装的 Gradle 9.6.0 执行同样的命令。
 
 ## 🧪 测试
 
 - **步态判定**：纯 JVM 单元测试 `GaitDetectorPureTest`，无需真机/外网
-- **界面与逻辑**：Robolectric 本地测试 `gradle :app:testDebugUnitTest --no-daemon`（首次需联网拉依赖）
+- **界面与逻辑**：Robolectric 本地测试 `./gradlew :app:testDebugUnitTest`（首次需联网拉依赖）
+
+当前共 **9 个测试类 / 60 个用例**，全部通过（`GaitDetectorTest` 13、`GaitDetectorPureTest` 8、`SubPageTest` 13、`NotificationTargetTest` 7、`StabilityTest` 6、`MainFlowTest` 5、`PreviewWindowTest` 4、`CrashDetectorTest` 2、`DiagLogTest` 2）。
 
 ---
 

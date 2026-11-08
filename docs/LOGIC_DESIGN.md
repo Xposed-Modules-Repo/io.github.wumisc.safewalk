@@ -729,6 +729,27 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 | `[cam] 前台检测启用第 N 级（接口名）` | 前台检测降级了，第 1 级在这台机器上不可用 |
 | `[cam] ⚠️ 四级前台检测全部失败` | 相机避让失效（悬浮窗在相机界面不收起） |
 
+### 13.3 编译与测试基线（2026-11-08 实测）
+
+以下是在真机环境（Windows + JDK 21.0.2 + Gradle 9.6.0 + AGP 9.4.1 + Platform android-37.2）实际跑通的记录，可作为「改动后是否破坏了什么」的对照基线：
+
+| 项 | 结果 |
+|---|---|
+| `./gradlew :app:assembleDebug` | ✅ BUILD SUCCESSFUL，产物 `app/build/outputs/apk/debug/app-debug.apk`（45.1 MB，debug 签名） |
+| Kotlin 编译告警 | **零条**（没有 `w:` / `e:`） |
+| `./gradlew :app:testDebugUnitTest` | ✅ 9 个测试类 / 60 个用例全通过 |
+| APK 内 `permission.CONTROL` | ✅ `protectionLevel=0x02`（signature） |
+| APK 内 `AutoStartActivity` | ✅ `exported=true`、`taskAffinity=""`、`excludeFromRecents=true` |
+
+**工具链版本是硬约束**，升级前先看这张表：
+
+| 组件 | 必须 | 不匹配的表现 |
+|---|---|---|
+| JDK | 21 | Miuix 是 class 65，JDK 17 报 `Unsupported class file major version` |
+| Gradle | **9.6.0+** | 低于 9.6.0 直接 `Minimum supported Gradle version is 9.6.0` |
+| Platform | android-37.2 | `compileSdk 37` 找不到平台 |
+| Build-Tools | 36.0.0 | AGP 缺省值，缺失时自动下载 |
+
 ---
 
 ## 14. 与 v2.1 文档的差异（旧文档不要再引用）
