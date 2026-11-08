@@ -37,14 +37,9 @@ import java.util.List;
  */
 public class AcknowledgementsActivity extends Activity {
 
-    private static final int C_TITLE = 0xFF1D1D1D;
-    private static final int C_SUB = 0xFF8E8E93;
-    private static final int C_LINK = 0xFF007AFF;
-    private static final int C_OK = 0xFF34C759;
-    private static final int C_PARTIAL = 0xFFFF9500;
-    private static final int C_GONE = 0xFFB0B0B5;
-    private static final int C_CARD = 0xFFFFFFFF;
-    private static final int C_DIVIDER = 0xFFF2F2F7;
+    // 颜色一律取自资源：values-night 覆盖后整套界面自动转深色。
+    // 原来这里是 0xFF1D1D1D 之类的常量，深色下白底白字，整页看不见。
+    private int C_TITLE, C_SUB, C_LINK, C_OK, C_PARTIAL, C_GONE, C_CARD, C_DIVIDER;
 
     private static final String ADOPTED_INTEGRATED = "直接集成";
     private static final String ADOPTED_FULL = "已落地";
@@ -87,6 +82,17 @@ public class AcknowledgementsActivity extends Activity {
         setContentView(R.layout.activity_acknowledgements);
         density = getResources().getDisplayMetrics().density;
 
+        C_TITLE = getColor(R.color.text_primary);
+        C_SUB = getColor(R.color.text_hint);
+        C_LINK = getColor(R.color.primary);
+        C_OK = getColor(R.color.accent_green);
+        C_PARTIAL = getColor(R.color.accent_warn);
+        C_GONE = getColor(R.color.text_muted);
+        C_CARD = getColor(R.color.card_bg);
+        C_DIVIDER = getColor(R.color.divider);
+
+        findViewById(R.id.btn_back).setOnClickListener(v -> finish());
+
         LinearLayout container = findViewById(R.id.container_ack);
         for (Section s : buildSections()) {
             container.addView(buildSectionHeader(s.title));
@@ -123,11 +129,11 @@ public class AcknowledgementsActivity extends Activity {
                                 + "「硬件计步器 + 加速度计兜底」双路并行，在 recordStep() 里按 300ms 去重。",
                         ADOPTED_PARTIAL, "https://github.com/huuphuoc1396/android-step-detector"),
                 new Item("mdeguzis/StepCounter",
-                        "滑动窗口统计 + 按运动状态动态切换采样率的省电策略。**只落地了窗口统计**："
+                        "滑动窗口统计 + 按运动状态动态切换采样率的省电策略。只落地了窗口统计："
                                 + "采样率至今恒为 SENSOR_DELAY_UI，动态切换没做。",
                         ADOPTED_GONE, null),
                 new Item("ashishb/android-step-detector",
-                        "用 FFT 频谱分析识别周期性步态。**本项目没有采用 FFT**，走的是时域包络检测 ——"
+                        "用 FFT 频谱分析识别周期性步态。本项目没有采用 FFT，走的是时域包络检测 ——"
                                 + "后者在低采样率下更稳，代价是抗噪差一些。",
                         ADOPTED_GONE, null),
                 new Item("AccStepCounter / SensorFusion",
@@ -149,11 +155,11 @@ public class AcknowledgementsActivity extends Activity {
                                 + "永远没回调」这条经验，最终写成 45 秒步数探针 + 加速度计自动恢复。",
                         ADOPTED_PARTIAL, null),
                 new Item("UrbanBigDataCentre/meowmotion",
-                        "GPS 轨迹分割、停留/移动分类、连续位移校验。**未落地**：出行模式识别走的是"
+                        "GPS 轨迹分割、停留/移动分类、连续位移校验。未落地：出行模式识别走的是"
                                 + "Geocoder 反编码 + 关键词投票，没有做轨迹分割。",
                         ADOPTED_REFERENCE, "https://github.com/UrbanBigDataCentre/meowmotion"),
                 new Item("KalebKE/FSensor",
-                        "Madgwick / Mahony 姿态滤波与卡尔曼 GPS 平滑。**未落地**：低头判定只用"
+                        "Madgwick / Mahony 姿态滤波与卡尔曼 GPS 平滑。未落地：低头判定只用"
                                 + "重力 z 轴阈值，没上姿态融合。",
                         ADOPTED_REFERENCE, "https://github.com/KalebKE/FSensor"),
         }));

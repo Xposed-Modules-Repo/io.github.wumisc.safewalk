@@ -40,6 +40,7 @@ public class EmergencyCardActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_emergency);
+        findViewById(R.id.btn_back).setOnClickListener(v -> finish());
         // MODE_WORLD_READABLE 在 Android 7+ 会直接抛 SecurityException，改用私有模式
         sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
 

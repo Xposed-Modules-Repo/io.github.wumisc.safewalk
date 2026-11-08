@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_xuanzhi"
+    android:background="@color/bg"
     android:fitsSystemWindows="true"
     android:fillViewport="true"
     android:scrollbars="none">
@@ -11,26 +11,27 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:gravity="center_horizontal"
         android:paddingLeft="16dp"
         android:paddingRight="16dp"
-        android:paddingTop="20dp"
+        android:paddingTop="40dp"
         android:paddingBottom="28dp">
 
         <TextView
+            android:id="@+id/btn_back"
+            style="@style/BackLink"
+            android:text="‹ 返回" />
+
+        <TextView
             android:id="@+id/tv_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="💝 支持捐赠"
-            android:textColor="@color/text_primary"
-            android:textSize="26sp"
-            android:textStyle="bold" />
+            style="@style/PageTitle"
+            android:layout_marginTop="12dp"
+            android:text="支持捐赠" />
 
         <TextView
             android:id="@+id/tv_subtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:text="如果觉得好用，请作者喝杯奶茶"
             android:textColor="@color/text_hint"
             android:textSize="13sp" />
@@ -39,6 +40,7 @@
         <ImageView
             android:id="@+id/iv_qr_alipay"
             android:layout_width="248dp"
+            android:layout_gravity="center_horizontal"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
             android:adjustViewBounds="true"
@@ -49,6 +51,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:layout_gravity="center_horizontal"
             android:text="支付宝 · 扫一扫"
             android:textColor="@color/text_hint"
             android:textSize="13sp" />
@@ -57,6 +60,7 @@
         <ImageView
             android:id="@+id/iv_qr_wechat"
             android:layout_width="248dp"
+            android:layout_gravity="center_horizontal"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:adjustViewBounds="true"
@@ -67,6 +71,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:layout_gravity="center_horizontal"
             android:text="微信支付 · 扫一扫"
             android:textColor="@color/text_hint"
             android:textSize="13sp" />

@@ -1,6 +1,6 @@
 # SafeWalk 逻辑设计文档
 
-> **版本**：2.10.2（versionCode 29）
+> **版本**：3.0（versionCode 30）
 > **重写日期**：2026-11-08
 > **对齐源码**：`app/src/main/java/io/github/wumisc/safewalk/`（本仓库当前状态）
 > **原则**：以代码为准。本文每条结论都能在标注的文件:行号处核对，若文档与代码冲突，改文档。
@@ -754,7 +754,7 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 
 ## 14. 与 v2.1 文档的差异（旧文档不要再引用）
 
-| v2.1 说 | 现状（2.10.2） |
+| v2.1 说 | 现状（3.0） |
 |---|---|
 | 唯一通道是 `Download/safewalk.conf` | 没有这个文件。通道是 `ConfigProvider` + 广播 + `files/safewalk_config.json` |
 | 全部功能跑在 SystemUI 单进程，App 只改配置 | **两进程**：相机/悬浮窗在 App 的 `WalkPreviewService`（camera FGS） |
@@ -822,6 +822,60 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 | 车祸预警额外权限 | `CALL_PHONE` / `SEND_SMS` / `ACCESS_FINE_LOCATION` / `USE_FULL_SCREEN_INTENT`（按需申请） |
 | Android 版本 | `minSdk 33` / `targetSdk 35` / `compileSdk 37` |
 | 构建 | AGP9 + Java 21 bytecode，Kotlin 2.4.21 compose 插件；`compileOnly de.robv.android.xposed:api:82` |
-| 单元测试 | `app/src/test/` 9 个类（步态、崩溃、日志、通知落点、预览窗口、稳定性、主流程、子页） |
+| 单元测试 | `app/src/test/` 10 个类 / 62 个用例（步态、崩溃、日志、通知落点、预览窗口、稳定性、主流程、子页、界面截图） |
 
-> 本文档不覆盖 UI 层的交互细节（设置页布局、液态玻璃导航等）。那些以 `MainActivity` / `WalkModeActivity` / `LabActivity` 为准，改动频率高，写进文档只会再次过时。
+---
+
+## 18. 界面与主题契约
+
+UI 层不做逐像素文档，但「颜色从哪来」必须写死，否则下次又会散成三套（3.0 之前就是）。
+
+**唯一色板**：`res/values/colors.xml` 定义语义名，`values-night/colors.xml` 只换值、不换名。
+
+| token | 浅色 | 深色 | 用途 |
+|---|---|---|---|
+| `bg` | `#F2F2F7` | `#000000` | 页面底色 |
+| `card_bg` | `#FFFFFF` | `#1C1C1E` | 卡片 |
+| `text_primary` | `#1D1D1D` | `#FFFFFF` | 标题 / 行标题 |
+| `text_body` | `#3A3A3C` | `#EBEBF5` | 正文 |
+| `text_hint` | `#8E8E93` | `#8E8E93` | 说明文字 |
+| `text_muted` | `#B0B0B5` | `#636366` | 弱化信息 |
+| `chevron` | `#C7C7CC` | `#48484A` | 行尾箭头 |
+| `divider` | `#E5E5EA` | `#2C2C2E` | 分隔线 |
+| `primary` | `#007AFF` | `#0A84FF` | 主色（按钮 / 开关 / 选中 / 链接） |
+| `on_accent` | `#FFFFFF` | `#FFFFFF` | 主色上的文字 |
+| `seal_red` | `#C8392E` | `#FF453A` | 危险 / 删除 |
+| `accent_warn` | `#FF9500` | `#FF9F0A` | 警告 |
+| `accent_green` | `#34C759` | `#30D158` | 正常 / 已开启 |
+
+**五条硬规则**
+
+1. 布局、drawable、代码里**一律不许写 `#RRGGBB`**；唯一例外是 `activity_emergency_alert`
+   （整屏红色告警页，要求任何主题下都刺眼，刻意不随系统变）。
+2. 代码取色用 `getColor(R.color.x)`，且必须在 `onCreate` 里取 —— 写成 `static final`
+   常量会在配置变更后仍用旧值。
+3. 版式只用 `res/values/styles.xml` 里的公共样式：`PageScroll` / `PageTitle` /
+   `PageSubtitle` / `BackLink` / `RowStyle` / `RowTitle` / `RowDesc` / `RowChevron` /
+   `RowDivider` / `CardStyle` / `SectionLabel` / `PrimaryButton` / `SecondaryButton` / `BodyText`。
+4. 主题是 `Theme.MaterialComponents.DayNight`，并且 `forceDarkAllowed=false`：
+   界面已手工适配，禁止系统「强制深色」再反相一次。
+5. 新增页面照抄 `activity_tips.xml` 的骨架：`ScrollView(style=PageScroll)` →
+   `LinearLayout` → 返回 + 标题 + 副标题 + 若干 `CardStyle` 卡片。
+
+**历史坑（别再踩）**
+
+| 现象 | 真实原因 |
+|---|---|
+| 切深色后首页纹丝不动 | 布局里硬编码 `#F2F2F7` / `#FFFFFF`，根本没读资源 |
+| 踩坑指南深色下整页全黑 | 背景与卡片都取了 `#1C1C1E`，同色 |
+| 底部导航在深色下看不见图标 | Compose 里 `Color.Black` 写死；玻璃底本身是深色的 |
+| 实验区按钮整排消失 | `btn()` 用了「宽 0dp + weight」的横向参数，挂到纵向容器里宽度变 0 |
+
+> 液态玻璃导航（`com/kyant/backdrop/catalog/`）是第三方组件的本地副本，只做了
+> 「深色取白色图标」的适配，其余特效逻辑不要改 —— 上游更新时整目录替换更省事。
+
+---
+
+> 本文档不覆盖 UI 层的逐屏交互细节（哪个开关联动哪一项），那些以
+> `MainActivity` / `WalkModeActivity` / `LabActivity` 为准，改动频率高，写进文档只会再次过时；
+> 但配色与版式的约定在 §18，那是跨文件契约，必须遵守。

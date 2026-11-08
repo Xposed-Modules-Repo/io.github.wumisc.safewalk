@@ -13,13 +13,37 @@
         <item name="android:colorBackgroundCacheHint">@null</item>
     </style>
 
-    <style name="Theme.Safewalk" parent="Theme.MaterialComponents.Light.NoActionBar">
+    <!--
+        主主题。
+
+        关键改动：parent 从 Light 换成 DayNight。
+        用 Light 时，系统切深色后 Activity 仍按浅色主题渲染 —— SwitchCompat 的轨道、
+        SeekBar 的滑轨、默认文字色全部是浅色版，而页面背景已经变黑，于是控件看不清。
+        DayNight 会跟着系统走，控件层自带深色版本，我们只需要提供颜色 token。
+    -->
+    <style name="Theme.Safewalk" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <!-- 必须走 @bool：values-night 里已经定义了 false，
              原来硬编码 true 会让深色模式下的状态栏保持深色图标，
-             背景一变成 #0A0A0A，时间/电量就整片看不见了 -->
+             背景一变成 #000000，时间/电量就整片看不见了 -->
         <item name="android:windowLightStatusBar">@bool/light_statusbar</item>
         <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightNavigationBar">@bool/light_statusbar</item>
+
+        <!-- 系统「强制深色」会把已经手工适配过的界面再反相一次（深色下反而变浅），
+             我们自己提供了 values-night，必须关掉它 -->
+        <item name="android:forceDarkAllowed">false</item>
+
+        <!-- 控件强调色：开关、滑块、单选都吃这几个 -->
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorAccent">@color/primary</item>
+        <item name="colorControlActivated">@color/primary</item>
+        <item name="colorControlNormal">@color/text_hint</item>
+
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_hint</item>
+        <item name="android:textColorHint">@color/text_hint</item>
     </style>
 </resources>

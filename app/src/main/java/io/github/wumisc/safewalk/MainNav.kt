@@ -1,5 +1,6 @@
 package io.github.wumisc.safewalk
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -77,6 +78,16 @@ object MainNav {
             // 折射源 backdrop：交给导航栏内部使用（自身 tabsBackdrop 折射）
             val backdrop = rememberLayerBackdrop()
 
+            // 图标与文字颜色必须跟着主题走。
+            // 这里原来写死 Color.Black：玻璃底在深色下是半透明的深色（库内部已经按
+            // isSystemInDarkTheme 切了 containerColor），黑字压在深色玻璃上等于隐形 ——
+            // 用户反馈的「导航栏不跟随深色模式」就是这个。
+            val fg = if (isSystemInDarkTheme()) {
+                Color.White.copy(alpha = 0.92f)
+            } else {
+                Color.Black.copy(alpha = 0.85f)
+            }
+
             LiquidBottomTabs(
                 selectedTabIndex = { selected },
                 onTabSelected = { index ->
@@ -93,7 +104,7 @@ object MainNav {
                         Icon(
                             imageVector = icon,
                             contentDescription = label,
-                            tint = Color.Black.copy(alpha = 0.85f),
+                            tint = fg,
                             modifier = Modifier
                                 .size(24.dp)
                                 .align(Alignment.CenterHorizontally)
@@ -101,7 +112,7 @@ object MainNav {
                         Text(
                             text = label,
                             style = TextStyle(
-                                color = Color.Black.copy(alpha = 0.85f),
+                                color = fg,
                                 fontSize = 12.sp,
                             )
                         )

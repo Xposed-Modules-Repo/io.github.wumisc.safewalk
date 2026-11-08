@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 快捷操作胶囊（全部开启/全部关闭/预览按钮） -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#EDE6D6" />
-    <corners android:radius="18dp" />
-</shape>

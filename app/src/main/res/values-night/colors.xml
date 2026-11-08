@@ -1,26 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    唯一色板（深色）。
+
+    以前这里是另一套命名（bg_center / accent_walk / button_bg …），只有部分页面引用，
+    导致深色下页面之间对不上。现在与 values/colors.xml 一一对应，只是换值：
+    灰底 → 纯黑，白卡 → #1C1C1E，近黑字 → 白字，分隔线由浅灰转深灰。
+-->
 <resources>
-    <!-- Miuix 深色模式配色：系统深色时自动覆盖 -->
-    <color name="primary">#0A84FF</color>
-    <color name="bg">#0A0A0A</color>
-    <color name="bg_center">#141414</color>
-    <color name="bg_end">#1C1C1E</color>
+
+    <color name="bg">#000000</color>
     <color name="card_bg">#1C1C1E</color>
-    <color name="card_stroke">#2C2C2E</color>
-    <color name="divider">#2C2C2E</color>
+
     <color name="text_primary">#FFFFFF</color>
     <color name="text_body">#EBEBF5</color>
     <color name="text_hint">#8E8E93</color>
-    <color name="text_secondary">#8E8E93</color>
     <color name="text_muted">#636366</color>
-    <color name="accent_walk">#30D158</color>
-    <color name="accent_camera">#0A84FF</color>
-    <color name="button_bg">#2C2C2E</color>
+
+    <color name="chevron">#48484A</color>
+    <color name="divider">#2C2C2E</color>
+    <color name="stroke">#2C2C2E</color>
+
+    <color name="primary">#0A84FF</color>
+    <color name="on_accent">#FFFFFF</color>
+
+    <color name="accent_warn">#FF9F0A</color>
+    <color name="beyond_orange">#FF9F0A</color>
+    <color name="accent_green">#30D158</color>
+    <color name="seal_red">#FF453A</color>
+
+    <color name="chip_solid">#0A84FF</color>
+    <color name="chip_stroke">#3A3A3C</color>
+
     <color name="nav_bg">#1C1C1E</color>
-    <!-- 浅色主题里定义的强调色在深色背景上对比度不够，这里补一套更亮的。
-         之前没覆盖，夜间「关于」页的朱红小字几乎看不见。 -->
-    <color name="seal_red">#FF6B5E</color>
-    <color name="beyond_orange">#FFB340</color>
     <color name="bg_overlay">#70000000</color>
-    <color name="ic_launcher_background">#0A0A0A</color>
+
+    <color name="ic_launcher_background">#0A2542</color>
+
 </resources>

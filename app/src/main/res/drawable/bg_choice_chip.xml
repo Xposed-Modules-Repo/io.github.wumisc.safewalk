@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 选项胶囊：未选中 -->
+<!-- 选项胶囊：未选中（描边随主题变） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#00FFFFFF" />
+    <solid android:color="@android:color/transparent" />
     <stroke
         android:width="1dp"
-        android:color="#C4B896" />
+        android:color="@color/chip_stroke" />
     <corners android:radius="18dp" />
 </shape>

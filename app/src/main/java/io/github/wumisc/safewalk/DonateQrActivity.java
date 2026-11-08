@@ -21,8 +21,9 @@ public class DonateQrActivity extends Activity {
         super.onCreate(b);
         setContentView(R.layout.activity_donate_qr);
 
-        ((TextView) findViewById(R.id.tv_title)).setText("💝 支持捐赠");
+        ((TextView) findViewById(R.id.tv_title)).setText("支持捐赠");
         ((TextView) findViewById(R.id.tv_subtitle)).setText("如果觉得好用，请作者喝杯奶茶");
+        findViewById(R.id.btn_back).setOnClickListener(v -> finish());
 
         bind(R.id.iv_qr_alipay, R.drawable.ic_donate_alipay, "SafeWalk_donate_alipay");
         bind(R.id.iv_qr_wechat, R.drawable.ic_donate_wechat, "SafeWalk_donate_wechat");

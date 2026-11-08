@@ -12,7 +12,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F2F2F7"
+    android:background="@color/bg"
     android:fitsSystemWindows="true">
 
     <FrameLayout
@@ -39,7 +39,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="安全出行"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="24sp"
                     android:textStyle="bold" />
 
@@ -49,7 +49,7 @@
                     android:layout_marginTop="8dp"
                     android:text="海阔天空，勇敢去走。步行状态由模块自行判定，不依赖 GMS。"
                     android:lineSpacingExtra="4dp"
-                    android:textColor="#8E8E93"
+                    android:textColor="@color/text_hint"
                     android:textSize="13sp" />
 
                 <!-- 四个入口 = 一张白卡片的四行，与急救卡的字段卡同一套语言 -->
@@ -57,7 +57,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="#FFFFFF"
+                    android:background="@color/card_bg"
                     android:orientation="vertical">
 
                     <LinearLayout
@@ -82,7 +82,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="总开关"
-                                android:textColor="#1D1D1D"
+                                android:textColor="@color/text_primary"
                                 android:textSize="16sp" />
 
                             <TextView
@@ -91,7 +91,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:text="已关闭"
-                                android:textColor="#8E8E93"
+                                android:textColor="@color/text_hint"
                                 android:textSize="12sp" />
                         </LinearLayout>
 
@@ -99,7 +99,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="›"
-                            android:textColor="#C7C7CC"
+                            android:textColor="@color/chevron"
                             android:textSize="20sp" />
                     </LinearLayout>
 
@@ -107,7 +107,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="1px"
                         android:layout_marginLeft="16dp"
-                        android:background="#F2F2F7" />
+                        android:background="@color/bg" />
 
                     <LinearLayout
                         android:id="@+id/tile_smart"
@@ -131,7 +131,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="智能提醒"
-                                android:textColor="#1D1D1D"
+                                android:textColor="@color/text_primary"
                                 android:textSize="16sp" />
 
                             <TextView
@@ -140,7 +140,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:text="5 项全部开启"
-                                android:textColor="#8E8E93"
+                                android:textColor="@color/text_hint"
                                 android:textSize="12sp" />
                         </LinearLayout>
 
@@ -148,7 +148,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="›"
-                            android:textColor="#C7C7CC"
+                            android:textColor="@color/chevron"
                             android:textSize="20sp" />
                     </LinearLayout>
 
@@ -156,7 +156,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="1px"
                         android:layout_marginLeft="16dp"
-                        android:background="#F2F2F7" />
+                        android:background="@color/bg" />
 
                     <LinearLayout
                         android:id="@+id/tile_walk"
@@ -180,7 +180,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="行走模式"
-                                android:textColor="#1D1D1D"
+                                android:textColor="@color/text_primary"
                                 android:textSize="16sp" />
 
                             <TextView
@@ -189,7 +189,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:text="行走模式已关闭"
-                                android:textColor="#8E8E93"
+                                android:textColor="@color/text_hint"
                                 android:textSize="12sp" />
                         </LinearLayout>
 
@@ -197,7 +197,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="›"
-                            android:textColor="#C7C7CC"
+                            android:textColor="@color/chevron"
                             android:textSize="20sp" />
                     </LinearLayout>
 
@@ -205,7 +205,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="1px"
                         android:layout_marginLeft="16dp"
-                        android:background="#F2F2F7" />
+                        android:background="@color/bg" />
 
                     <LinearLayout
                         android:id="@+id/tile_emergency"
@@ -229,7 +229,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="急救卡"
-                                android:textColor="#1D1D1D"
+                                android:textColor="@color/text_primary"
                                 android:textSize="16sp" />
 
                             <TextView
@@ -238,7 +238,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:text="点击编辑"
-                                android:textColor="#8E8E93"
+                                android:textColor="@color/text_hint"
                                 android:textSize="12sp" />
                         </LinearLayout>
 
@@ -246,7 +246,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="›"
-                            android:textColor="#C7C7CC"
+                            android:textColor="@color/chevron"
                             android:textSize="20sp" />
                     </LinearLayout>
 
@@ -260,7 +260,7 @@
             android:id="@+id/page_about"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#F2F2F7"
+            android:background="@color/bg"
             android:fillViewport="true"
             android:padding="16dp"
             android:paddingTop="40dp"
@@ -277,7 +277,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="关于"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="24sp"
                     android:textStyle="bold" />
 
@@ -287,7 +287,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="安全出行 · LSPosed 模块"
-                    android:textColor="#8E8E93"
+                    android:textColor="@color/text_hint"
                     android:textSize="13sp" />
 
                 <TextView
@@ -296,7 +296,7 @@
                     android:layout_marginTop="4dp"
                     android:lineSpacingExtra="4dp"
                     android:text="多少次 迎着冷眼与嘲笑，从没有放弃过心中的理想"
-                    android:textColor="#8E8E93"
+                    android:textColor="@color/text_hint"
                     android:textSize="13sp"
                     android:textStyle="italic" />
 
@@ -305,7 +305,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="#FFFFFF"
+                    android:background="@color/card_bg"
                     android:orientation="vertical">
 
                     <LinearLayout
@@ -393,7 +393,7 @@
                     android:id="@+id/btn_toggle_log"
                     style="@style/RowStyle"
                     android:layout_marginTop="16dp"
-                    android:background="#FFFFFF">
+                    android:background="@color/card_bg">
 
                     <TextView
                         android:id="@+id/tv_toggle_log"
@@ -410,13 +410,13 @@
                     android:id="@+id/btn_lab"
                     style="@style/RowStyle"
                     android:layout_marginTop="16dp"
-                    android:background="#FFFFFF">
+                    android:background="@color/card_bg">
 
                     <TextView
                         style="@style/RowTitle"
                         android:layout_weight="1"
                         android:text="功能实验区"
-                        android:textColor="#FF9500" />
+                        android:textColor="@color/accent_warn" />
 
                     <TextView
                         style="@style/RowHint"
@@ -450,7 +450,7 @@
             android:layout_marginLeft="12dp"
             android:clickable="true"
             android:focusable="true"
-            app:cardBackgroundColor="#007AFF"
+            app:cardBackgroundColor="@color/primary"
             app:cardCornerRadius="28dp"
             app:cardElevation="0dp">
 
@@ -459,7 +459,7 @@
                 android:layout_height="24dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_menu_save"
-                app:tint="#FFFFFF" />
+                app:tint="@color/on_accent" />
         </com.google.android.material.card.MaterialCardView>
 
     </LinearLayout>

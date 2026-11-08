@@ -2,12 +2,57 @@
 <resources>
 
     <!--
-        「医疗急救卡」版式的公共样式。
+        全局版式（首页 / 关于 / 急救卡 / 智能提醒 / 行走模式 / 踩坑指南 / 致敬名单 / 实验区共用）。
 
-        为什么抽成 style：首页、关于、致敬名单、实验区原来各写各的 padding、
-        字号和颜色，改一次全局要改四五处，还容易漏。现在统一在这里定义，
-        所有二级页面共用同一套行式布局（灰底页 + 白卡片 + 1px 分隔线）。
+        为什么抽成 style：这些页面原来各写各的 padding、字号和颜色，改一次全局要改七八处，
+        还容易漏（漏掉的那页在深色下就露馅）。现在颜色一律走 @color token，
+        values-night 一改，所有页面同时生效。
     -->
+
+    <!-- 页面内边距：16dp 边 + 40dp 顶（避开状态栏），底部留白给悬浮导航 -->
+    <style name="PageScroll">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:background">@color/bg</item>
+        <item name="android:fillViewport">true</item>
+        <item name="android:paddingLeft">16dp</item>
+        <item name="android:paddingRight">16dp</item>
+        <item name="android:paddingTop">40dp</item>
+        <item name="android:paddingBottom">110dp</item>
+        <item name="android:fitsSystemWindows">true</item>
+        <item name="android:scrollbars">none</item>
+    </style>
+
+    <!-- 页面标题：24sp 粗体 -->
+    <style name="PageTitle">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">24sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- 页面副标题：13sp 灰 -->
+    <style name="PageSubtitle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:lineSpacingExtra">4dp</item>
+        <item name="android:textColor">@color/text_hint</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <!-- 返回按钮（二级页左上角） -->
+    <style name="BackLink">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:paddingTop">4dp</item>
+        <item name="android:paddingBottom">4dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:textColor">@color/primary</item>
+        <item name="android:textSize">15sp</item>
+    </style>
 
     <!-- 一行：可点击、左右留白 16dp、上下 14dp、按下有水波纹 -->
     <style name="RowStyle">
@@ -24,19 +69,35 @@
         <item name="android:focusable">true</item>
     </style>
 
-    <!-- 行标题：16sp 近黑，和急救卡字段标签同一级 -->
+    <!-- 不可点击的行（纯展示/放开关） -->
+    <style name="RowStatic" parent="RowStyle">
+        <item name="android:clickable">false</item>
+        <item name="android:focusable">false</item>
+        <item name="android:background">@null</item>
+    </style>
+
+    <!-- 行标题：16sp，主文字色 -->
     <style name="RowTitle">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:textColor">#1D1D1D</item>
+        <item name="android:textColor">@color/text_primary</item>
         <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- 行内说明（标题下方的小字） -->
+    <style name="RowDesc">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:textColor">@color/text_hint</item>
+        <item name="android:textSize">12sp</item>
     </style>
 
     <!-- 行副标题 / 右侧说明文字 -->
     <style name="RowHint">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:textColor">#8E8E93</item>
+        <item name="android:textColor">@color/text_hint</item>
         <item name="android:textSize">13sp</item>
     </style>
 
@@ -45,24 +106,25 @@
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:text">›</item>
-        <item name="android:textColor">#C7C7CC</item>
+        <item name="android:textColor">@color/chevron</item>
         <item name="android:textSize">20sp</item>
     </style>
 
-    <!-- 行间分隔线：左起 16dp 缩进，和 iOS / 急救卡一致 -->
+    <!-- 行间分隔线：左起 16dp 缩进 -->
     <style name="RowDivider">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">1px</item>
         <item name="android:layout_marginLeft">16dp</item>
-        <item name="android:background">#F2F2F7</item>
+        <item name="android:background">@color/divider</item>
     </style>
 
-    <!-- 白卡片容器：垂直排列、无圆角（与急救卡一致） -->
+    <!-- 白色卡片容器：垂直排列、平角（与急救卡一致） -->
     <style name="CardStyle">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">16dp</item>
         <item name="android:orientation">vertical</item>
-        <item name="android:background">#FFFFFF</item>
+        <item name="android:background">@color/card_bg</item>
     </style>
 
     <!-- 区块小标题 -->
@@ -71,8 +133,51 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">20dp</item>
         <item name="android:layout_marginBottom">8dp</item>
-        <item name="android:textColor">#8E8E93</item>
+        <item name="android:textColor">@color/text_hint</item>
         <item name="android:textSize">13sp</item>
+    </style>
+
+    <!-- 主按钮（蓝底白字）。
+         注意：Material 主题下 <Button> 会被替换成 MaterialButton，它自带背景，
+         android:background 不生效，必须用 backgroundTint。 -->
+    <style name="PrimaryButton">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:backgroundTint">@color/primary</item>
+        <item name="android:textColor">@color/on_accent</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <!-- 次按钮（卡底 + 蓝字） -->
+    <style name="SecondaryButton">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:backgroundTint">@color/card_bg</item>
+        <item name="android:textColor">@color/primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <!-- 表格里的开关行（右侧放 SwitchCompat） -->
+    <style name="SwitchRow" parent="RowStatic">
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+    </style>
+
+    <!-- 卡片内的正文（长文本、清单） -->
+    <style name="BodyText">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:lineSpacingExtra">6dp</item>
+        <item name="android:textColor">@color/text_body</item>
+        <item name="android:textSize">14sp</item>
     </style>
 
 </resources>

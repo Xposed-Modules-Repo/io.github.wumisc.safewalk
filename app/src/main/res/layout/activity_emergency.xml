@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F2F2F7"
+    android:background="@color/bg"
     android:fitsSystemWindows="true"
     android:padding="16dp"
     android:paddingTop="40dp">
@@ -13,12 +13,14 @@
         android:paddingBottom="40dp">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="医疗急救卡"
-            android:textColor="#1D1D1D"
-            android:textSize="24sp"
-            android:textStyle="bold"/>
+            android:id="@+id/btn_back"
+            style="@style/BackLink"
+            android:text="‹ 返回" />
+
+        <TextView
+            style="@style/PageTitle"
+            android:layout_marginTop="12dp"
+            android:text="医疗急救卡" />
 
         <TextView
             android:layout_width="match_parent"
@@ -26,7 +28,7 @@
             android:layout_marginTop="8dp"
             android:lineSpacingExtra="4dp"
             android:text="手机损坏、迷路、身体不适或无网络环境下，救援人员可直接查看此卡片了解你的信息。全部数据本地保存，不上传网络。"
-            android:textColor="#8E8E93"
+            android:textColor="@color/text_hint"
             android:textSize="13sp"/>
 
         <!-- 表单卡片 -->
@@ -34,7 +36,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:background="#FFFFFF"
+            android:background="@color/card_bg"
             android:orientation="vertical"
             android:padding="16dp">
 
@@ -45,7 +47,7 @@
                 android:hint="姓名"
                 android:inputType="textPersonName"
                 android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
             <EditText
                 android:id="@+id/et_blood"
                 android:layout_width="match_parent"
@@ -53,7 +55,7 @@
                 android:hint="血型"
                 android:inputType="textCapCharacters"
                 android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
             <EditText
                 android:id="@+id/et_address"
                 android:layout_width="match_parent"
@@ -61,7 +63,7 @@
                 android:hint="住址"
                 android:inputType="textPostalAddress"
                 android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
             <!-- 注意与代码的对应关系：et_contact 存的是姓名，et_phone 存的是电话。
                  之前这两条 hint 和存储字段是错位的——「身高/体重」框写进的是联系电话，
                  「紧急联系人电话」框写进的是姓名，急救时看到的信息全是串的。 -->
@@ -72,7 +74,7 @@
                 android:hint="紧急联系人姓名"
                 android:inputType="textPersonName"
                 android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="#F2F2F7" android:layout_marginVertical="8dp"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
             <EditText
                 android:id="@+id/et_phone"
                 android:layout_width="match_parent"
@@ -87,16 +89,16 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:backgroundTint="#007AFF"
+            android:backgroundTint="@color/primary"
             android:text="保存急救卡"
-            android:textColor="#FFFFFF"/>
+            android:textColor="@color/on_accent"/>
 
         <!-- 车祸预警（Pixel 风格急救卡） -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:background="#FFFFFF"
+            android:background="@color/card_bg"
             android:orientation="vertical"
             android:padding="16dp">
 
@@ -115,7 +117,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="车祸预警"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold"/>
                     <TextView
@@ -124,7 +126,7 @@
                         android:layout_marginTop="2dp"
                         android:lineSpacingExtra="2dp"
                         android:text="持续监测撞击，检测到后弹出急救卡，60秒未响应自动联系紧急联系人"
-                        android:textColor="#8E8E93"
+                        android:textColor="@color/text_hint"
                         android:textSize="12sp"/>
                 </LinearLayout>
 
@@ -139,7 +141,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:text="撞击灵敏度"
-                android:textColor="#1D1D1D"
+                android:textColor="@color/text_primary"
                 android:textSize="14sp"/>
 
             <LinearLayout
@@ -181,7 +183,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:lineSpacingExtra="2dp"
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="12sp"/>
         </LinearLayout>
 
@@ -190,7 +192,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:background="#FFFFFF"
+            android:background="@color/card_bg"
             android:orientation="vertical"
             android:padding="16dp">
 
@@ -198,7 +200,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="系统紧急呼救"
-                android:textColor="#1D1D1D"
+                android:textColor="@color/text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold"/>
 
@@ -208,7 +210,7 @@
                 android:layout_marginTop="6dp"
                 android:lineSpacingExtra="4dp"
                 android:text="连按电源键5次可自动拨打紧急电话并发送求助短信，建议开启。\n\n开启后即使手机锁屏、无SIM卡也能触发。"
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="13sp"/>
 
             <Button
@@ -216,9 +218,9 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:backgroundTint="#FF3B30"
+                android:backgroundTint="@color/seal_red"
                 android:text="前往系统紧急呼救设置"
-                android:textColor="#FFFFFF"/>
+                android:textColor="@color/on_accent"/>
         </LinearLayout>
 
     </LinearLayout>

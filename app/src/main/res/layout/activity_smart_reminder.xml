@@ -11,7 +11,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F2F2F7"
+    android:background="@color/bg"
     android:fitsSystemWindows="true"
     android:padding="16dp"
     android:paddingTop="40dp">
@@ -29,7 +29,7 @@
             android:background="?android:attr/selectableItemBackground"
             android:paddingVertical="4dp"
             android:text="‹ 返回"
-            android:textColor="#007AFF"
+            android:textColor="@color/primary"
             android:textSize="15sp" />
 
         <TextView
@@ -37,7 +37,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:text="智能提醒"
-            android:textColor="#1D1D1D"
+            android:textColor="@color/text_primary"
             android:textSize="24sp"
             android:textStyle="bold" />
 
@@ -48,7 +48,7 @@
             android:layout_marginTop="8dp"
             android:lineSpacingExtra="4dp"
             android:text="5 项提醒 · 已开启 0 项"
-            android:textColor="#8E8E93"
+            android:textColor="@color/text_hint"
             android:textSize="13sp" />
 
         <!-- 全部开 / 全部关：主按钮 + 次按钮 -->
@@ -63,9 +63,9 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:backgroundTint="#007AFF"
+                android:backgroundTint="@color/primary"
                 android:text="全部开启"
-                android:textColor="#FFFFFF" />
+                android:textColor="@color/on_accent" />
 
             <Button
                 android:id="@+id/btn_all_off"
@@ -73,9 +73,9 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
-                android:backgroundTint="#FFFFFF"
+                android:backgroundTint="@color/card_bg"
                 android:text="全部关闭"
-                android:textColor="#007AFF" />
+                android:textColor="@color/primary" />
         </LinearLayout>
 
         <TextView
@@ -205,14 +205,14 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="生效时段"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <TextView
                     android:id="@+id/tv_night_time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:textColor="#8E8E93"
+                    android:textColor="@color/text_hint"
                     android:textSize="14sp" />
 
                 <TextView style="@style/RowChevron" />
@@ -315,7 +315,7 @@
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="10dp"
                 android:text=""
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="12sp" />
 
             <View style="@style/RowDivider" />
@@ -327,7 +327,7 @@
                 android:paddingHorizontal="16dp"
                 android:paddingTop="14dp"
                 android:text="决定社交礼仪提示的内容，四种模式各有 5 条本地模板"
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="12sp" />
 
             <LinearLayout
@@ -347,7 +347,7 @@
                     android:background="@drawable/bg_choice_chip"
                     android:gravity="center"
                     android:text="求职"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
                 <TextView
@@ -359,7 +359,7 @@
                     android:background="@drawable/bg_choice_chip"
                     android:gravity="center"
                     android:text="约会"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
                 <TextView
@@ -371,7 +371,7 @@
                     android:background="@drawable/bg_choice_chip"
                     android:gravity="center"
                     android:text="聚会"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
                 <TextView
@@ -383,7 +383,7 @@
                     android:background="@drawable/bg_choice_chip"
                     android:gravity="center"
                     android:text="旅游"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
 
@@ -407,7 +407,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="手电开着静置 20 分钟后提醒省电"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <SeekBar
@@ -422,7 +422,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="范围 5 ~ 60 分钟"
-                    android:textColor="#8E8E93"
+                    android:textColor="@color/text_hint"
                     android:textSize="12sp" />
             </LinearLayout>
 
@@ -434,7 +434,7 @@
             android:layout_marginTop="18dp"
             android:gravity="center"
             android:text="修改即时生效，无需点击保存"
-            android:textColor="#8E8E93"
+            android:textColor="@color/text_hint"
             android:textSize="12sp" />
 
     </LinearLayout>

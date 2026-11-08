@@ -2,19 +2,29 @@ package io.github.wumisc.safewalk;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.view.View;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
- * 出门踩坑指南页面：2x2 场景磁贴，点进去显示对应内容。
+ * 出门踩坑指南页面：四个场景入口，点一项在下方展开对应清单。
  */
 public class TipsActivity extends Activity {
+
+    private ScrollView scroll;
+    private View cardContent;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_tips);
 
-        // 四个场景磁贴点击事件
+        scroll = findViewById(R.id.tips_scroll);
+        cardContent = findViewById(R.id.card_content);
+
+        findViewById(R.id.btn_back).setOnClickListener(v -> finish());
+
+        // 四个场景入口
         findViewById(R.id.tile_job).setOnClickListener(v -> showContent("求职避坑", JOB_TIPS));
         findViewById(R.id.tile_date).setOnClickListener(v -> showContent("约会避坑", DATE_TIPS));
         findViewById(R.id.tile_party).setOnClickListener(v -> showContent("聚会避坑", PARTY_TIPS));
@@ -26,8 +36,13 @@ public class TipsActivity extends Activity {
         TextView tvContent = findViewById(R.id.tv_content);
         tvTitle.setText(title);
         tvContent.setText(content);
-        tvTitle.setVisibility(android.view.View.VISIBLE);
-        tvContent.setVisibility(android.view.View.VISIBLE);
+        cardContent.setVisibility(View.VISIBLE);
+        // 内容在四行入口下面，不滚过去的话用户点完看不到任何变化
+        cardContent.post(() -> {
+            if (scroll != null) {
+                scroll.smoothScrollTo(0, cardContent.getTop());
+            }
+        });
     }
 
     private static final String JOB_TIPS =

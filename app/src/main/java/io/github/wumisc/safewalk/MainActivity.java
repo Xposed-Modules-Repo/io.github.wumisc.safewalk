@@ -35,14 +35,19 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     // ========== 滑动手势 ==========
     private float downX, downY;
 
-    private static final int COLOR_ON = 0xFF2D7A3E;
-    private static final int COLOR_OFF = 0xFF8B7D6B;
+    // 状态文字配色（开=绿，关=灰）。取值必须在 onCreate 里从资源读，
+    // 原来写死成常量，深色模式下这两个颜色对比度不足。
+    private int COLOR_ON;
+    private int COLOR_OFF;
 
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_main);
+        // 状态色取自资源：深浅色各有一套值
+        COLOR_ON = getColor(R.color.accent_green);
+        COLOR_OFF = getColor(R.color.text_hint);
         // App 进程日志出口：与 SystemUI 进程的 Hook 日志写同一套规则，
         // 优先 /storage/emulated/0/Android/Travel safely/，写不进自动降级
         DiagLog.init(getApplicationContext());

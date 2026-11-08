@@ -17,6 +17,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.method.ScrollingMovementMethod;
+import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -132,29 +133,32 @@ public class LabActivity extends Activity implements SensorEventListener {
 
     private void buildUI() {
         ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(color(R.color.bg));
+        sv.setFillViewport(true);
+        int pad = dp(16);
+        sv.setPadding(pad, dp(40), pad, dp(40));
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(40), dp(16), dp(40));
-        root.setBackgroundColor(0xFFF2F2F7);
-        root.setFitsSystemWindows(true);
-        root.addView(title("功能实验区"));
-        root.addView(subtitle("这里的按钮只写日志、发通知、拉预览，不改动正式配置（唯一例外是「预览」会临时打开行走模式开关，离开页面自动还原）。"));
+        sv.addView(root);
+
+        root.addView(pageTitle("功能实验区"));
+        root.addView(pageSubtitle(
+                "这里的按钮只写日志、发通知、拉预览，不改动正式配置（唯一例外是「预览」会临时打开行走模式开关，离开页面自动还原）。"));
 
         // —— 实时状态卡片 ——
-        LinearLayout card = card();
-        tvStep = row(card, "实验区步数");
-        tvWalkState = row(card, "行走状态");
-        tvXiaomiStep = row(card, "硬件计步器");
-        root.addView(card);
-
-        root.addView(btn("清空实验区步数", v -> {
-            labSteps = 0;
-            labWalking = false;
-            log("步数已清空");
-        }));
+        LinearLayout status = card(root, 16);
+        tvStep = statusRow(status, "实验区步数", true);
+        tvWalkState = statusRow(status, "行走状态", false);
+        tvXiaomiStep = statusRow(status, "硬件计步器", false);
 
         // 按钮表：分组 + 文案 + 动作，加一项只加一行，不再是一长串 addView
-        group(root, "功能测试", new Object[][]{
+        actionGroup(root, "功能测试", new Object[][]{
+                {"清空实验区步数", (Runnable) () -> {
+                    labSteps = 0;
+                    labWalking = false;
+                    log("步数已清空");
+                }},
                 {"通知测试", (Runnable) () -> {
                     testNotify("测试通知", "如果你看到这条，通知正常");
                     log("通知测试");
@@ -181,7 +185,7 @@ public class LabActivity extends Activity implements SensorEventListener {
                 {"关闭手电悬浮通知", (Runnable) this::dismissTorchNotify},
         });
 
-        group(root, "行走模式预览", new Object[][]{
+        actionGroup(root, "行走模式预览", new Object[][]{
                 {"全屏预览", (Runnable) this::openRearCamFull},
                 {"小窗预览", (Runnable) this::openRearCamSmall},
                 {"关闭预览", (Runnable) this::closeRearCam},
@@ -191,7 +195,7 @@ public class LabActivity extends Activity implements SensorEventListener {
                 }},
         });
 
-        group(root, "诊断日志", new Object[][]{
+        actionGroup(root, "诊断", new Object[][]{
                 {"当前日志目录", (Runnable) () -> {
                     String st = DiagLog.status();
                     Toast.makeText(this, st, Toast.LENGTH_LONG).show();
@@ -229,21 +233,20 @@ public class LabActivity extends Activity implements SensorEventListener {
         logBar.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        blp.topMargin = dp(8);
+        blp.topMargin = dp(12);
         logBar.setLayoutParams(blp);
-        logBar.addView(btnRow("复制日志", () -> {
+        logBar.addView(pill("复制日志", color(R.color.primary), color(R.color.on_accent), () -> {
             android.content.ClipboardManager cm =
                     (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             cm.setPrimaryClip(android.content.ClipData.newPlainText("log", logBuf.toString()));
             Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
         }, 1f));
-        logBar.addView(btnRow("清空", () -> {
+        logBar.addView(pill("清空", color(R.color.card_bg), color(R.color.primary), () -> {
             logBuf.setLength(0);
             if (tvLog != null) tvLog.setText("");
-        }, 0f));
+        }, 1f));
         root.addView(logBar);
 
-        sv.addView(root);
         setContentView(sv);
 
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -254,21 +257,28 @@ public class LabActivity extends Activity implements SensorEventListener {
     }
 
     // ========== 视图构件（统一在这里，避免各处散落魔法值）==========
+    //
+    // 全部走 @color token：values-night 换一套值，这个页面自动跟着变深，
+    // 原来这里写的是 0xFF1D1D1D 之类的常量，深色下白底黑字、黑底黑字都出现过。
 
-    private TextView title(String s) {
+    private int color(int id) {
+        return getColor(id);
+    }
+
+    private TextView pageTitle(String s) {
         TextView t = new TextView(this);
         t.setText(s);
         t.setTextSize(24);
-        t.setTextColor(0xFF1D1D1D);
+        t.setTextColor(color(R.color.text_primary));
         t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         return t;
     }
 
-    private TextView subtitle(String s) {
+    private TextView pageSubtitle(String s) {
         TextView t = new TextView(this);
         t.setText(s);
         t.setTextSize(13);
-        t.setTextColor(0xFF8E8E93);
+        t.setTextColor(color(R.color.text_hint));
         t.setLineSpacing(dp(4), 1f);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -281,91 +291,132 @@ public class LabActivity extends Activity implements SensorEventListener {
         TextView t = new TextView(this);
         t.setText(s);
         t.setTextSize(13);
-        t.setTextColor(0xFF8E8E93);
+        t.setTextColor(color(R.color.text_hint));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(24);
+        lp.topMargin = dp(20);
         lp.bottomMargin = dp(8);
         t.setLayoutParams(lp);
         return t;
     }
 
-    /**
-     * 按分组批量挂按钮。
-     *
-     * 原来是一长串 `root.addView(btn("…", v -> …))`，加一项就要复制一整行，
-     * 分组标题也散在各处。现在改成表驱动：分组名 + 每项「文案 / 动作」。
-     */
-    private void group(LinearLayout root, String header, Object[][] items) {
-        root.addView(sectionLabel(header));
-        for (Object[] it : items) {
-            root.addView(btn((String) it[0], (Runnable) it[1]));
-        }
-    }
-
-    private LinearLayout.LayoutParams btnParams(float weight) {
+    /** 白卡片：加进 root 并返回，行由调用方往里塞 */
+    private LinearLayout card(LinearLayout root, int topMarginDp) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackgroundColor(color(R.color.card_bg));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, weight);
-        lp.topMargin = dp(8);
-        if (weight < 1f) lp.leftMargin = dp(8);
-        return lp;
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(topMarginDp);
+        c.setLayoutParams(lp);
+        root.addView(c);
+        return c;
     }
 
-    /** 同一行里的按钮：既要有权重，又不能让整行撑出屏幕 */
-    private Button btnRow(String text, Runnable action, float weight) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextSize(13);
-        b.setBackgroundColor(0xFF007AFF);
-        b.setTextColor(0xFFFFFFFF);
-        b.setOnClickListener(v -> action.run());
-        b.setLayoutParams(btnParams(weight));
-        return b;
+    private View divider(LinearLayout parent) {
+        View v = new View(this);
+        v.setBackgroundColor(color(R.color.divider));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1);
+        lp.leftMargin = dp(16);
+        v.setLayoutParams(lp);
+        parent.addView(v);
+        return v;
     }
 
-    private TextView row(LinearLayout parent, String label) {
+    /** 状态行：左标签 + 右值（只读） */
+    private TextView statusRow(LinearLayout parent, String label, boolean first) {
+        if (!first) divider(parent);
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        r.setPadding(dp(16), dp(13), dp(16), dp(13));
+
         TextView l = new TextView(this);
         l.setText(label);
-        l.setTextSize(14);
-        l.setTextColor(0xFF1D1D1D);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        r.addView(l, lp);
+        l.setTextSize(16);
+        l.setTextColor(color(R.color.text_primary));
+        r.addView(l, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
         TextView v = new TextView(this);
-        v.setTextSize(14);
-        v.setTextColor(0xFF007AFF);
+        v.setTextSize(16);
+        v.setTextColor(color(R.color.text_hint));
         r.addView(v);
-        r.setPadding(0, dp(8), 0, dp(8));
+
         parent.addView(r);
         return v;
     }
 
-    private LinearLayout card() {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackgroundColor(0xFFFFFFFF);
-        c.setPadding(dp(16), dp(8), dp(16), dp(8));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(16);
-        c.setLayoutParams(lp);
-        return c;
+    /** 可点击行：标题 + 行尾箭头，和首页/关于页同一套 */
+    private void actionRow(LinearLayout parent, String text, Runnable action) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        r.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+        android.util.TypedValue tv = new android.util.TypedValue();
+        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true)) {
+            r.setBackgroundResource(tv.resourceId);
+        }
+        r.setClickable(true);
+        r.setFocusable(true);
+        r.setOnClickListener(v -> action.run());
+
+        TextView l = new TextView(this);
+        l.setText(text);
+        l.setTextSize(16);
+        l.setTextColor(color(R.color.text_primary));
+        r.addView(l, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView chevron = new TextView(this);
+        chevron.setText("›");
+        chevron.setTextSize(20);
+        chevron.setTextColor(color(R.color.chevron));
+        r.addView(chevron);
+
+        parent.addView(r);
     }
 
-    // ========== 自检：对照当前版本的初始化链 ==========
-
     /**
-     * 注入链路自检。
+     * 按分组批量挂按钮。
      *
-     * 现在的 Hook 有**四层入口**（SystemUIApplication.onCreate / Instrumentation.
-     * callApplicationOnCreate / SystemUIService.onCreate / 守护线程反射轮询）、
-     * **四级前台检测**，还有「开机自启透明页」这一环。这些在旧版实验区里完全没有
-     * 对应项——用户只能自己翻 diag.log 找关键字。这里把关键标记逐条核对一遍，
-     * 直接告诉用户卡在哪一环。
+     * 原来是一长串 `root.addView(btn("…", v -> …))`，加一项就要复制一整行；
+     * 而且 btn() 用的是「宽 0 + weight 1」的参数 —— 那是横向排布的写法，
+     * 挂在纵向 LinearLayout 里宽度直接变 0，整排按钮全部不可见（实测就是一片空白）。
+     * 现在改成行式列表，和首页视觉一致，也不会再踩宽度的坑。
      */
+    private void actionGroup(LinearLayout root, String header, Object[][] items) {
+        root.addView(sectionLabel(header));
+        LinearLayout c = card(root, 0);
+        for (int i = 0; i < items.length; i++) {
+            if (i > 0) divider(c);
+            actionRow(c, (String) items[i][0], (Runnable) items[i][1]);
+        }
+    }
+
+    /** 并排小按钮（日志区的「复制 / 清空」），圆角实底 */
+    private Button pill(String text, int bg, int fg, Runnable action, float weight) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTextColor(fg);
+        android.graphics.drawable.GradientDrawable g =
+                new android.graphics.drawable.GradientDrawable();
+        g.setColor(bg);
+        g.setCornerRadius(dp(12));
+        b.setBackground(g);
+        b.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, weight);
+        lp.topMargin = dp(8);
+        lp.rightMargin = dp(8);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
     private void diagnoseHookChain() {
         log("—— 注入链路自检 ——");
         log("预览服务存活=" + WalkPreviewService.isAlive()
@@ -412,22 +463,6 @@ public class LabActivity extends Activity implements SensorEventListener {
         }
         Toast.makeText(this, "服务=" + (alive ? "存活" : "未启动") + "，画面=" + (showing ? "显示中" : "已收起"),
                 Toast.LENGTH_SHORT).show();
-    }
-
-    private Button btn(String text, Runnable l) {
-        return btn(text, v -> l.run());
-    }
-
-    private Button btn(String text, android.view.View.OnClickListener l) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextSize(14);
-        b.setBackgroundColor(0xFF007AFF);
-        b.setTextColor(0xFFFFFFFF);
-        b.setOnClickListener(l);
-        b.setLayoutParams(btnParams(1f));
-        return b;
     }
 
     private int dp(float v) {

@@ -8,7 +8,7 @@
 - 运行环境：**HyperOS / Android 12+**（minSdk 33，targetSdk 35）
 - 作用域：**只需勾选「系统界面（SystemUI）」**，不需要系统框架
 - 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**2.10.2**
+- 当前版本：**3.0**
 
 ---
 

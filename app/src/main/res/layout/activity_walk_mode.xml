@@ -9,7 +9,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F2F2F7"
+    android:background="@color/bg"
     android:fitsSystemWindows="true"
     android:padding="16dp"
     android:paddingTop="40dp">
@@ -27,7 +27,7 @@
             android:background="?android:attr/selectableItemBackground"
             android:paddingVertical="4dp"
             android:text="‹ 返回"
-            android:textColor="#007AFF"
+            android:textColor="@color/primary"
             android:textSize="15sp" />
 
         <TextView
@@ -35,7 +35,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:text="行走模式"
-            android:textColor="#1D1D1D"
+            android:textColor="@color/text_primary"
             android:textSize="24sp"
             android:textStyle="bold" />
 
@@ -46,7 +46,7 @@
             android:layout_marginTop="8dp"
             android:lineSpacingExtra="4dp"
             android:text="用后置摄像头把身后路况叠在屏幕上"
-            android:textColor="#8E8E93"
+            android:textColor="@color/text_hint"
             android:textSize="13sp" />
 
         <!-- 预览开关 -->
@@ -86,7 +86,7 @@
                 android:layout_height="wrap_content"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="10dp"
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="12sp" />
 
             <View style="@style/RowDivider" />
@@ -104,7 +104,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="显示方式"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <LinearLayout
@@ -121,7 +121,7 @@
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:text="全屏滤镜"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
                     <TextView
@@ -133,7 +133,7 @@
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:text="角落小窗"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
@@ -154,7 +154,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="小窗位置"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <LinearLayout
@@ -171,7 +171,7 @@
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:text="左上"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
                     <TextView
@@ -183,7 +183,7 @@
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:text="右上"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
                     <TextView
@@ -195,7 +195,7 @@
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:text="左下"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
                     <TextView
@@ -207,7 +207,7 @@
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:text="右下"
-                        android:textColor="#1D1D1D"
+                        android:textColor="@color/text_primary"
                         android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
@@ -251,7 +251,7 @@
                 android:layout_height="wrap_content"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="10dp"
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="12sp" />
 
         </LinearLayout>
@@ -275,7 +275,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="画面不透明度"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <SeekBar
@@ -289,7 +289,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="范围 10% ~ 100%，越低越能看清底下的界面"
-                    android:textColor="#8E8E93"
+                    android:textColor="@color/text_hint"
                     android:textSize="12sp" />
             </LinearLayout>
 
@@ -314,7 +314,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="连续走多少步算「在走路」"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <SeekBar
@@ -340,7 +340,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="停下后多久收起预览"
-                    android:textColor="#1D1D1D"
+                    android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
                 <SeekBar
@@ -359,7 +359,7 @@
                 android:layout_height="wrap_content"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="12dp"
-                android:textColor="#8E8E93"
+                android:textColor="@color/text_hint"
                 android:textSize="12sp"
                 android:visibility="gone" />
 
@@ -397,10 +397,10 @@
                     android:id="@+id/btn_restart_systemui"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:backgroundTint="#FF3B30"
+                    android:backgroundTint="@color/seal_red"
                     android:minWidth="0dp"
                     android:text="重启"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/on_accent"
                     android:textSize="13sp" />
             </LinearLayout>
 
