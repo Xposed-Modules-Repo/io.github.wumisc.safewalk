@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- LSPosed 作用域：注入系统界面进程（悬浮窗 overlay + 传感器 + 低头检测） -->
+    <string-array name="xposed_scope">
+        <item>com.android.systemui</item>
+    </string-array>
+</resources>

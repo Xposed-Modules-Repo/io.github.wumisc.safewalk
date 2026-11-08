@@ -1,0 +1,93 @@
+plugins {
+    id 'com.android.application'
+    // AGP9 内置 Kotlin 支持，不再挂 org.jetbrains.kotlin.android；
+    // compose 编译器插件单独挂（miuix 液态玻璃导航需要 Compose）。
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.4.21'
+}
+
+android {
+    namespace 'io.github.wumisc.safewalk'
+    // miuix-blur 0.9.4 强制 compileSdk>=37
+    compileSdk 37
+
+    defaultConfig {
+        applicationId "io.github.wumisc.safewalk"
+        // miuix-blur 的 AGSL RuntimeShader 要 Android 13+，minSdk 提到 33
+        minSdk 33
+        targetSdk 35
+        versionCode 29
+        versionName "2.10.2"
+    }
+
+    compileOptions {
+        // Miuix 是 Java21 bytecode（class 65），JDK17 直接报错
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    buildFeatures {
+        buildConfig true
+        compose true
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
+    // 只做 main 源集的静态检查：
+    // 我们没有 androidTest 源集，但 AGP 仍会为其生成 lint 模型并解析一整套
+    // 测试依赖，在离线环境下会不断要求下载不存在的旧版本。
+    lint {
+        checkTestSources false
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+// AGP9 DSL：jvmTarget 用顶层 kotlin{compilerOptions{}}，旧的 kotlinOptions{} 已不存在
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+    }
+}
+
+dependencies {
+    // LSPosed API，仅编译期
+    compileOnly 'de.robv.android.xposed:api:82'
+    implementation 'com.google.android.material:material:1.12.0'
+    // 显式对齐协程版本：material/lifecycle 的传递依赖会要 1.7.1，
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'androidx.annotation:annotation:1.8.0'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.arch.core:core-runtime:2.2.0'
+
+    // Miuix 液态玻璃组件（compileSdk 已升至 37，满足 0.9.4 要求）
+
+    // Kyant0 AndroidLiquidGlass 底层库（成品 LiquidBottomTabs 的依赖）
+    implementation "io.github.kyant0:backdrop-android:2.0.1"
+    implementation "io.github.kyant0:shapes:1.2.1"
+    implementation 'top.yukonga.miuix.kmp:miuix-blur:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-squircle:0.9.4'
+
+    // Compose（液态玻璃导航栏用）
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation platform('androidx.compose:compose-bom:2024.12.01')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.animation:animation'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.runtime:runtime'
+
+    // 单元/界面冒烟测试（仅本地 JVM）
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.17'
+    testImplementation 'androidx.test:core:1.6.1'
+    testImplementation 'androidx.test:rules:1.6.1'
+}

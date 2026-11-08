@@ -1,0 +1,28 @@
+# Android / Gradle
+*.iml
+.gradle/
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# 签名文件（绝不能进仓库）
+*.jks
+*.keystore
+*.p12
+*.pem
+signing.properties
+
+# IDE
+.idea/
+*.hprof
+.DS_Store
+
+# 日志与临时产物
+*.log
+*.zip

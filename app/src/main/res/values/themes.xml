@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        手电按钮用的透明页：只在点击通知时闪现一瞬间，不能有任何界面。
+        用系统 Translucent 主题而不是 Material，避免启动时加载整套组件库拖慢冷启动。
+    -->
+    <style name="Theme.Safewalk.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
+    </style>
+
+    <style name="Theme.Safewalk" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <!-- 必须走 @bool：values-night 里已经定义了 false，
+             原来硬编码 true 会让深色模式下的状态栏保持深色图标，
+             背景一变成 #0A0A0A，时间/电量就整片看不见了 -->
+        <item name="android:windowLightStatusBar">@bool/light_statusbar</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+    </style>
+</resources>

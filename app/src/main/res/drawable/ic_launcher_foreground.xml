@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 国风盾牌 + 道路 -->
+    <path
+        android:fillColor="#2B5EA7"
+        android:pathData="M54,28 L72,36 L72,52 C72,64 64,74 54,78 C44,74 36,64 36,52 L36,36 Z" />
+    <path
+        android:fillColor="#FFFCF7"
+        android:pathData="M54,38 L64,42 L64,52 C64,60 59,67 54,69 C49,67 44,60 44,52 L44,42 Z" />
+    <path
+        android:fillColor="#C8392E"
+        android:pathData="M50,52 L58,52 L56,60 L52,60 Z" />
+</vector>

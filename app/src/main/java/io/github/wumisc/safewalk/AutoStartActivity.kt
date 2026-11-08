@@ -1,0 +1,92 @@
+package io.github.wumisc.safewalk
+
+import android.app.Activity
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.Process
+
+/**
+ * 无界面自启中转页。
+ *
+ * 【为什么需要它】
+ * WalkPreviewService 是 `camera` 类型前台服务。Android 14+ 规定：CAMERA 属于
+ * 「使用期间」权限，应用在后台时不持有该权限，从后台 `startForegroundService`
+ * 一个 camera FGS 会直接抛 SecurityException；Android 15 起 `BOOT_COMPLETED`
+ * 接收器也被明令禁止启动 camera / dataSync 等类型的 FGS，抛
+ * ForegroundServiceStartNotAllowedException。
+ *
+ * 官方给出的稳定豁免只有几种，其中最适合本模块的是：
+ *   「启动 FGS 的那一刻，本应用有一个可见的 Activity」。
+ *
+ * 所以链路由 SystemUI 里的 Hook 发起：
+ *   Hook(SystemUI，系统进程) --startActivity--> 本 Activity(透明)
+ *       --startForegroundService--> WalkPreviewService
+ * 本页存在的那几百毫秒里应用处于可见状态，服务启动合法；随后自己 finish()，
+ * 用户几乎无感。这就是「重启后不用再手动拨行走模式开关」的实现方式。
+ *
+ * 【安全】
+ * 只接受系统进程（SystemUI 的 Hook）拉起；同时校验广播令牌，
+ * 兼容极少数给 SystemUI 分配了独立 uid 的 ROM，挡掉第三方应用静默开相机。
+ */
+class AutoStartActivity : Activity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // 进程冷启动时日志出口还没初始化，先补一下，保证这次自启有记录可查
+        try {
+            DiagLog.init(applicationContext)
+        } catch (_: Throwable) {
+        }
+
+        val fromUid = try {
+            launchedFromUid
+        } catch (_: Throwable) {
+            -1
+        }
+        if (!isTrustedLauncher(fromUid)) {
+            DiagLog.log("[walk] AutoStart 被不可信 uid=$fromUid 拉起，拒绝")
+            finish()
+            return
+        }
+
+        try {
+            WalkPreviewService.start(this)
+            DiagLog.log("[walk] AutoStart：已请求启动预览服务（fromUid=$fromUid）")
+        } catch (t: Throwable) {
+            DiagLog.log("[walk] AutoStart 启动服务失败: ${t.message}")
+        }
+
+        // 稍等再退出：给服务把 startForeground() 提上去留出时间，
+        // 避免「Activity 已销毁 → 进程被认为可回收」与 FGS 提升之间的竞态。
+        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 400L)
+    }
+
+    /**
+     * 可信来源：
+     * ① 系统 uid（android.uid.system = 1000），AOSP 上 SystemUI 即此 uid；
+     * ② 任何系统段 uid（< FIRST_APPLICATION_UID），兼容个别 ROM 的 SystemUI 变体；
+     * ③ 携带正确广播令牌——兼容给 SystemUI 分配了应用段 uid 的 ROM，
+     *    令牌与本模块其它跨进程通道保持一致。
+     */
+    private fun isTrustedLauncher(uid: Int): Boolean {
+        if (uid == Process.SYSTEM_UID) return true
+        if (uid in 1 until Process.FIRST_APPLICATION_UID) return true
+        val token = try {
+            intent?.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
+        } catch (_: Throwable) {
+            null
+        }
+        return token != null && token == SafeWalkPrefKey.BROADCAST_TOKEN
+    }
+
+    @Suppress("DEPRECATION")
+    override fun finish() {
+        super.finish()
+        try {
+            overridePendingTransition(0, 0)
+        } catch (_: Throwable) {
+        }
+    }
+}

@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        诊断日志要写到用户看得见的 /storage/emulated/0/Android/Travel safely/。
+        Android 11 起分区存储（Scoped Storage）下，普通应用**不能**在 Android/
+        下创建自定义目录——mkdirs() 会失败，或者更糟：目录建出来了但写入抛 EACCES。
+        READ/WRITE_EXTERNAL_STORAGE 在 Android 10 以下才有意义，这里限版本；
+        Android 11+ 必须靠 MANAGE_EXTERNAL_STORAGE（所有文件访问权限），
+        由用户在系统设置里手动授予，App 内会给引导。
+    -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <!--
+        行走模式的预览在**本应用进程**里完成：申请 CAMERA 运行时权限后，
+        自己开相机、自己挂悬浮窗。不再依赖系统界面进程的相机权限——
+        那条权限各 ROM 授不授全看厂商，靠不住，实测也确实开不出画面。
+
+        权限只在用户打开行走模式开关的那一刻按需申请，
+        平时打开 App 不会弹相机授权框。
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 悬浮窗预览：App 自己往别的应用上面叠「身后路况」小窗/全屏画面 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!--
+        Android 11 起后台应用被禁止打开相机；Android 12 起后台禁止启动前台服务。
+        所以行走模式开着期间挂一个 camera 类型的前台服务：
+        ① 合法持续使用相机；② 进程常驻，Hook 的「走起来自动开」广播才有接收方。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!--
+        车祸预警（急救卡）：检测到撞击后自动求助。
+        CALL_PHONE 直接拨紧急联系人；SEND_SMS 发含位置的求助短信；
+        ACCESS_FINE_LOCATION 取当前位置放进短信；USE_FULL_SCREEN_INTENT
+        让 App 在后台/锁屏时也能弹出全屏急救卡。
+        这些权限只在急救卡页开启车祸预警时按需申请，平时不弹框。
+    -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- 相机/闪光灯非必需，避免没闪光灯的设备装不上 -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+    <!-- 电话/短信非必需：平板等无通话模块的设备也能装，车祸预警降级为跳转 -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <application
+        android:label="安全出行"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Theme.Safewalk">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="安全出行"
+            android:theme="@style/Theme.Safewalk">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".EmergencyCardActivity"
+            android:exported="true"
+            android:label="急救卡" />
+
+        <!--
+            手电通知按钮的落点。
+            必须 exported：通知由 SystemUI 里的 Hook 发出，点击时由系统拉起本页。
+            透明、不进最近任务、不保留历史，用户只会看到一次 Toast 和亮起的灯。
+        -->
+        <activity
+            android:name=".TorchActionActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Safewalk.Transparent" />
+
+        <!--
+            行走模式「开机自启」中转页。
+            camera 类型前台服务在 Android 14+ 不允许从后台启动（CAMERA 是
+            while-in-use 权限），Android 15 又禁止 BOOT_COMPLETED 启动 camera FGS。
+            唯一稳定的豁免是「启动瞬间本应用有可见 Activity」，因此由 SystemUI 里的
+            Hook 拉起这个透明页，它在 onCreate 里代启 WalkPreviewService 后立即退出。
+            必须 exported：调用方是 SystemUI（不同 uid）。页内校验 launchedFromUid
+            与广播令牌，挡掉第三方应用静默开相机。
+        -->
+        <activity
+            android:name=".AutoStartActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Safewalk.Transparent" />
+
+        <activity
+            android:name=".EmergencyAlertActivity"
+            android:exported="false"
+            android:label="急救卡"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Safewalk" />
+
+        <activity
+            android:name=".SmartReminderActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="智能提醒" />
+
+        <activity
+            android:name=".WalkModeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="行走模式" />
+
+        <activity
+            android:name=".LabActivity"
+            android:exported="false"
+            android:label="功能实验区" />
+
+        <activity
+            android:name=".AcknowledgementsActivity"
+            android:exported="false"
+            android:label="致敬名单" />
+
+        <activity
+            android:name=".DonateQrActivity"
+            android:exported="false"
+            android:label="捐赠二维码" />
+
+        <activity
+            android:name=".TipsActivity"
+            android:exported="false"
+            android:label="出门踩坑指南" />
+
+        <!--
+            手电曾短暂地只走「Hook → SystemUI 进程 setTorchMode」一条路，
+            理由是应用进程调相机要申请权限。但预览本身就在应用进程里开相机，
+            权限早就要过了；而预览正占着摄像头时，系统进程那条路必然
+            CAMERA_IN_USE，表现为「手电点了没反应」。
+            现在主路径回到应用进程（TorchActionReceiver → TorchController），
+            Hook 那条保留作兜底。
+        -->
+
+        <!--
+            行走模式预览服务（App 进程）：持有相机 + 悬浮窗。
+            行走模式开关开着期间常驻（camera 前台服务），收到 Hook 的
+            「走起来/停下来」广播后显示/收起预览，手动预览也直接指挥它。
+        -->
+        <service
+            android:name=".WalkPreviewService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
+
+        <!--
+            撞击广播接收器（App 进程）：车祸检测在 SystemUI 进程，检测到撞击后
+            发广播过来，这里收到后拉起全屏急救卡。必须 exported 才能跨进程接收；
+            令牌校验挡掉伪造广播。
+        -->
+        <receiver
+            android:name=".CrashAlertReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.wumisc.safewalk.CRASH_DETECTED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            手电通知按钮（App 进程）。
+            通知可能由 SystemUI 里的 Hook 发出，按钮必须能跨进程投递到这里，
+            所以 exported=true，靠令牌挡伪造。
+            实际开灯由 TorchController 完成：它先让后视预览释放摄像头再点灯，
+            这是应用内唯一能解决 CAMERA_IN_USE 的地方。
+        -->
+        <receiver
+            android:name=".TorchActionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.wumisc.safewalk.APP_TORCH_ON" />
+                <action android:name="io.github.wumisc.safewalk.APP_TORCH_OFF" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            日志回传：Hook 跑在 SystemUI 进程，它自己的外部目录是
+            Android/data/com.android.systemui/…，用户根本找不到。
+            这里接收 Hook 回传的日志正文，落进本应用的 diag.log。
+            必须 exported（跨进程），靠令牌挡伪造。
+        -->
+        <receiver
+            android:name=".LogBridgeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.wumisc.safewalk.LOG_DUMP" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 配置只读通道：Hook 在 SystemUI 进程，需要跨进程读取功能开关 -->
+        <provider
+            android:name=".ConfigProvider"
+            android:authorities="io.github.wumisc.safewalk.config"
+            android:exported="true"
+            android:enabled="true" />
+
+        <!-- LSPosed 模块声明 -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="SafeWalk 安全出行低功耗提醒。⚠️ 作用域只需勾选「系统界面（SystemUI）」，无需勾选系统框架。硬件计步检测，纯本地运行，低功耗。" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+        <meta-data
+            android:name="xposedscope"
+            android:value="com.android.systemui" />
+    </application>
+
+</manifest>
