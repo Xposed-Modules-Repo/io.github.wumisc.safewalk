@@ -252,6 +252,87 @@
 
                 </LinearLayout>
 
+                <!-- 【HyperOS 版本适配 · 首页入口】用户反馈：适配开关应该放在首页。
+                     与行走模式页共用同一个 hyperOsMode 配置 key，两处修改即时互相同步。
+                     方案 A 自动识别优先、方案 B 手动指定兜底。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@color/card_bg"
+                    android:orientation="vertical"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="14dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="HyperOS 版本适配"
+                        android:textColor="@color/text_primary"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/tv_hyperos_detected"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="正在识别系统版本…"
+                        android:textColor="@color/text_hint"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="默认自动识别；识别不准时可手动指定版本（自动优先，手动兜底）"
+                        android:textColor="@color/text_hint"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/chip_hos_auto"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_choice_chip"
+                            android:gravity="center"
+                            android:text="自动识别"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/chip_hos3"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_choice_chip"
+                            android:gravity="center"
+                            android:text="HyperOS 3"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/chip_hos4"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_choice_chip"
+                            android:gravity="center"
+                            android:text="HyperOS 4"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
             </LinearLayout>
         </ScrollView>
 
@@ -428,7 +509,9 @@
 
     </FrameLayout>
 
-    <!-- 底部悬浮区域：液态玻璃导航栏 + 保存按钮。
+    <!-- 底部悬浮区域：只保留液态玻璃导航栏。
+         【BUG 修复】旁边的手动「保存」按钮已删除：所有配置改动现在由后端
+         即时 commit() + SafeWalkConfig.exportConfig()，不再需要用户手动点保存。
          悬浮叠加在 content_frame 之上，导航栏背后就是页面内容（折射源）。 -->
     <LinearLayout
         android:layout_width="wrap_content"
@@ -442,25 +525,6 @@
             android:id="@+id/compose_nav"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
-
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/btn_save"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:layout_marginLeft="12dp"
-            android:clickable="true"
-            android:focusable="true"
-            app:cardBackgroundColor="@color/primary"
-            app:cardCornerRadius="28dp"
-            app:cardElevation="0dp">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_gravity="center"
-                android:src="@android:drawable/ic_menu_save"
-                app:tint="@color/on_accent" />
-        </com.google.android.material.card.MaterialCardView>
 
     </LinearLayout>
 

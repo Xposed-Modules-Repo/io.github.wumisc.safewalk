@@ -48,6 +48,19 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 这个字段让「手电优先」持续一小段时间，关灯或超时后预览自然恢复。
      */
     private var torchHoldUntil = 0L
+
+    /**
+     * 【BUG 修复】夜间手电「步态联动」通道当前是否点亮了灯。
+     *
+     * 这个状态位很关键：check() 每 2 秒跑一次，如果每次都无脑调
+     * setTorchWithRetry(true) 去点灯，就会反复和相机预览抢摄像头、
+     * 把日志刷爆、把闪光灯点成频闪。只在「目标状态发生翻转」的
+     * 那一刻各执行一次开/关，既省电又稳定。
+     */
+    private var nightTorchGaitOn = false
+    /** 步态联动心跳日志节流时间戳：状态没变时也周期性证明「通道活着」 */
+    private var lastNightTorchGaitLogTs = 0L
+
     /**
      * 配置快照。**只在后台线程整体替换，主线程只读引用**，所以标 volatile 就够安全
      * （没有人原地修改这个 JSONObject，永远是新对象换旧对象）。
@@ -587,6 +600,16 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             step("心跳") { startTick() }
         }
 
+        // 【HyperOS 版本适配模块】SystemUI 侧只打一次环境快照 + 识别结论。
+        // 放在 init 收尾而不是 2s 的 check() 里，避免高频刷屏；Hook 与 App
+        // 两个进程的日志写到同一份 diag.log，现场对照「识别成 3 还是 4」很方便。
+        try {
+            HyperOsCompat.logEnvironment()
+            diag("[VER] Hook(SystemUI) 适配结论: " + HyperOsCompat.describe(
+                    HyperOsCompat.detect(), HyperOsCompat.MODE_AUTO))
+        } catch (_: Throwable) {
+        }
+
         synchronized(initLock) {
             initRunning = false
             if (coreOk) initSucceeded = true
@@ -909,6 +932,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     lastSummaryTs = now
                     diag("⏸ 总开关已关闭，所有提醒停用（计步暂停，本次启动累计 $stepEventCount 步）")
                 }
+                // 联动已迁移到 App 侧小窗；这里只清理旧版残留的点灯状态（幂等 no-op）。
+                syncNightTorchGait(now)
                 return
             }
 
@@ -950,12 +975,18 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 state = State.SLEEP
                 // 通知手电筒提醒器：现在是静置状态
                 torchReminder?.onLongStaticDetected(true)
+                // 【BUG 修复】不再按「停止行走」灭灯：灯现在跟随小窗显隐，
+                // 由 App 侧会话生命周期负责。此处仅保留幂等清理。
+                syncNightTorchGait(now)
                 return
             }
 
             // 有步数 → 行走中
             walking = true
             torchReminder?.onLongStaticDetected(false)
+            // 【BUG 修复】检测到行走步态不再点灯：避免床上假步数误亮闪光灯。
+            // 闪光灯只跟随角落小窗显示（App 侧），此处仅保留幂等清理。
+            syncNightTorchGait(now)
 
             steps.removeAll { it < now - WINDOW_MS }
 
@@ -1261,10 +1292,12 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 等于「只要开了行走模式就永远不提醒手电」—— 自动模式下没在显示画面时也白跳过。
         val rearCamShowing = lastSentShow == true
         if (isNightTime() && screenOn && !rearCamShowing) {
-            // 夜间自动开灯：先看环境光，暗光(默认 <15 lux)才直接点亮，亮着不开。
-            // luxIsDark() 在「无光线传感器 / 读数过旧」时返回 false，自动开灯不生效，
-            // 这时下面再按旧逻辑发一条「夜间照明」提醒，不会两头落空。
-            if (pref(SafeWalkPrefKey.enableNightTorchAuto, false) && luxIsDark()) {
+            // 【BUG 修复】小窗联动开关打开时，夜间闪光灯由 App 侧「角落小窗显示」
+            // 在预览会话内联动点亮。这里跳过旧的「50 步达标 / 环境暗光」一次性
+            // setTorchMode 点灯：那条链路会与预览抢摄像头、且被床上假步数误触发。
+            if (pref(SafeWalkPrefKey.enableNightTorchGait, false)) {
+                diag("[torch] 小窗联动开关已开：闪光灯随角落小窗显示时点亮、收起时熄灭，跳过旧自动点灯")
+            } else if (pref(SafeWalkPrefKey.enableNightTorchAuto, false) && luxIsDark()) {
                 diag("[torch] 夜间暗光(%.1f lux < %.0f) → 自动开灯"
                     .format(lastLux, luxDarkThreshold))
                 releasePreviewForTorch()
@@ -1292,11 +1325,58 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         }
     }
 
+    /** 时间区间明细日志节流时间戳：check() 每 2s 调一次，别刷屏 */
+    private var lastNightTimeLogTs = 0L
+
+    /**
+     * 【调试增强】夜间时间区间判定。
+     *
+     * 原来这里是一行 `return hour >= start || hour < end`，用户抱怨「到设定时间
+     * 也不亮」时，日志里完全看不到「现在几点 / 区间是几点到几点 / 到底命没命中」，
+     * 只能靠猜。现在每 60 秒打一条 [torch:time] 明细，时间条件是否成立一目了然。
+     */
     private fun isNightTime(): Boolean {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val start = pref(SafeWalkPrefKey.nightTorchStartHour, NIGHT_START_HOUR)
         val end = pref(SafeWalkPrefKey.nightTorchEndHour, NIGHT_END_HOUR)
-        return hour >= start || hour < end
+        val hit = hour >= start || hour < end
+        val now = System.currentTimeMillis()
+        if (now - lastNightTimeLogTs > 60_000L) {
+            lastNightTimeLogTs = now
+            diag("[torch:time] 区间判定 | 当前=$hour 时 生效区间=$start:00~$end:00 命中=$hit"
+                + if (hit) "" else "（未到设定时间，步态联动不会点灯）")
+        }
+        return hit
+    }
+
+    /**
+     * 【BUG 修复 · 联动对象纠正】夜间手电**不再**由 Hook 侧按 walking 点灯。
+     *
+     * 最新真机日志（01:23 / 01:33）证明：躺床上 LAY_FLAT 时手机翻身 / 抖动被
+     * SystemUI 侧加速度计兜底误判成 walking=true，上一版这个状态机随即
+     * 「[torch:gait] ✅ 条件满足 → 自动点亮手电」，也就是用户反馈的
+     * 「bug1 闪光灯在床上自动打开」。
+     *
+     * 用户已明确纠正需求：「夜间手电也就是闪光灯是跟角落小窗一起打开，
+     * 联动的是角落小窗」。因此点灯职责整体迁到 **App 进程**：
+     *   WalkPreviewService.doShow() → RearCameraOverlay 预览会话内 FLASH_MODE_TORCH
+     * 条件 = 夜间时段 + 联动开关开 + **角落小窗正在显示**；小窗收起 → 会话关闭 → 灯灭。
+     *
+     * Hook 侧从此不再调用 setTorchWithRetry 点灯、也不再发 ACTION_HOOK_HIDE
+     * 让路（否则会把刚要联动的小窗收掉）。这样既不依赖本进程不可靠的 walking
+     * 假步数，也不碰用户要求保留的原生计步采集模块（GaitDetector.kt）。
+     *
+     * 本方法保留为空壳，只做一件事：从旧版升级上来时若 nightTorchGaitOn 还残留
+     * 为 true，补一次灭灯并复位，避免孤儿常亮。check() 里三处调用保持不变，
+     * 正常运行是幂等 no-op。
+     */
+    private fun syncNightTorchGait(now: Long) {
+        if (now == 0L) return   // 保留形参，避免改动 check() 的三处调用
+        if (!nightTorchGaitOn) return
+        nightTorchGaitOn = false
+        diag("[torch:gait] 🔧 联动已迁移到角落小窗（App 侧预览会话内点灯），"
+            + "清理旧版残留的步态点灯状态并熄灭")
+        setTorchWithRetry(false, 0)
     }
 
     // ========== 电量广播接收器 ==========
@@ -1358,8 +1438,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         }
 
         // 手电正占着摄像头：此刻拉起预览只会得到黑屏，还会和手电抢设备。
-        // 判据有两个：刚点灯后的 60 秒冷静期，以及 TorchCallback 报告的实况
+        // 判据两个：刚点灯后的冷静期、TorchCallback 报告的实况
         // （用户从控制中心点亮的手电也要算进来）。
+        //
+        // 【BUG 修复】旧版第三个判据 nightTorchGaitOn（步态联动手电持续亮灯）
+        // 已删除：新版闪光灯是「跟着角落小窗一起亮」，若这里因为它亮着就抑制预览，
+        // 会形成「要亮灯就得先收小窗、小窗收了灯又灭」的死循环。
+        // 而且预览会话内的 FLASH_MODE_TORCH 不会触发 TorchCallback，两个判据互不干扰。
         if (System.currentTimeMillis() < torchHoldUntil
             || torchNotifyManager?.torchIsOn == true
         ) return

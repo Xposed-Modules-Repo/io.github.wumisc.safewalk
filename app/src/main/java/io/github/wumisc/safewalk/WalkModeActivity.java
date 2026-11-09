@@ -31,6 +31,13 @@ public final class WalkModeActivity extends Activity {
     private TextView tvGaitSteps, tvGaitStop;
     private TextView[] modeChips, posChips;
 
+    // 【新增对比度 UI 模块】增强对比度独立开关（整卡可点）
+    private SwitchCompat swPreviewContrast;
+    // 【HyperOS 版本适配模块】自动识别结果文案 + 三态手动切换 chips
+    private TextView tvHyperosDetected;
+    private TextView[] hosChips;
+    private String hosMode = HyperOsCompat.MODE_AUTO;
+
     private String rearMode = "fullscreen";
     private String rearCorner = "bottom_right";
 
@@ -49,13 +56,19 @@ public final class WalkModeActivity extends Activity {
         bindListeners();
         binding = false;
 
-        refreshAll();
         DiagLog.init(getApplicationContext());
+        refreshAll();
+        // 【HyperOS 版本适配模块】进入本页时打印完整环境快照（厂商/型号/SDK/prop/识别结论），
+        // 现场排查「为什么识别成了这个版本」时不用再连 logcat。
+        HyperOsCompat.logEnvironment();
+        HyperOsCompat.Os os = HyperOsCompat.current(sp, SafeWalkPrefKey.hyperOsMode);
         DiagLog.log("[walk] 打开行走模式页 rearCam=" + swRearCam.isChecked()
                 + " mode=" + rearMode
                 + " opacity=" + (seekOpacity.getProgress() + 10)
+                + " contrast=" + swPreviewContrast.isChecked()
                 + " master=" + SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
-                + " 日志=" + DiagLog.status());
+                + " | " + HyperOsCompat.describe(os, hosMode)
+                + " | 日志=" + DiagLog.status());
     }
 
     private void bindViews() {
@@ -75,6 +88,21 @@ public final class WalkModeActivity extends Activity {
         swRearCam = findViewById(R.id.sw_rear_cam);
         swAuto = findViewById(R.id.sw_auto);
         tvAutoDesc = findViewById(R.id.tv_auto_desc);
+        // 【新增对比度 UI 模块】
+        swPreviewContrast = findViewById(R.id.sw_preview_contrast);
+        findViewById(R.id.card_preview_contrast).setOnClickListener(v -> swPreviewContrast.toggle());
+        // 【HyperOS 版本适配模块】
+        tvHyperosDetected = findViewById(R.id.tv_hyperos_detected);
+        hosChips = new TextView[]{
+                findViewById(R.id.chip_hos_auto),
+                findViewById(R.id.chip_hos3),
+                findViewById(R.id.chip_hos4)
+        };
+        final String[] HOS_KEYS = {HyperOsCompat.MODE_AUTO, HyperOsCompat.MODE_HOS3, HyperOsCompat.MODE_HOS4};
+        for (int i = 0; i < HOS_KEYS.length; i++) {
+            final String key = HOS_KEYS[i];
+            hosChips[i].setOnClickListener(v -> selectHosMode(key));
+        }
         seekOpacity = findViewById(R.id.seek_opacity);
         seekGaitSteps = findViewById(R.id.seek_gait_steps);
         seekGaitStop = findViewById(R.id.seek_gait_stop);
@@ -114,6 +142,11 @@ public final class WalkModeActivity extends Activity {
         swRearCam.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false));
         // 自动跟随步行默认关：默认行为是 2.10 的手动常显，用户主动打开才进入自动
         swAuto.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false));
+        // 【新增对比度 UI 模块】增强对比度默认关，不影响老用户既有观感
+        swPreviewContrast.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enablePreviewContrast, false));
+        // 【HyperOS 版本适配模块】默认自动识别（方案 A）
+        hosMode = SafePrefs.getString(sp, SafeWalkPrefKey.hyperOsMode, HyperOsCompat.MODE_AUTO);
+        if (hosMode == null) hosMode = HyperOsCompat.MODE_AUTO;
 
         rearMode = SafePrefs.getString(sp, SafeWalkPrefKey.rearCamMode, RearCameraOverlay.MODE_FULLSCREEN);
         if (rearMode == null) rearMode = RearCameraOverlay.MODE_FULLSCREEN;
@@ -165,6 +198,18 @@ public final class WalkModeActivity extends Activity {
             if (swRearCam.isChecked()) {
                 WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);
             }
+        });
+
+        // 【新增对比度 UI 模块】开关只切 HUD 文字层，不动透明度、不动相机采集。
+        swPreviewContrast.setOnCheckedChangeListener((v, c) -> {
+            if (binding) return;
+            sp.edit().putBoolean(SafeWalkPrefKey.enablePreviewContrast, c).commit();
+            SafeWalkConfig.exportConfig(this);
+            DiagLog.log("[contrast] 增强对比度 → " + (c ? "开（文字描边/阴影/衬底）" : "关")
+                    + " | 透明度滑块保持原有取值不变");
+            // 立即刷新运行中的悬浮窗：doShow 会带上新的 contrast 值，
+            // show() 检测到 Style 变化会走 updateViewLayout 切 HUD 可见性。
+            previewIfEnabled();
         });
 
         seekOpacity.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -378,6 +423,38 @@ public final class WalkModeActivity extends Activity {
         refreshDependencies();
         refreshModeChips();
         refreshPosChips();
+        refreshHosUi();
+    }
+
+    // ========== 【HyperOS 版本适配模块】自动识别优先 + 手动切换兜底 ==========
+
+    /**
+     * 用户点三个 chip 之一：写入 hyperOsMode → 导出配置（让 Hook 侧也用同一结论）
+     * → 刷新高亮与识别文案。方案 A（auto）为默认，方案 B（hos3/hos4）为兜底。
+     */
+    private void selectHosMode(String mode) {
+        hosMode = mode;
+        sp.edit().putString(SafeWalkPrefKey.hyperOsMode, mode).commit();
+        SafeWalkConfig.exportConfig(this);
+        HyperOsCompat.Os os = HyperOsCompat.resolve(mode);
+        DiagLog.log("[VER] 用户切换适配模式 → " + mode + " | " + HyperOsCompat.describe(os, mode)
+                + " | 前台服务策略=" + HyperOsCompat.foregroundServiceStrategy(os)
+                + " 手电策略=" + HyperOsCompat.torchOpenStrategy(os)
+                + " 悬浮窗策略=" + HyperOsCompat.overlayPermissionStrategy(os)
+                + " | " + HyperOsCompat.rootCmdStrategy(os));
+        refreshHosUi();
+    }
+
+    /** 刷新三态 chip 高亮 + 自动识别结论文案 + 当前生效策略摘要 */
+    private void refreshHosUi() {
+        final String[] keys = {HyperOsCompat.MODE_AUTO, HyperOsCompat.MODE_HOS3, HyperOsCompat.MODE_HOS4};
+        for (int i = 0; i < keys.length; i++) {
+            paintChip(hosChips[i], keys[i].equals(hosMode));
+        }
+        HyperOsCompat.Os os = HyperOsCompat.current(sp, SafeWalkPrefKey.hyperOsMode);
+        boolean manual = HyperOsCompat.isManual(hosMode);
+        tvHyperosDetected.setText((manual ? "手动兜底" : "自动识别") + "：" + HyperOsCompat.describe(os, hosMode));
+        DiagLog.log("[VER] 保活提示 | " + HyperOsCompat.backgroundKeepAliveHint(os));
     }
 
     private void refreshDependencies() {

@@ -38,6 +38,20 @@ public class PreviewWindowTest {
         WindowManager.LayoutParams params;
         View view;
 
+        /**
+         * 【增强对比度容器化后】addView 挂的是 FrameLayout 容器（alpha 恒 1），
+         * 透明度只作用在容器内第 0 个子层（相机画面 TextureView），
+         * 第 1 个子层 HUD 文字层 alpha 也恒 1。测试断言必须针对画面层，
+         * 而不是容器本身 —— 否则会把「容器 alpha=1」误判成透明度没生效。
+         */
+        View renderLayer() {
+            if (view instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) view;
+                if (g.getChildCount() > 0) return g.getChildAt(0);
+            }
+            return view;
+        }
+
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) {
             switch (method.getName()) {
@@ -90,13 +104,15 @@ public class PreviewWindowTest {
     public void opacity_isAppliedToView() {
         build();
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 80, RearCameraOverlay.CORNER_BR);
-        assertEquals(0.80f, recorder.view.getAlpha(), 0.01f);
+        assertEquals(0.80f, recorder.renderLayer().getAlpha(), 0.01f);
+        // 容器（含 HUD 文字层）alpha 必须恒为 1：增强对比度要求文字永不被调淡
+        assertEquals(1.0f, recorder.view.getAlpha(), 0.001f);
 
         // 越界值要夹到 10~100，不能出现全透明或全不透明
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 0, RearCameraOverlay.CORNER_BR);
-        assertEquals(0.10f, recorder.view.getAlpha(), 0.01f);
+        assertEquals(0.10f, recorder.renderLayer().getAlpha(), 0.01f);
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 999, RearCameraOverlay.CORNER_BR);
-        assertEquals(0.99f, recorder.view.getAlpha(), 0.001f);
+        assertEquals(0.99f, recorder.renderLayer().getAlpha(), 0.001f);
     }
 
     @Test
@@ -106,12 +122,12 @@ public class PreviewWindowTest {
         // 真机实测 alpha=1.0 的全屏悬浮窗出不来相机画面（系统把它判成不透明
         // layer，与 TRANSLUCENT 声明冲突），半透明正常，所以上限压到 0.99
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 100, RearCameraOverlay.CORNER_BR);
-        assertEquals(0.99f, recorder.view.getAlpha(), 0.001f);
+        assertEquals(0.99f, recorder.renderLayer().getAlpha(), 0.001f);
         assertEquals(android.graphics.PixelFormat.TRANSLUCENT, recorder.params.format);
 
         // 半透明保持原值，窗口格式不随不透明度切换
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR);
-        assertEquals(0.50f, recorder.view.getAlpha(), 0.01f);
+        assertEquals(0.50f, recorder.renderLayer().getAlpha(), 0.01f);
         assertEquals(android.graphics.PixelFormat.TRANSLUCENT, recorder.params.format);
     }
 

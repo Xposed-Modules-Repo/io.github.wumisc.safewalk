@@ -42,6 +42,7 @@ import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.catalog.utils.DampedDragAnimation
 import com.kyant.backdrop.catalog.utils.InteractiveHighlight
+import com.kyant.backdrop.catalog.utils.LiquidTabsController
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -63,6 +64,8 @@ fun LiquidBottomTabs(
     backdrop: Backdrop,
     tabsCount: Int,
     modifier: Modifier = Modifier,
+    /** 【BUG 修复】把内部阻尼动画的控制权交给外部，让点击 / 全局左右滑都能驱动滑块特效 */
+    onControllerReady: ((LiquidTabsController) -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val isLightTheme = !isSystemInDarkTheme()
@@ -96,9 +99,6 @@ fun LiquidBottomTabs(
 
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
-        var currentIndex by remember(selectedTabIndex) {
-            mutableIntStateOf(selectedTabIndex())
-        }
         val dampedDragAnimation = remember(animationScope) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -110,8 +110,11 @@ fun LiquidBottomTabs(
                 onDragStarted = {},
                 onDragStopped = {
                     val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
-                    currentIndex = targetIndex
-                    animateToValue(targetIndex.toFloat())
+                    // 【BUG 修复】内部拖拽结束直接回执切页。
+                    // 原先靠 snapshotFlow { currentIndex }.drop(1) 间接转发，
+                    // 既容易漏发射，又会和外部手势驱动打架；现在由外部 MainNav.select
+                    // 统一 animateToValue 吸附，滑块 / 高亮 / 折射一起到位。
+                    onTabSelected(targetIndex)
                     animationScope.launch {
                         offsetAnimation.animateTo(
                             0f,
@@ -130,19 +133,14 @@ fun LiquidBottomTabs(
                 }
             )
         }
-        LaunchedEffect(selectedTabIndex) {
-            snapshotFlow { selectedTabIndex() }
-                .collectLatest { index ->
-                    currentIndex = index
-                }
-        }
+        // 【BUG 修复】动画驱动收敛为单一来源：
+        //   · 外部（点击 tab / 全局左右滑 / 代码切页）→ LiquidTabsController；
+        //   · 组件内部直接拖滑块 → 上面的 onDrag / onDragStopped。
+        // 删掉原先两条 snapshotFlow 链：`.drop(1)` 会吞掉首次变化，
+        // 「再点一次已选中的 tab」值不变则根本不发射 —— 正是用户反馈的
+        // 「点击关于特效不跟随 / 首页点首页没反应 / 页面滑动滑块不跟随」三个 bug。
         LaunchedEffect(dampedDragAnimation) {
-            snapshotFlow { currentIndex }
-                .drop(1)
-                .collectLatest { index ->
-                    dampedDragAnimation.animateToValue(index.toFloat())
-                    onTabSelected(index)
-                }
+            onControllerReady?.invoke(LiquidTabsController(dampedDragAnimation, tabsCount))
         }
 
         val interactiveHighlight = remember(animationScope) {

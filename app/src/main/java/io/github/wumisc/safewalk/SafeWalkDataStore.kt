@@ -98,6 +98,50 @@ object SafeWalkPrefKey {
      */
     const val crashSensitivity = "crashSensitivity"
 
+    // ==================================================================================
+    // 【本次全量迭代新增】BUG 修复 / 新增功能 / HyperOS3-4 双版本适配 三类开关
+    // 全部为纯开关或显示参数，不含隐私字段，因此都必须同步加入
+    // [ConfigProvider.WHITELIST]，否则 Hook 侧（SystemUI 进程）读不到、永远拿默认值。
+    // ==================================================================================
+
+    /**
+     * 【BUG 修复 · 联动对象纠正】「夜间手电 · 角落小窗联动闪光灯」总开关，默认关。
+     *
+     * 用户澄清：「闪光灯是跟角落小窗一起打开，联动的是角落小窗」。
+     * 需求语义：在 [nightTorchStartHour]~[nightTorchEndHour] 的夜间时段内，
+     * **角落小窗（后视预览）正在显示时**闪光灯一起常亮；小窗收起则熄灭。
+     * 不再与 SystemUI 侧 walking 步态挂钩 —— 躺床上手机抖动会被误判成走路，
+     * 正是最新真机日志「bug1 闪光灯在床上自动打开」的根因。
+     *
+     * 实现：WalkPreviewService.doShow() → RearCameraOverlay 预览会话内
+     * CaptureRequest.FLASH_MODE_TORCH（与预览共用同一颗摄像头，不抢设备）。
+     * key 名沿用历史值以避免破坏 ConfigProvider 白名单与已有用户配置。
+     *
+     * 与既有开关彼此独立、互不覆盖：
+     *  · [enableNightTorch]     —— 只弹「建议开手电」通知，不点灯（保留原行为）；
+     *  · [enableNightTorchAuto] —— 「50 步达标 + 环境暗光」时点一次灯（保留原行为）；
+     *  · 本开关                —— 只认「时间区间 + 角落小窗显示」。
+     */
+    const val enableNightTorchGait = "enableNightTorchGait"
+
+    /**
+     * 【新增对比度 UI 模块】增强对比度独立开关，默认关。
+     *
+     * 开启后：悬浮窗在相机画面层之上叠加一层 HUD 文字层，文字带黑色外描边 +
+     * 阴影 + 半透明深色衬底；原有 [rearCamOpacity] 透明度**只继续作用于画面层**，
+     * 不作用于文字层 —— 于是「画面调淡看路况」和「文字始终清晰」可以同时成立。
+     */
+    const val enablePreviewContrast = "enablePreviewContrast"
+
+    /**
+     * 【HyperOS 版本适配模块】适配模式串，默认 [HyperOsCompat.MODE_AUTO]。
+     *
+     * 合法值：auto（方案A，自动识别）/ hos3 / hos4（方案B，手动强制兜底）。
+     * 由 [HyperOsCompat.resolve] 统一解析；写进白名单让 SystemUI 侧的 Hook
+     * 也能读到同一份结论，两个进程的版本判断不会打架。
+     */
+    const val hyperOsMode = "hyperOsMode"
+
     /** 配置文件名，放在 files/ 目录下，Hook端直接读这个文件 */
     const val CONFIG_FILE = "safewalk_config.json"
 

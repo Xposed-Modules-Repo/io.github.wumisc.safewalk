@@ -83,24 +83,54 @@ object ReceiverCompat {
      * · 返回 `false` → 确认不可信，直接丢弃；
      * · 返回 `null`  → 拿不到身份（API 33 及以下），调用方继续用令牌兜底。
      */
+    /**
+     * 判断一条广播的发送方是否可信（系统进程 / 系统 uid 段 / SystemUI / 本应用自己）。
+     *
+     * 【修复：HyperOS 3/4 上「所有跨进程指令被静默丢弃」的总根因】
+     * 旧版只放行 SYSTEM_UID(1000)、myUid()、以及 uid∈[1,10000) 的系统段。
+     * 但 HyperOS/部分 ROM 把 `com.android.systemui` 分配在**应用段 uid（≥10000）**
+     * 上，于是 Hook 从 SystemUI 发来的 ACK / 预览 / 手电指令一律被判 `false`。
+     * 而旧 `isTrustedCommand` 对 `false` 直接短路 return，令牌再正确也进不来——
+     * 这正是 diag.log 里 `预览指令鉴权失败，丢弃: REAR_CAM_HOOK_HIDE` 的来源，
+     * 也同时打断了「重启系统界面」的 ACK 回执与手电指令。
+     *
+     * 现在补两道：① API34+ 用 `getSentFromPackage()` 认 SystemUI 包名；
+     * ② `getSentFromUid()` 不可信时降级为「仅令牌」（与 API33 及以下同等级防护），
+     * 不再一票否决。Hook 侧接收器另有 signature 级权限在分发阶段挡第三方，
+     * 因此令牌兜底不会引入新的越权面。
+     *
+     * @return `true` 确认可信 / `false` 确认不可信 / `null` 拿不到身份（API≤33 或反射失败）
+     */
     @JvmStatic
     fun senderIsTrusted(receiver: BroadcastReceiver): Boolean? {
         if (android.os.Build.VERSION.SDK_INT < 34) return null
         return try {
             val uid = receiver.sentFromUid
-            uid == android.os.Process.SYSTEM_UID ||
-                    uid == android.os.Process.myUid() ||
-                    uid in 1 until android.os.Process.FIRST_APPLICATION_UID
+            // ① 系统 uid 段 / 本应用自身：直接可信
+            if (uid == android.os.Process.SYSTEM_UID ||
+                uid == android.os.Process.myUid() ||
+                uid in 1 until android.os.Process.FIRST_APPLICATION_UID
+            ) return true
+            // ② 应用段 uid：按发送方包名二次确认是不是 SystemUI。
+            //    HyperOS 3/4、部分三星/一加 ROM 都属于这一类。
+            val pkg = receiver.sentFromPackage
+            if (pkg == "com.android.systemui" || pkg == "com.miui.systemui" ||
+                pkg == "com.android.systemui:screenshot" ||
+                pkg == "com.android.keyguard"
+            ) return true
+            false
         } catch (_: Throwable) {
             null
         }
     }
 
     /**
-     * 统一的跨进程入口鉴权：先看发送方 uid，再验令牌。
+     * 统一的跨进程入口鉴权：**令牌是硬门槛，uid 只作分级与日志**。
      *
-     * 两步都要过：uid 挡掉普通应用（API 34+），令牌挡掉同 uid 段但非预期的发送方，
-     * 并在 API 33 及以下独自承担全部防护。
+     * 旧实现 `if (byUid == false) return false` 在 API34+ 会把合法 SystemUI 广播
+     * 全部丢弃（见 [senderIsTrusted] 注释）。现在无论 uid 判定结果如何，只要令牌
+     * 不匹配就拒绝；令牌匹配时按 uid 分级记录并放行。`null`（API≤33）沿用
+     * 既有「纯令牌」防护等级，行为不变。
      */
     @JvmStatic
     fun isTrustedCommand(receiver: BroadcastReceiver, token: String?): Boolean =
@@ -110,7 +140,19 @@ object ReceiverCompat {
     @JvmStatic
     fun isTrustedCommand(receiver: BroadcastReceiver, token: String?, expected: String?): Boolean {
         val byUid = senderIsTrusted(receiver)
-        if (byUid == false) return false
-        return expected != null && token == expected
+        // 令牌必须先过：它是一直存在、且与 API 版本无关的唯一硬门槛。
+        if (expected == null || token != expected) {
+            android.util.Log.w("SafeWalk", "[SEC:REJECT] 广播令牌缺失/不匹配，丢弃（uid=$byUid）")
+            return false
+        }
+        return when (byUid) {
+            true -> true  // 系统 uid 或 SystemUI，正常放行
+            false -> {    // 应用段 uid 但令牌匹配：兼容 ROM，降级放行并留痕
+                android.util.Log.i("SafeWalk",
+                    "[SEC:COMPAT] 发送方 uid 非系统段，令牌匹配 → 兼容放行（HyperOS/应用段 SystemUI）")
+                true
+            }
+            null -> true  // API≤33：拿不到身份，纯令牌防护（历史行为）
+        }
     }
 }

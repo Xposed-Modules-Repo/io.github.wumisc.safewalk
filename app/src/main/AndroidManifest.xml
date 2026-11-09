@@ -99,6 +99,18 @@
             </intent-filter>
         </activity>
 
+        <!--
+            【模块4 初始化批量权限申请】首次安装引导页。
+            不 exported：只由本应用 MainActivity 内部拉起；不是启动入口。
+            集中批量申请运行时权限 + 逐项跳转特殊权限（悬浮窗/所有文件访问/
+            电池优化/自启动/无障碍），并给每项附用途说明，适配 HyperOS 权限管控。
+        -->
+        <activity
+            android:name=".PermissionOnboardingActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="首次设置" />
+
         <activity
             android:name=".EmergencyCardActivity"
             android:exported="true"

@@ -246,6 +246,35 @@
                     android:layout_height="wrap_content" />
             </LinearLayout>
 
+            <!-- 【BUG 修复】夜间手电·步态联动：设定时间 + 检测到走路才自动点灯，停下自动灭 -->
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/card_night_torch_gait"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="夜间手电 · 小窗联动" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="设定时段内角落小窗显示时闪光灯一起点亮，小窗收起自动熄灭" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_night_torch_gait"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
             <View style="@style/RowDivider" />
 
             <LinearLayout

@@ -1,8 +1,12 @@
 package io.github.wumisc.safewalk
 
 import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Paint
 import android.graphics.SurfaceTexture
+import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -19,8 +23,12 @@ import android.view.Gravity
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
+import kotlin.jvm.JvmOverloads
 
 /**
  * 行走模式悬浮窗。
@@ -76,10 +84,29 @@ class RearCameraOverlay(
 
         /** 相机链路最多连续重试几次（相机被别的应用占着时不能无限重开） */
         private const val MAX_CAMERA_RETRY = 2
+
+        /**
+         * 不可恢复失败（相机被系统/策略禁用、无相机权限）后的「静默期」。
+         *
+         * 这类失败重试不会自己变好，但 Hook 每 2s 的 updateOverlay 仍会不断
+         * 发 ACTION_HOOK_SHOW，App 每次都 show → 开相机失败 → hide → 回执 false，
+         * 于是日志里出现一串「false → true → false」乒乓，既反复开相机耗电、又刷屏。
+         * 静默期内 show() 直接拒绝拉起；用户主动重试或相机恢复时再解除。
+         */
+        private const val HARD_FAILURE_BACKOFF_MS = 5 * 60 * 1000L
     }
 
-    /** 当前生效的展示参数 */
-    private data class Style(val mode: String, val opacity: Int, val corner: String)
+    /**
+     * 当前生效的展示参数。
+     * [enhanceContrast] 纳入 Style，是为了让「只切换增强对比度、其余参数不变」
+     * 也能走进 apply() 刷新 HUD 层（否则会被 target==style 的去重直接吞掉）。
+     */
+    private data class Style(
+        val mode: String, val opacity: Int, val corner: String,
+        val enhanceContrast: Boolean,
+        /** 【小窗联动闪光灯】在预览会话内开 FLASH_MODE_TORCH，随小窗显示/收起开关 */
+        val torchWithPreview: Boolean
+    )
 
     private val wm = wmOverride
         ?: (ctx.applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
@@ -92,8 +119,30 @@ class RearCameraOverlay(
     /** 预览用 Surface，必须显式 release，否则反复开关会耗尽 buffer */
     private var previewSurface: Surface? = null
     private var tv: TextureView? = null
+
+    /**
+     * 【新增对比度 UI 模块】窗口根容器。
+     *
+     * 原来直接把 TextureView 挂到 WindowManager（addView(tv)）。为了让「文字层」
+     * 能叠在画面上、又不受透明度影响，改成挂一个 FrameLayout 容器：
+     *   · 子层 0 = [tv] 相机画面，继续吃 [style.opacity] 换算出的 alpha；
+     *   · 子层 1 = [hudView] 状态文字层，alpha 恒为 1，带描边/阴影/深色衬底。
+     * 只用一个窗口，不新增 overlay 数量，避免额外触发 HyperOS 的悬浮窗后台限制。
+     */
+    private var rootView: FrameLayout? = null
+    /** 增强对比度开启时显示的 HUD 文字层；关闭时置 GONE，不移除（避免频繁重建） */
+    private var hudView: TextView? = null
+
     private var isShowing = false
-    private var style = Style(MODE_FULLSCREEN, 50, CORNER_BR)
+    private var style = Style(MODE_FULLSCREEN, 50, CORNER_BR, false, false)
+
+    /**
+     * 【小窗联动闪光灯】后置相机是否带闪光灯。
+     * 由 openCamera() 读 CameraCharacteristics.FLASH_INFO_AVAILABLE 得到；
+     * 不带闪光灯的机型不能下发 FLASH_MODE_TORCH（否则整条 preview request 会被 HAL 拒绝，
+     * 表现为预览黑屏），所以这里做能力探测 + 自动降级。
+     */
+    private var flashAvailable = false
 
     /**
      * 相机「代号」。每次 [closeCamera] 递增一次，[openCamera] 把当时的值
@@ -122,6 +171,13 @@ class RearCameraOverlay(
     /** 视图尺寸为 0 时的重试次数（Surface 回调常常早于布局） */
     private var layoutRetry = 0
 
+    /**
+     * 不可恢复失败的静默截止时刻。0 表示未处于静默期。
+     * 由 [reportHardFailure] 设置，[show] 检查，[clearHardFailureBackoff] 解除。
+     */
+    @Volatile
+    private var hardFailureBackoffUntil = 0L
+
     /** 统一走 SafeWalkLSPHook 的日志出口（logcat + SystemUI 私有目录） */
     private fun diag(msg: String) {
         try {
@@ -147,16 +203,55 @@ class RearCameraOverlay(
      * @param mode 全屏 / 小窗
      * @param opacity 不透明度 10~100，越小越透；实际渲染上限 99%（见 apply）
      * @param corner 小窗停靠角（全屏模式忽略）
+     * @param enhanceContrast 【新增】增强对比度：开启后在画面之上叠加带描边/阴影/
+     *        深色衬底的 HUD 文字层，且该层**不受 opacity 影响**。
+     * @param torchWithPreview 【小窗联动闪光灯】开启时在预览会话的 CaptureRequest 里
+     *        常亮闪光灯；小窗收起 → 会话关闭 → 灯自动灭。@JvmOverloads 保证 Java
+     *        侧旧的三参/四参调用继续可用。
      */
-    fun show(mode: String = MODE_FULLSCREEN, opacity: Int = 50, corner: String = CORNER_BR) {
+    @JvmOverloads
+    fun show(
+        mode: String = MODE_FULLSCREEN,
+        opacity: Int = 50,
+        corner: String = CORNER_BR,
+        enhanceContrast: Boolean = false,
+        torchWithPreview: Boolean = false
+    ) {
+        // 硬失败静默期：Hook 每 2s 一次 ACTION_HOOK_SHOW 会不断把我们叫醒，
+        // 但相机被策略禁用/无权限不会自己变好。静默期内直接拒绝拉起，
+        // 让窗口保持「未显示」→ 回执稳定为 false，掐断 false→true→false 乒乓。
+        if (System.currentTimeMillis() < hardFailureBackoffUntil) {
+            // 兜底：静默期内万一有残留窗口，收掉它，保证 showing 恒为 false
+            if (isShowing) hide()
+            return
+        }
         val target = Style(
             if (mode == MODE_SMALLWINDOW) MODE_SMALLWINDOW else MODE_FULLSCREEN,
             opacity.coerceIn(10, 100),
-            corner
+            corner,
+            enhanceContrast,
+            torchWithPreview
         )
+        // 【小窗联动闪光灯】只切换联动开关、其余参数没变时，不要重建窗口/相机：
+        // 相机会话还在跑，只需重新下发一次 repeating request 就能开关闪光灯，
+        // 避免「切个开关画面黑一下 + 重新握手 400ms」。
+        if (isShowing && rootView?.parent != null
+            && target.mode == style.mode
+            && target.opacity == style.opacity
+            && target.corner == style.corner
+            && target.enhanceContrast == style.enhanceContrast
+            && target.torchWithPreview != style.torchWithPreview
+        ) {
+            style = target
+            hudView?.visibility = if (style.enhanceContrast) View.VISIBLE else View.GONE
+            refreshTorchInSession()
+            return
+        }
         // 除了参数未变，还要确认视图真的还挂在 WindowManager 上；
-        // 被系统回收（切用户/内存压力）后 parent 会变 null，此时必须重建
-        if (isShowing && target == style && tv?.parent != null) {
+        // 被系统回收（切用户/内存压力）后 parent 会变 null，此时必须重建。
+        // 【新增对比度 UI】容器化后窗口根是 rootView，判它的 parent 而不是
+        // tv 的（tv 是容器子层，parent 恒为容器，非空，用它判断会永远误判「还挂着」）。
+        if (isShowing && target == style && rootView?.parent != null) {
             // 视图还在，但相机未必还在：Surface 被系统重建过、上次打开失败、
             // 或者相机被别的应用抢走，都会留下「窗口在、画面全黑」的状态。
             // 原实现直接 return，于是这个黑窗口再也不会重连。
@@ -180,7 +275,7 @@ class RearCameraOverlay(
         // 视图被系统摘掉但对象还在：这是最容易被忽略的一种。
         // 直接 addView 回去，TextureView 的 SurfaceTexture 已经失效，
         // onSurfaceTextureAvailable 也不会再回调 —— 结果是窗口在、画面全黑。
-        val viewDetached = tv != null && tv?.parent == null
+        val viewDetached = rootView != null && rootView?.parent == null
         style = target
         isShowing = true
         failureReported = false
@@ -214,21 +309,54 @@ class RearCameraOverlay(
 
     private fun releaseView() {
         closeCamera()
-        tv?.let {
+        // 【新增对比度 UI】窗口根是容器，removeView 要移除容器而不是 tv。
+        rootView?.let {
             if (it.parent != null) {
                 try { wm.removeView(it) } catch (_: Throwable) {}
             }
         }
+        rootView = null
+        hudView = null
         tv = null
         surfaceTexture = null
     }
 
     private fun apply() {
+        // 【新增对比度 UI】窗口根从「单个 TextureView」换成「FrameLayout 容器」。
+        // 容器里两层：
+        //   [0] tv       相机画面层 —— 继续吃透明度 alpha（唯一受 opacity 影响的层）
+        //   [1] hudView  状态文字层 —— alpha 恒 1，带描边/阴影/深色衬底
+        // 透明度只作用于画面层，文字层永远清晰，正是「看得清路况 + 看得清文字」的关键。
         if (tv == null) tv = buildTextureView()
+        val texture = tv!!
+        if (rootView == null) {
+            // 防御：TextureView 若还残留旧父容器（ROM 回收窗口后对象没清干净），
+            // 直接 addView 会抛 "already has a parent"。先安全摘除，再挂新容器。
+            (texture.parent as? ViewGroup)?.removeView(texture)
+            rootView = FrameLayout(ctx.applicationContext).apply {
+                // 画面层铺满容器；MATCH_PARENT 但窗口尺寸由 buildParams 用真实像素给定，
+                // 所以 TextureView 一定能布局出正数尺寸（沿用原全屏不黑屏的结论）。
+                addView(texture, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT))
+                // HUD 文字层：底部居中，带描边/阴影/半透明深色衬底
+                hudView = buildHudView()
+                val hudLp = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                ).apply { bottomMargin = dp(16) }
+                addView(hudView, hudLp)
+            }
+        }
 
-        tv?.outlineProvider = roundOutline()
-        tv?.invalidateOutline()
-        // 透明度直接作用于视图本身（第一版实测可用的做法，不引入变量）。
+        val root = rootView!!
+        // 圆角裁剪放到容器上：小窗模式下把画面和 HUD 一起裁成圆角，不会露方角。
+        root.outlineProvider = roundOutline()
+        root.clipToOutline = true
+        root.invalidateOutline()
+
+        // 透明度只作用于画面层（第一版实测可用的做法，不引入变量）。
         //
         // 上限刻意压在 0.99，永远不给 1.0：
         // 真机实测「全屏 + alpha=1.0」画面出不来，alpha<1 正常。
@@ -236,17 +364,21 @@ class RearCameraOverlay(
         // 与窗口声明的 TRANSLUCENT 冲突，合成路径选错 → 黑屏；
         // alpha<1 时明确需要 GPU 混合，走的是正常路径。
         // 99% 与 100% 肉眼无差，但能稳定出画面。
+        // 注意：只对 texture 设 alpha，root/hudView 都不设 —— 文字层永不被调淡。
         val renderAlpha = minOf(style.opacity / 100f, 0.99f)
-        tv?.alpha = renderAlpha
+        texture.alpha = renderAlpha
+
+        // 增强对比度开关：只切 HUD 层的可见性，不重建视图、不碰相机。
+        hudView?.visibility = if (style.enhanceContrast) View.VISIBLE else View.GONE
 
         val lp = buildParams()
         try {
-            if (tv?.parent == null) {
-                wm.addView(tv, lp)
-                stage("窗口已挂载: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha")
+            if (root.parent == null) {
+                wm.addView(root, lp)
+                stage("窗口已挂载: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast} torch=${style.torchWithPreview}")
             } else {
-                wm.updateViewLayout(tv, lp)
-                stage("窗口已更新: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha")
+                wm.updateViewLayout(root, lp)
+                stage("窗口已更新: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast} torch=${style.torchWithPreview}")
             }
             armFrameWatchdog()
         } catch (t: Throwable) {
@@ -255,8 +387,55 @@ class RearCameraOverlay(
             isShowing = false
             // 没挂上去的 View 必须丢掉：留着它，下一轮 show 会发现
             // 「tv 非空但 parent 为空」又去重建，每 2 秒抖一次，白折腾
+            rootView = null
             tv = null
+            hudView = null
             surfaceTexture = null
+        }
+    }
+
+    /**
+     * 【新增对比度 UI 模块】构建 HUD 状态文字层。
+     *
+     * 用自定义 TextView 覆写 onDraw 画「黑色外描边 + 白色实心字」，再叠一层
+     * 半透明深色圆角衬底和阴影。这样即使把相机画面透明度调到很低（看得清路况），
+     * 这行提示文字仍然边缘分明、可直接阅读，不会被背景纹理吞掉。
+     */
+    private fun buildHudView(): TextView {
+        return object : TextView(ctx.applicationContext) {
+            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                // 黑色外描边宽度，随屏幕密度缩放
+                strokeWidth = dp(2).toFloat().coerceAtLeast(2f)
+                color = Color.BLACK
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                // 第一遍：黑色描边（略粗，形成外轮廓）
+                val text = text.toString()
+                val cx = width / 2f
+                val baseline = baseline.toFloat()
+                strokePaint.textSize = paint.textSize
+                strokePaint.typeface = paint.typeface
+                strokePaint.textAlign = Paint.Align.CENTER
+                canvas.drawText(text, cx, baseline, strokePaint)
+                // 第二遍：白色实心字（正常 TextView 绘制）
+                super.onDraw(canvas)
+            }
+        }.apply {
+            // 半透明深色圆角衬底：既压住花哨的背景，又不至于完全挡住画面
+            background = GradientDrawable().apply {
+                setColor(0xB3000000.toInt())   // 约 70% 黑，兼顾衬底与透光
+                cornerRadius = dp(12).toFloat()
+            }
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            // 软阴影进一步把字从背景里拎出来
+            setShadowLayer(dp(2).toFloat(), 0f, dp(1).toFloat(), Color.BLACK)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            isClickable = false
+            isFocusable = false
+            text = "路况预览中 · 增强对比度"
         }
     }
 
@@ -281,6 +460,8 @@ class RearCameraOverlay(
                     // 有帧进来就说明预览真的通了，记时间戳给看门狗
                     lastFrameTs = System.currentTimeMillis()
                     failureReported = false
+                    // 相机能出画面 = 之前若因策略禁用进过静默期，现在已恢复，解除它
+                    hardFailureBackoffUntil = 0L
                     // 通了就把失败计数清零：下次再出问题仍然有完整的重试额度
                     retryCount = 0
                     if (!firstFrameReported) {
@@ -402,11 +583,14 @@ class RearCameraOverlay(
 
     private fun teardown() {
         closeCamera()
-        tv?.let {
+        // 【新增对比度 UI】窗口根是容器，removeView 移除容器。
+        rootView?.let {
             if (it.parent != null) {
                 try { wm.removeView(it) } catch (_: Throwable) {}
             }
         }
+        rootView = null
+        hudView = null
         tv = null
         surfaceTexture = null
     }
@@ -481,11 +665,73 @@ class RearCameraOverlay(
     }
 
     private fun reportFailure(reason: String) {
+        // 只有「不可恢复」的原因才进入长静默期。
+        // 「相机没有返回画面」可能只是偶发黑屏/被占用，属于可恢复，不能一封就是 5 分钟。
+        if (reason == "相机被系统或策略禁用" || reason == "应用没有相机权限") {
+            hardFailureBackoffUntil = System.currentTimeMillis() + HARD_FAILURE_BACKOFF_MS
+            diag("⏸ 检测到不可恢复的相机失败（$reason），${HARD_FAILURE_BACKOFF_MS / 60_000} 分钟内暂停自动拉起；用户主动预览可提前解除")
+        }
         if (failureReported) return
         failureReported = true
         diag("❌ 预览失败: $reason")
         stage("❌ $reason（${FRAME_TIMEOUT_MS / 1000} 秒内没有收到画面）")
         try { onFailure?.invoke(reason) } catch (_: Throwable) {}
+    }
+
+    /**
+     * 解除硬失败静默期。供 App 侧「用户主动点击预览 / 重新授权后重试」时调用，
+     * 让用户在系统里放开相机后能立刻重试，不必等满 5 分钟。
+     */
+    fun clearHardFailureBackoff() {
+        hardFailureBackoffUntil = 0L
+        failureReported = false
+    }
+
+    /**
+     * 【BUG 修复 · 小窗联动闪光灯】构建预览 CaptureRequest。
+     *
+     * 用户澄清：「夜间手电也就是闪光灯是跟角落小窗一起打开，联动的是角落小窗」。
+     * 闪光灯必须开在**预览会话内**（FLASH_MODE_TORCH），而不是
+     * CameraManager.setTorchMode()：后者会和预览抢同一颗后置摄像头并抛
+     * CAMERA_IN_USE，两者物理上无法同时存在。会话关闭时灯自然熄灭，正好实现
+     * 「小窗显示即亮、收起即灭」，也不需要新增任何跨进程广播或额外的手电开关链路。
+     *
+     * 注意 FLASH_MODE_TORCH 要求 AE 不在 AUTO_FLASH 系列，这里显式固定
+     * CONTROL_AE_MODE_ON，避免部分 HAL 拒绝整条 request 导致预览黑屏。
+     */
+    private fun buildPreviewRequest(d: CameraDevice, surface: Surface): CaptureRequest {
+        val builder = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+        builder.addTarget(surface)
+        builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+        if (style.torchWithPreview && flashAvailable) {
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+        }
+        return builder.build()
+    }
+
+    /**
+     * 联动开关切换时：窗口与相机会话都还在跑，不重建视图、不重开相机，
+     * 只重新下发一次 repeating request 即可开/关闪光灯（无黑屏、无 400ms 握手）。
+     */
+    private fun refreshTorchInSession() {
+        val d = camera
+        val cs = session
+        val surface = previewSurface
+        if (d == null || cs == null || surface == null) {
+            diag("[torch:overlay] 相机会话未就绪，联动开关将在下次打开预览时生效")
+            return
+        }
+        try {
+            val torchOn = style.torchWithPreview && flashAvailable
+            cs.setRepeatingRequest(buildPreviewRequest(d, surface), null, mainHandler)
+            diag("[torch:overlay] 预览会话内闪光灯 → ${if (torchOn) "常亮" else "熄灭"}"
+                    + "（flashAvailable=$flashAvailable）")
+        } catch (t: Throwable) {
+            // 相机正处于重连窗口时 createCaptureRequest 会抛异常：只记日志，
+            // 下一轮 onConfigured 会用最新 style 重新构建，功能不会丢。
+            diag("❌ 预览会话内闪光灯切换失败: ${t.message}")
+        }
     }
 
     @android.annotation.SuppressLint("MissingPermission")
@@ -549,6 +795,17 @@ class RearCameraOverlay(
                 previewSurface = null
                 return
             }
+            // 【小窗联动闪光灯】能力探测：不带闪光灯的机型绝不能下发
+            // FLASH_MODE_TORCH（HAL 会拒掉整条 preview request → 预览黑屏），自动降级。
+            flashAvailable = try {
+                cm.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            } catch (_: Throwable) {
+                false
+            }
+            if (style.torchWithPreview && !flashAvailable) {
+                diag("⚠️ 本机后置相机无闪光灯，小窗联动闪光灯自动降级（预览照常显示）")
+            }
             // 捕获发起时的代号：回调回来要是对不上，说明这次请求已经过期
             val gen = cameraGen
             opening = true
@@ -582,9 +839,6 @@ class RearCameraOverlay(
                     stage("相机已打开")
                     camera = d
                     try {
-                        val builder = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                        builder.addTarget(surface)
-                        builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                         // 用 SessionConfiguration(Executor) 替代已废弃的
                         // createCaptureSession(List<Surface>, StateCallback, Handler)
                         val outputConfig = OutputConfiguration(surface)
@@ -602,7 +856,11 @@ class RearCameraOverlay(
                                     session = cs
                                     stage("预览流已启动")
                                     try {
-                                        cs.setRepeatingRequest(builder.build(), null, mainHandler)
+                                        // 【小窗联动闪光灯】request 统一由 buildPreviewRequest
+                                        // 生成，是否带 FLASH_MODE_TORCH 由当前 style 决定。
+                                        cs.setRepeatingRequest(
+                                            buildPreviewRequest(d, surface), null, mainHandler
+                                        )
                                     } catch (t: Throwable) {
                                         diag("❌ 预览请求失败: ${t.message}")
                                     }

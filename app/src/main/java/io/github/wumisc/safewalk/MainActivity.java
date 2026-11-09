@@ -34,6 +34,17 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     // ========== 滑动手势 ==========
     private float downX, downY;
+    /** 【手势导航联动模块】本次滑动是否已判定为「水平为主」（避免竖向滚动误触发导航栏跟手） */
+    private boolean swipeTracking = false;
+    /** 水平滑动判定的最小位移，避免点击/轻微抖动也让导航栏抽动 */
+    private static final float SWIPE_SLOP = 24f;
+
+    // ========== 【HyperOS 版本适配 · 首页入口】 ==========
+    // 用户反馈「HyperOS 版本适配应该放在首页」。与行走模式页共用同一个
+    // SafeWalkPrefKey.hyperOsMode，两处都即时落盘 + exportConfig，天然同步。
+    private TextView tvHyperosDetected;
+    private TextView[] hosChips;
+    private String hosMode = HyperOsCompat.MODE_AUTO;
 
     // 状态文字配色（开=绿，关=灰）。取值必须在 onCreate 里从资源读，
     // 原来写死成常量，深色模式下这两个颜色对比度不足。
@@ -51,6 +62,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // App 进程日志出口：与 SystemUI 进程的 Hook 日志写同一套规则，
         // 优先 /storage/emulated/0/Android/Travel safely/，写不进自动降级
         DiagLog.init(getApplicationContext());
+        // 【HyperOS 版本适配 · 首页】进入首页打印一次环境快照（厂商/型号/SDK/prop/识别结论），
+        // 现场排查「为什么识别成这个版本」时不用连 logcat。
+        HyperOsCompat.logEnvironment();
 
         // 上次在实验区临时打开过预览、又没点「关闭预览」就退出（甚至进程被杀）时，
         // 备份会留在 SP 里。必须在 initUI 之前还原，否则首页会先按旧值渲染一遍。
@@ -62,9 +76,33 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 把 SystemUI 进程（Hook）里攒的日志要过来，和本进程的写进同一个 diag.log：
         // 步态判定、手电、车祸检测都跑在那个进程，只看 App 侧日志等于没看
         requestHookLog();
-        // 延后弹：引导框和系统权限框同时出现会叠在一起，用户只会全点掉
-        getWindow().getDecorView().postDelayed(this::maybeGuideLogDir, 1500);
-        if (!hasAllPermissions()) requestNeededPermissions();
+
+        // 【模块4 初始化批量权限申请】首次安装 → 集中引导页一次性申请全部权限
+        // （运行时权限 + 悬浮窗 + 相机/闪光灯 + 后台/电池优化 + 自启动 + 无障碍 + ROOT 探测），
+        // 并附每项用途说明。为避免与下面零散的权限框、日志目录框叠在一起，
+        // 首次启动只走引导页，把旧的分散申请整个让位给它。
+        final boolean firstRun = PermissionOnboardingActivity.shouldShow(this);
+        if (firstRun) {
+            DiagLog.init(getApplicationContext());
+            DiagLog.log("[PERM] 首次启动，拉起批量权限引导页（旧分散权限申请本次跳过）");
+            // 延后到首页渲染完成后再跳，避免和 initUI 抢窗口、出现白屏闪一下
+            getWindow().getDecorView().postDelayed(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                try {
+                    PermissionOnboardingActivity.start(this);
+                } catch (Throwable t) {
+                    // 引导页万一拉不起来，不能让用户卡在「什么权限都没申请」的状态，
+                    // 回退到旧的分散申请，保证至少关键运行时权限会被请求。
+                    DiagLog.log("[PERM:SYSTEM] 引导页启动失败，回退分散申请: " + t.getMessage());
+                    if (!hasAllPermissions()) requestNeededPermissions();
+                }
+            }, 900);
+        } else {
+            // 非首次：沿用原来的零散补漏逻辑（用户后来关了某个权限时兜底），
+            // 延后弹是避免引导框和系统权限框同时出现会叠在一起，用户只会全点掉。
+            getWindow().getDecorView().postDelayed(this::maybeGuideLogDir, 1500);
+            if (!hasAllPermissions()) requestNeededPermissions();
+        }
     }
 
     /**
@@ -224,11 +262,22 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         findViewById(R.id.tile_emergency).setOnClickListener(v ->
                 startActivity(new Intent(this, EmergencyCardActivity.class)));
 
-        // 保存按钮
-        findViewById(R.id.btn_save).setOnClickListener(v -> {
-            saveConfig();
-            Toast.makeText(this, "配置已保存", Toast.LENGTH_SHORT).show();
-        });
+        // 【BUG 修复】手动「保存」按钮已删除：所有配置改动即时落盘（见 saveConfig()），
+        // 首页 / 智能提醒页 / 行走模式页的每个开关都是改完立即 commit + exportConfig，
+        // 不再需要用户额外点一次保存。
+
+        // 【HyperOS 版本适配 · 首页入口】方案 A 自动识别优先 + 方案 B 手动切换兜底
+        tvHyperosDetected = findViewById(R.id.tv_hyperos_detected);
+        hosChips = new TextView[]{
+                findViewById(R.id.chip_hos_auto),
+                findViewById(R.id.chip_hos3),
+                findViewById(R.id.chip_hos4)
+        };
+        final String[] HOS_KEYS = {HyperOsCompat.MODE_AUTO, HyperOsCompat.MODE_HOS3, HyperOsCompat.MODE_HOS4};
+        for (int i = 0; i < HOS_KEYS.length; i++) {
+            final String key = HOS_KEYS[i];
+            hosChips[i].setOnClickListener(v -> selectHosMode(key));
+        }
 
         // 底部导航
         pageSettings = findViewById(R.id.page_settings);
@@ -298,9 +347,21 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         swSocial = SafePrefs.getBool(sp, SafeWalkPrefKey.enableSocialTipCard, true);
         swNightTorch = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorch, true);
         swRearCam = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false);
+        // 【HyperOS 首页入口】与行走模式页读同一个 key，返回首页时自动同步最新选择
+        hosMode = SafePrefs.getString(sp, SafeWalkPrefKey.hyperOsMode, HyperOsCompat.MODE_AUTO);
+        if (hosMode == null) hosMode = HyperOsCompat.MODE_AUTO;
         refreshTileStatus();
+        refreshHosUi();
     }
 
+    /**
+     * 【BUG 修复 · 后端实时保存】配置落盘的唯一入口。
+     *
+     * 手动「保存」按钮已删除，本方法由**每一处配置变更**立即调用：
+     * 用 commit()（同步写盘，避免刚改完就被杀进程丢配置）+ exportConfig()
+     * 把配置导出给 SystemUI 进程的 Hook 读取。二级页（智能提醒 / 行走模式）
+     * 同样是每个开关改完即 commit + exportConfig，全 App 不存在「待保存」状态。
+     */
     private void saveConfig() {
         SharedPreferences.Editor e = xsp().edit();
         e.putBoolean(SafeWalkPrefKey.masterEnable, swEnable);
@@ -310,8 +371,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         e.putBoolean(SafeWalkPrefKey.enableSocialTipCard, swSocial);
         e.putBoolean(SafeWalkPrefKey.enableNightTorch, swNightTorch);
         e.commit();
-        // 导出JSON文件给Hook端读
+        // 导出 JSON 文件给 Hook 端读（同步完成，2s 轮询内生效）
         SafeWalkConfig.exportConfig(this);
+        DiagLog.log("[ui] 配置实时落盘（commit + exportConfig），无需手动保存");
     }
 
     private void refreshTileStatus() {
@@ -350,6 +412,43 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         if (!swEnable) walk = "总开关未开（" + (swRearCam ? "已开启" : "未开启") + "）";
         tileWalkStatus.setText(walk);
         tileWalkStatus.setTextColor(swEnable && swRearCam ? COLOR_ON : COLOR_OFF);
+    }
+
+    // ========== 【HyperOS 版本适配 · 首页入口】 ==========
+
+    /**
+     * 选中「自动识别 / HyperOS 3 / HyperOS 4」之一：即时落盘 + 导出配置
+     * （后端实时保存，无保存按钮），让 Hook 侧在下一次读取时用同一结论。
+     */
+    private void selectHosMode(String mode) {
+        hosMode = mode;
+        xsp().edit().putString(SafeWalkPrefKey.hyperOsMode, mode).commit();
+        SafeWalkConfig.exportConfig(this);
+        HyperOsCompat.Os os = HyperOsCompat.resolve(mode);
+        DiagLog.log("[VER] 首页切换适配模式 → " + mode + " | " + HyperOsCompat.describe(os, mode)
+                + " | 前台服务策略=" + HyperOsCompat.foregroundServiceStrategy(os)
+                + " 手电策略=" + HyperOsCompat.torchOpenStrategy(os)
+                + " 悬浮窗策略=" + HyperOsCompat.overlayPermissionStrategy(os)
+                + " | " + HyperOsCompat.rootCmdStrategy(os));
+        refreshHosUi();
+    }
+
+    /** 刷新三态 chip 高亮 + 首页识别结论文案（与行走模式页共用同一套资源） */
+    private void refreshHosUi() {
+        if (tvHyperosDetected == null || hosChips == null) return;
+        final String[] keys = {HyperOsCompat.MODE_AUTO, HyperOsCompat.MODE_HOS3, HyperOsCompat.MODE_HOS4};
+        for (int i = 0; i < keys.length; i++) {
+            paintChip(hosChips[i], keys[i].equals(hosMode));
+        }
+        HyperOsCompat.Os os = HyperOsCompat.current(xsp(), SafeWalkPrefKey.hyperOsMode);
+        boolean manual = HyperOsCompat.isManual(hosMode);
+        tvHyperosDetected.setText((manual ? "手动兜底" : "自动识别") + "："
+                + HyperOsCompat.describe(os, hosMode));
+    }
+
+    private void paintChip(TextView chip, boolean on) {
+        chip.setBackgroundResource(on ? R.drawable.bg_choice_chip_on : R.drawable.bg_choice_chip);
+        chip.setTextColor(getColor(on ? R.color.card_bg : R.color.text_body));
     }
 
     // ========== 总开关 ==========
@@ -401,20 +500,57 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         switch (ev.getAction()) {
             case android.view.MotionEvent.ACTION_DOWN:
                 downX = ev.getX(); downY = ev.getY();
+                swipeTracking = false;
+                // 【BUG 修复】记录导航栏基准 tab；只有真正水平滑动才会扰动特效，
+                // 单纯点按钮 / 竖向滚动不会让液态玻璃滑块乱跳。
+                MainNav.beginDrag();
+                break;
+            case android.view.MotionEvent.ACTION_MOVE:
+                // 【手势导航联动 · BUG 修复】把左右滑动进度实时推给
+                // LiquidTabsController，直接驱动 dampedDragAnimation（滑块 / 高亮 /
+                // 折射一起跟手），不再只是平移整个导航栏容器。
+                // 只在水平位移明显大于竖直时才联动，避免和页面竖向滚动打架。
+                float mx = ev.getX() - downX;
+                float my = ev.getY() - downY;
+                if (!swipeTracking && Math.abs(mx) > SWIPE_SLOP
+                        && Math.abs(mx) > Math.abs(my) * 1.5f) {
+                    swipeTracking = true;
+                }
+                if (swipeTracking) {
+                    // 以屏宽为分母归一化到 [-1,1]：负=左滑趋向「关于」，正=右滑趋向「首页」
+                    int w = getResources().getDisplayMetrics().widthPixels;
+                    MainNav.updateDragProgress(w > 0 ? mx / w : 0f);
+                }
                 break;
             case android.view.MotionEvent.ACTION_UP:
+            case android.view.MotionEvent.ACTION_CANCEL:
                 float dx = ev.getX() - downX;
                 float dy = ev.getY() - downY;
-                if (Math.abs(dx) > 120 && Math.abs(dx) > Math.abs(dy) * 2) {
+                boolean switched = false;
+                if (ev.getAction() == android.view.MotionEvent.ACTION_UP
+                        && Math.abs(dx) > 120 && Math.abs(dx) > Math.abs(dy) * 2) {
                     if (onPage) {
-                        if (dx > 0) switchTab(true); // 关于页右滑回首页
+                        if (dx > 0) { switchTab(true); logGesture("右滑", "关于→首页"); switched = true; }
                     } else if (dx < 0) {
-                        switchTab(false); // 首页左滑进关于
+                        switchTab(false); logGesture("左滑", "首页→关于"); switched = true;
                     }
                 }
+                if (!switched) {
+                    // 未切页：释放按压态、滑块弹回基准 tab。
+                    // 真切页时 switchTab → MainNav.select 已直接吸附到落点，
+                    // 这里再调会「先弹回原位再滑到新页」，产生一次可见抖动。
+                    MainNav.endDrag();
+                }
+                swipeTracking = false;
                 break;
         }
         return super.dispatchTouchEvent(ev);
+    }
+
+    /** 【手势导航联动】分类调试日志：手势方向、切页结果、导航栏目标高亮 */
+    private void logGesture(String dir, String fromTo) {
+        DiagLog.log("[GESTURE] " + dir + " 切页 " + fromTo
+                + " | 底部导航栏已联动高亮 index=" + (onPage ? 1 : 0));
     }
 
     private void switchTab(boolean toSettings) {

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        首次安装「权限集中授权」页文案。
+        PermissionOnboardingActivity 目前用代码硬编码中文（保持零资源依赖、任意主题下
+        都能显示），这里独立提供一份字符串资源，便于后续做国际化 / 多语言适配。
+        所有 name 统一带 ob_ 前缀，与 strings.xml 里的 app_name、shortcut_toggle_*、
+        shortcut_emergency_*、shortcut_disabled 完全隔离，不会重名冲突。
+    -->
+    <string name="ob_app_name">安全出行</string>
+    <string name="ob_title">首次使用 · 权限集中授权</string>
+    <string name="ob_desc">SafeWalk 需要以下权限才能正常工作。点击底部按钮一次性申请运行时权限；标注「需手动开启」的项目会逐个引导到系统设置页。权限仅用于本机功能，不上传任何数据。</string>
+    <string name="ob_list_hint">权限清单 · 从系统设置返回后状态会自动刷新</string>
+
+    <string name="ob_grant_all">一键申请全部运行时权限</string>
+    <string name="ob_special">逐项开启特殊权限</string>
+    <string name="ob_done">跳过 / 完成</string>
+
+    <string name="ob_type_runtime">运行时权限 · 自动申请</string>
+    <string name="ob_type_special">特殊权限 · 需手动开启</string>
+    <string name="ob_type_optional">可选 · 需手动开启</string>
+    <string name="ob_type_info">系统自动授予 · 无需申请</string>
+
+    <string name="ob_state_granted">已授予</string>
+    <string name="ob_state_missing">未授予（点「一键申请」）</string>
+    <string name="ob_state_manual">需手动开启</string>
+
+    <string name="ob_label_usage">用途</string>
+    <string name="ob_label_type">类型</string>
+    <string name="ob_label_state">状态</string>
+</resources>

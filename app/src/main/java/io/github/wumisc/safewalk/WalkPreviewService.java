@@ -289,6 +289,12 @@ public final class WalkPreviewService extends Service {
             reportPreviewState();
             return START_STICKY;
         }
+        if (ACTION_SHOW.equals(action)) {
+            // 用户主动点击「预览」/重试（区别于 Hook 每 2s 发的 ACTION_HOOK_SHOW）：
+            // 解除相机硬失败静默期——用户可能刚在系统设置/设备策略里放开了相机，
+            // 应该能立刻再试一次，而不是等满静默期。
+            if (overlay != null) overlay.clearHardFailureBackoff();
+        }
         // SHOW / 未带指令的启动（系统重建）：按当前配置显示。
         // 手动模式下服务活着 = 路况常显，服务被系统回收重建后也要恢复显示。
         applyFromConfig(action != null ? intent.getStringExtra("mode") : null);
@@ -337,13 +343,54 @@ public final class WalkPreviewService extends Service {
         int opacity = SafePrefs.getInt(sp, SafeWalkPrefKey.rearCamOpacity, 50);
         String corner = SafePrefs.getString(sp, SafeWalkPrefKey.rearCamCorner, RearCameraOverlay.CORNER_BR);
         if (corner == null) corner = RearCameraOverlay.CORNER_BR;
-        overlay.show(mode, opacity, corner);
+        // 【新增对比度 UI 模块】把「增强对比度」开关透传给悬浮窗。
+        // 悬浮窗会把 HUD 文字层（描边/阴影/深色衬底）单独渲染，且不受 opacity 影响。
+        boolean contrast = SafePrefs.getBool(sp, SafeWalkPrefKey.enablePreviewContrast, false);
+
+        // 【BUG 修复 · 夜间手电联动对象纠正】
+        // 用户明确：「闪光灯是跟角落小窗一起打开，联动的是角落小窗」。
+        // 上一轮误做成「按 Hook 侧 walking 步态点灯」，躺床上假步数直接把灯点亮
+        // （最新日志 01:23/01:33 [torch:gait] 自动点亮手电）。
+        // 正确语义：夜间时段 + 开关开 + **角落小窗正在显示** → 闪光灯常亮；
+        // 小窗收起（停下 / 让路 / 关开关）→ 预览会话关闭，闪光灯随之熄灭。
+        //
+        // 关键实现点：闪光灯与预览共用同一颗后置摄像头，CameraManager.setTorchMode()
+        // 会因 CAMERA_IN_USE 失败，所以灯必须开在**预览会话的 CaptureRequest 里**
+        // （RearCameraOverlay 的 FLASH_MODE_TORCH），不另起 setTorchMode 抢设备。
+        boolean linkEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorchGait, false);
+        boolean night = isNightTime();
+        boolean torchWithPreview = linkEnabled && night;
+        overlay.show(mode, opacity, corner, contrast, torchWithPreview);
+        DiagLog.log("[torch:overlay] 小窗联动闪光灯 | 开关=" + linkEnabled
+                + " 夜间区间=" + night + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
+                + " | 生命周期=小窗显示即亮、收起即灭（预览会话内 FLASH_MODE_TORCH）");
+        DiagLog.log("[overlay] doShow | mode=" + mode + " opacity=" + opacity
+                + " corner=" + corner + " 增强对比度=" + contrast
+                + " | 窗口生命周期=attach/update（容器含画面层+HUD层）");
         reportPreviewState();
+    }
+
+    /**
+     * 夜间区间判定（App 进程本地读 sp，不依赖 Hook 的跨进程配置通道）。
+     * 与智能提醒页的时段设置共用 nightTorchStartHour / nightTorchEndHour，默认 22:00~6:00。
+     */
+    private boolean isNightTime() {
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        int start = SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchStartHour, 22);
+        int end = SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchEndHour, 6);
+        boolean hit = hour >= start || hour < end;
+        DiagLog.log("[torch:time] 小窗联动时段 | 当前=" + hour + " 时 生效区间="
+                + start + ":00~" + end + ":00 命中=" + hit);
+        return hit;
     }
 
     /** 启动应用进程内的加速度计步态监听（自动模式用）。 */
     /** 上一次 [gait] 节流诊断的时间戳，避免每帧刷屏 */
     private long lastGaitDiagTs = 0L;
+    /** 上一次 [ACTIVE] 激活判定节流诊断的时间戳（达标但被拦截时每 2s 一条） */
+    private long lastActiveDiagTs = 0L;
+    /** 上一次 [GUARD] 姿态/节律闸门拦截诊断的时间戳（独立节流，不与 ACTIVE 抢） */
+    private long lastGuardDiagTs = 0L;
 
     private void startGait() {
         if (gaitListener != null) return; // 已在监听
@@ -364,23 +411,89 @@ public final class WalkPreviewService extends Service {
             @Override
             public void onSensorChanged(SensorEvent e) {
                 if (e == null || e.values == null || e.values.length < 3) return;
-                // feedAcc 在检测到一步（合格步频窗口内）时返回 true
-                if (gait.feedAcc(e.values[0], e.values[1], e.values[2])) {
-                    long now = System.currentTimeMillis();
-                    lastStepTs = now;
-                    if (!gaitWalking && hardwareStepConfirm() && shouldShowNow()) {
+                long now = System.currentTimeMillis();
+
+                // ==== [STEP] 计步回调 ====
+                // feedAcc() 返回 true 表示「这一帧构成一个合格步」。它内部已同时校验
+                // 步频窗口、主轴一致率，并带 LAY_FLAT（平躺刷手机）一票否决 —— 这是
+                // 原生采集模块自带的防床上误触闸门，本轮修复不再绕开它。
+                boolean stepTick = gait.feedAcc(e.values[0], e.values[1], e.values[2]);
+
+                // ==== [GUARD] 姿态 / 节律可信度闸门（修复「床上打开角落小窗」）====
+                // 上一轮为绕开「水平持握走路被 LAY_FLAT 卡住」加的并列判据
+                //   countReached = confirmedStepCount() >= confirmSteps
+                // 在真机上被躺床翻身 / 抖动的**无节律波动**凑满（最新日志 01:33:44
+                // 「累计=6/6 → 累计合格步达标(绕开LAY_FLAT门控) → 显示预览」），
+                // 等于把 GaitDetector 内部的 LAY_FLAT 门控整个短路，直接弹出小窗。
+                //
+                // 本轮改为：解卡路径必须同时满足「姿态可信」+「节律稳定」；
+                // 平躺但硬件计步器确实出数时，才认作「水平持握真在走路」放行。
+                // 全部只读 GaitDetector 的公开状态（getAttitude / hasStableGait /
+                // confirmedStepCount），**不改动采集算法本身**，遵守用户约束。
+                PhoneAttitude attitude = gait.getAttitude();
+                boolean layFlat = attitude == PhoneAttitude.LAY_FLAT;
+                boolean stable = gait.hasStableGait();
+                int hwSteps = stepCountInWindow();
+                boolean credible;
+                if (stepTick) {
+                    credible = true;                        // 主路径：采集模块已判合格步
+                } else if (!layFlat && stable) {
+                    credible = true;                        // 解卡路径：非平躺 + 节律稳定
+                } else if (layFlat && stable && hwSteps >= STEP_CONFIRM_MIN) {
+                    // 水平持握 / 放包里走路也可能判 LAY_FLAT，但硬件计步器真出了步数，
+                    // 这是「确实在走路」的硬证据，放行，避免误杀正常行走。
+                    credible = true;
+                } else {
+                    credible = false;                       // 平躺抖动 / 无节律乱动
+                }
+                boolean countReached = credible
+                        && gait.confirmedStepCount() >= gait.getConfirmSteps();
+
+                if (stepTick || countReached) {
+                    lastStepTs = now;   // 刷新「上一步」时间戳，防静置巡检秒判停
+                }
+
+                // 被闸门拦下时留痕，真机自测一眼能看出「为什么没激活」
+                if (!gaitWalking && !credible && !stepTick
+                        && gait.confirmedStepCount() > 0
+                        && now - lastGuardDiagTs > 2000L) {
+                    lastGuardDiagTs = now;
+                    DiagLog.log("[GUARD] ⛔ 步数达标但姿态/节律不可信，抑制激活 | 累计="
+                            + gait.confirmedStepCount() + "/" + gait.getConfirmSteps()
+                            + " 姿态=" + attitude + " 节律稳定=" + stable
+                            + " 硬件计步(10s)=" + hwSteps
+                            + " | 防床上/沙发平放抖动误触");
+                }
+
+                // ==== [ACTIVE] 激活判定（每次判定都留痕，区分卡在哪道闸）====
+                if (!gaitWalking && (stepTick || countReached)) {
+                    boolean hw = hardwareStepConfirm();
+                    boolean cool = shouldShowNow();
+                    if (hw && cool) {
+                        lastStepTs = now;
                         gaitWalking = true;
-                        DiagLog.log("[walk] 检测到步行 → 显示预览");
+                        DiagLog.log("[ACTIVE] ✅ 激活行走模式 | 触发源="
+                                + (stepTick ? "feedAcc合格步" : "累计合格步达标(姿态/节律闸门已放行)")
+                                + " 累计=" + gait.confirmedStepCount() + "/"
+                                + gait.getConfirmSteps() + " 姿态=" + attitude
+                                + " 硬件确认=过 冷却=过 → 显示预览");
                         evaluateShow();
+                    } else if (now - lastActiveDiagTs > 2000L) {
+                        lastActiveDiagTs = now;
+                        DiagLog.log("[ACTIVE] ⏸ 达标但被拦截：硬件计步确认=" + (hw ? "过" : "拦")
+                                + " 收起冷却=" + (cool ? "过" : "拦")
+                                + " 累计=" + gait.confirmedStepCount() + "/"
+                                + gait.getConfirmSteps());
                     }
                 }
+
                 // 节流诊断：每 2 秒打一次步数累计，走没走、卡在哪一眼可见
-                long now = System.currentTimeMillis();
                 if (now - lastGaitDiagTs > 2000L) {
                     lastGaitDiagTs = now;
-                    DiagLog.log("[gait] 累计步 " + gait.confirmedStepCount()
-                            + "/" + gait.getConfirmSteps() + " "
-                            + gait.debugInfo());
+                    DiagLog.log("[STEP] 计步回调 | 累计合格步 " + gait.confirmedStepCount()
+                            + "/" + gait.getConfirmSteps() + " 本帧合格步=" + stepTick
+                            + " | " + gait.debugInfo()
+                            + " | walking=" + gaitWalking);
                 }
             }
             @Override
@@ -481,18 +594,28 @@ public final class WalkPreviewService extends Service {
     }
 
     /**
-     * 硬件计步确认（自适应，绝不误杀走路）：
-     * 1) 无计步器 / 传感器从未回调 → 不拦，纯加速度判走。
-     * 2) 计步器启动后从未产生任何步数（部分 ROM 对 TYPE_STEP_COUNTER 节流，
-     *    真走路也不出数）→ 判定该设备计步器不可信，停用确认，纯加速度判走，
-     *    保证走路不显示问题不再复发。
+     * 硬件计步确认（自适应，既不误杀走路、也不放过床上误触）：
+     * 1) 无计步器 / 传感器从未回调 → 不拦，纯加速度判走（外层 GUARD 闸门把关）。
+     * 2) 计步器启动后从未产生任何步数 → 平躺姿态直接拦（床上/沙发误触）；
+     *    非平躺才停用确认、降级纯加速度判走，保证走路不显示问题不复发。
+     *    【2026 修复】旧版此分支无条件放行，是「床上弹小窗」的第二道闸失效点。
      * 3) 计步器正常出数 → 保留确认：10 秒内 ≥2 步放行；计步不足但持续判走
      *    （累计步达门槛两倍）放行；否则拦（疑似拿手机乱动）。
      */
     private boolean hardwareStepConfirm() {
         if (!stepCounterAlive) return true;
         if (everSteppedTotal == 0L) {
-            DiagLog.log("[gait] 硬件计步器启动后从未计步（可信度低），防误触确认停用，纯加速度判走");
+            // 【BUG 修复】上一轮这里无条件 return true，等于「躺床上硬件当然一步没走」
+            // 时把第二道防误触闸也常开；与消费侧那条绕过 LAY_FLAT 的判据叠加，
+            // 就是最新真机日志「bug2 角落小窗床上打开」的完整成因。
+            // 现在收紧：硬件从没出过数时，平躺姿态一律拦；非平躺才降级为纯加速度判走，
+            // 不误杀正常走路（外层 GUARD 闸门已经先挡掉了无节律抖动）。
+            boolean layFlat = gait.getAttitude() == PhoneAttitude.LAY_FLAT;
+            if (layFlat) {
+                DiagLog.log("[gait] ⛔ 硬件计步器从未出数且姿态=平躺 → 判定为床上误触，抑制预览");
+                return false;
+            }
+            DiagLog.log("[gait] 硬件计步器从未出数，但姿态非平躺 → 降级纯加速度判走（不误杀走路）");
             return true;
         }
         int n = stepCountInWindow();

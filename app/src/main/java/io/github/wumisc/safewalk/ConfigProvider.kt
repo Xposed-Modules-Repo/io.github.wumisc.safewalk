@@ -50,6 +50,10 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.enableNightTorchAuto,
             SafeWalkPrefKey.nightTorchStartHour,
             SafeWalkPrefKey.nightTorchEndHour,
+            // 本次迭代新增：夜间手电「步态联动」开关。Hook 侧 check() 每次 tick
+            // 都要读它来决定是否随 walking 自动点/灭灯，不加白名单会永远读到默认 false，
+            // 表现就是「夜间手电怎么设都不生效」——这正是用户反馈的核心现象之一。
+            SafeWalkPrefKey.enableNightTorchGait,
             SafeWalkPrefKey.enableRearCamera,
             SafeWalkPrefKey.rearCamMode,
             SafeWalkPrefKey.rearCamAuto,
@@ -66,21 +70,49 @@ class ConfigProvider : ContentProvider() {
             // 永远拿默认值 true —— 用户关掉日志开关，SystemUI 那边照样往文件里写。
             SafeWalkPrefKey.enableDiagLog,
             SafeWalkPrefKey.testRearCamAction,
-            SafeWalkPrefKey.testRearCamTs
+            SafeWalkPrefKey.testRearCamTs,
+            // 本次迭代新增（跨进程给 Hook 用）：
+            //  · enablePreviewContrast 悬浮窗对比度开关（App 侧悬浮窗也读，顺带透传保持一致）；
+            //  · hyperOsMode           HyperOS 适配模式，两个进程用同一份版本结论。
+            SafeWalkPrefKey.enablePreviewContrast,
+            SafeWalkPrefKey.hyperOsMode
         )
     }
 
     override fun onCreate(): Boolean = true
 
-    private fun isTrustedCaller(): Boolean {
+        private fun isTrustedCaller(): Boolean {
         val uid = android.os.Binder.getCallingUid()
         if (uid == android.os.Process.myUid() || uid == android.os.Process.SYSTEM_UID) return true
-        // 极少数 ROM 给 SystemUI 分配了独立 uid（不是 android.uid.system）。
-        // 允许按包名兜底，但必须同时满足「系统 uid 段」这个前提，
-        // 普通应用（uid >= 10000）永远进不来。
+        // 系统 uid 段（1..9999）里的 SystemUI，按老规则放行。
         if (uid < android.os.Process.FIRST_APPLICATION_UID) {
             return callingPackage == "com.android.systemui"
         }
+
+        // 【本次全量迭代 BUG 修复】HyperOS 3/4 上，SystemUI 可能被分配到
+        // 「应用段 uid（>= 10000）」。原实现在这里直接 return false，于是
+        // Hook（跑在 SystemUI 进程）读本 Provider 永远拿到空 Cursor →
+        // refreshConfig() 沿用默认 → 所有 pref() 取默认值 →
+        // 用户看到的就是「智能提醒二级菜单里很多开关怎么拨都不生效」。
+        // 这与 ReceiverCompat.isTrustedCommand() 的同源误判是同一个根因。
+        //
+        // 修复：改用 Binder 提供的、第三方无法伪造的 callingPackage 做判据。
+        // 安全边界不变 —— 本 Provider 只输出 WHITELIST 里的开关字段（不含任何隐私），
+        // 即便被极端仿冒，泄露的也只是几个布尔开关。
+        val pkg = callingPackage
+        val systemUiPkg = pkg == "com.android.systemui"
+                || pkg == "com.miui.systemui"
+                || pkg == "com.android.keyguard"
+                || pkg == "com.android.systemui:screenshot"
+                || (pkg != null && pkg.startsWith("com.android.systemui:"))
+        if (systemUiPkg) {
+            android.util.Log.i("SafeWalk",
+                "[SEC:COMPAT] ConfigProvider 放行应用段 uid 的 SystemUI（pkg=$pkg uid=$uid）" +
+                " —— HyperOS 兼容，避免配置读取被一票否决")
+            return true
+        }
+        android.util.Log.w("SafeWalk",
+            "[SEC:REJECT] ConfigProvider 拒绝非受信调用方（pkg=$pkg uid=$uid）")
         return false
     }
 

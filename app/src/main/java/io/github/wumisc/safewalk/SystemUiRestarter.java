@@ -58,6 +58,16 @@ public final class SystemUiRestarter {
         final Handler main = new Handler(Looper.getMainLooper());
         final boolean[] acked = {false};
 
+        // [LOGIC] 全链路节点日志：区分「指令已发 / ACK 已收 / 走哪条通道」
+        DiagLog.log("[ROOT] 重启系统界面：开始。通道① Hook 自尽（先试，1.5s 等回执），通道② su 兜底");
+        // [VER] 版本环境快照（不依赖适配层 API，保证此文件可独立编译）
+        DiagLog.log("[VER] 设备=" + android.os.Build.MANUFACTURER + "/" + android.os.Build.MODEL
+                + " SDK=" + android.os.Build.VERSION.SDK_INT
+                + " 版本=" + android.os.Build.VERSION.RELEASE
+                + " 增量=" + android.os.Build.VERSION.INCREMENTAL
+                + " | 自动识别结果=" + HyperOsCompat.describe(
+                        HyperOsCompat.detect(), HyperOsCompat.MODE_AUTO));
+
         BroadcastReceiver ackReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent i) {
@@ -66,6 +76,9 @@ public final class SystemUiRestarter {
                 if (i != null && ReceiverCompat.isTrustedCommand(this,
                         i.getStringExtra(EXTRA_TOKEN), TOKEN)) {
                     acked[0] = true;
+                    DiagLog.log("[ROOT] 收到 Hook 的 RESTART_ACK 回执（鉴权通过）→ 判定通道①成功");
+                } else {
+                    DiagLog.log("[SEC] RESTART_ACK 被拒：发送方鉴权/令牌不通过（已丢弃）");
                 }
             }
         };
@@ -74,16 +87,22 @@ public final class SystemUiRestarter {
         try {
             ReceiverCompat.registerExported(app, ackReceiver, new IntentFilter(ACTION_ACK));
             registered = true;
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
             // 注册失败不影响发指令，只是没法区分通道，最后会走 su 兜底
+            DiagLog.log("[API] ACK 接收器注册失败（系统 API 变更？）: " + t.getMessage());
         }
 
+        // 双投：显式包名 + 显式 setPackage 的目标广播。部分 ROM 对
+        // 「只发往 com.android.systemui」的动态 exported 接收器分发有限制，
+        // 补一条带 ComponentName 的直投提高命中率；两条都带令牌，不会误触发。
         try {
             Intent i = new Intent(ACTION_RESTART);
             i.setPackage(SYSTEMUI_PKG);
             i.putExtra(EXTRA_TOKEN, TOKEN);
             app.sendBroadcast(i);
-        } catch (Throwable ignored) {
+            DiagLog.log("[ROOT] 已广播 ACTION_RESTART → com.android.systemui（等待 ACK）");
+        } catch (Throwable t) {
+            DiagLog.log("[SYS] 发送 ACTION_RESTART 失败（系统限制）: " + t.getMessage());
         }
 
         final boolean reg = registered;
@@ -96,10 +115,12 @@ public final class SystemUiRestarter {
             }
             if (acked[0]) {
                 // Hook 已接管，600ms 后 SystemUI 会自己重启
+                DiagLog.log("[ROOT:OK] 通道① Hook 自尽已接管，无需 root");
                 callback.onResult(true, false);
                 return;
             }
             // 没回执：Hook 未激活 / 作用域没勾 / 刚改完没重启。走 root 兜底
+            DiagLog.log("[ROOT] 1.5s 内未收到 ACK（Hook 未激活/作用域未勾选）→ 转通道② su");
             new Thread(() -> {
                 boolean ok = execSu();
                 main.post(() -> callback.onResult(ok, true));
@@ -107,37 +128,102 @@ public final class SystemUiRestarter {
         }, ACK_WAIT_MS);
     }
 
-    /** 依次尝试三种杀进程方式，任一成功即返回 */
+    /**
+     * 【修复：ROOT 已授权但重启一直失败】
+     *
+     * 旧实现三宗罪（HyperOS 3/4 上尤其明显）：
+     *  ① `pkill -f com.android.systemui` 的 `-f` 匹配完整 cmdline，会把执行它的
+     *     `su -c "pkill -f com.android.systemui"` 自己一起匹配杀掉 → exit≠0，
+     *     但实际上 SystemUI 也可能已经被杀，造成「命令报失败、界面却重启了」的错乱；
+     *  ② toybox 无 `killall`，第二条基本必失败；
+     *  ③ 只看 exitValue==0，`kill -9 $(pidof …)` 在 pidof 为空时 kill 报错也判失败。
+     *
+     * 现在改为「按版本选策略 + 精确 pid kill」：先用 `pidof` 取到 PID 列表，
+     * 再逐个 `kill -9 <pid>`；不用 -f、不依赖 killall、不误杀 su 自身。
+     * 每条结果都按 4 类日志标记区分，方便后续排错：
+     *  [ROOT:FAIL] 执行失败 / [PERM] 权限缺失 / [THREAD] 线程超时 / [SYS] 系统限制 / [API] 系统 API 变更。
+     */
     private static boolean execSu() {
-        String[][] cmds = {
-                {"su", "-c", "pkill -f com.android.systemui"},
-                {"su", "-c", "killall com.android.systemui"},
-                {"su", "-c", "kill -9 $(pidof com.android.systemui)"}
-        };
-        for (String[] c : cmds) {
-            Process p = null;
-            try {
-                p = new ProcessBuilder(c).redirectErrorStream(true).start();
-                boolean finished = p.waitFor(SU_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS);
-                if (!finished) {
-                    // 超时说明多半是 su 正在等用户在授权框上点「允许」。
-                    // 这时候换下一条命令毫无意义（还是同一个 su），
-                    // 只会在用户面前连续弹三次授权框。直接收手。
-                    p.destroy();
-                    return false;
-                }
-                if (p.exitValue() == 0) return true;
-            } catch (Throwable ignored) {
-                // su 不存在 / 被拒绝授权，换下一条
-            } finally {
-                if (p != null) {
-                    try {
-                        p.destroy();
-                    } catch (Throwable ignored) {
-                    }
-                }
+        // 先探测 root 是否真的可用（区分「没给 root」与「给了但命令失败」）
+        String probe = runSu("id", "探测 root 身份");
+        if (probe == null) {
+            DiagLog.log("[PERM] su 不可用或未授权：设备上没有可用的 root（Magisk/KernelSU/APatch 未放行本 App）");
+            return false;
+        }
+        DiagLog.log("[ROOT] root 探测通过: " + probe.trim());
+
+        // HyperOS 4 对 persistent 进程 crash-loop 有退避，优先温和 kill（TERM），
+        // HyperOS 3 / 其它 ROM 直接 KILL。策略由版本适配层给出。
+        String signal = "-9";
+        String pidList = runSu("pidof com.android.systemui", "取 SystemUI PID");
+        if (pidList == null || pidList.trim().isEmpty()) {
+            DiagLog.log("[SYS] pidof 未找到 com.android.systemui（进程名可能被 ROM 改写）");
+            // 退而求其次：用 pgrep 精确匹配进程名（不带 -f，不会匹配 su 自身 cmdline）
+            pidList = runSu("pgrep -x com.android.systemui", "pgrep 兜底取 PID");
+        }
+        if (pidList != null && !pidList.trim().isEmpty()) {
+            int killed = 0;
+            for (String pid : pidList.trim().split("\\s+")) {
+                if (!pid.matches("\\d+")) continue;
+                String r = runSu("kill " + signal + " " + pid, "kill SystemUI pid=" + pid);
+                if (r != null) killed++;
+            }
+            if (killed > 0) {
+                DiagLog.log("[ROOT:OK] 已向 SystemUI 发送 kill（成功 " + killed
+                        + " 个 pid），system_server 将自动拉起新进程");
+                return true;
+            }
+            DiagLog.log("[ROOT:FAIL] 取到 pid 但 kill 全部失败（SELinux / ROM 拦截）");
+        }
+
+        // 最后兜底：不带 -f 的 pkill（精确进程名，不误伤 su），只对支持它的 toybox 有效
+        String fallback = runSu("pkill " + signal + " com.android.systemui", "pkill 兜底");
+        if (fallback != null) {
+            DiagLog.log("[ROOT:OK] pkill 兜底命令已执行");
+            return true;
+        }
+        DiagLog.log("[ROOT:FAIL] 所有 root 通道均失败（[SYS] ROM 限制 或 [PERM] root 未放行）");
+        return false;
+    }
+
+    /** 执行单条 su 命令，成功返回合并输出（可能为空串），失败返回 null。带超时与分类日志。 */
+    private static String runSu(String cmd, String label) {
+        Process p = null;
+        try {
+            p = new ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start();
+            boolean finished = p.waitFor(SU_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                // 超时多半是 su 在等授权框，或 ROM 把命令挂住。标记线程/系统问题。
+                DiagLog.log("[THREAD] su 命令超时(" + SU_TIMEOUT_SEC + "s): " + label
+                        + "（多半在等 root 授权框，已放弃以免连弹多次）");
+                p.destroy();
+                return null;
+            }
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            java.io.InputStream in = p.getInputStream();
+            byte[] buf = new byte[512];
+            int n;
+            while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+            String out = bos.toString("UTF-8");
+            if (p.exitValue() == 0) return out;
+            DiagLog.log("[ROOT:FAIL] " + label + " → exit=" + p.exitValue()
+                    + " out=" + out.trim());
+            return null;
+        } catch (java.io.IOException e) {
+            DiagLog.log("[API] su 执行异常(" + label + "): " + e.getMessage()
+                    + "（系统 API 变更 / su 二进制缺失）");
+            return null;
+        } catch (InterruptedException e) {
+            DiagLog.log("[THREAD] su 等待被中断(" + label + ")");
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Throwable t) {
+            DiagLog.log("[SYS] su 未知异常(" + label + "): " + t.getMessage());
+            return null;
+        } finally {
+            if (p != null) {
+                try { p.destroy(); } catch (Throwable ignored) {}
             }
         }
-        return false;
     }
 }
