@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -24,13 +25,20 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
@@ -50,12 +58,47 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
-import com.kyant.shapes.Capsule
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
+
+/** 导航栏圆角半径：56dp 高，28dp 正好是外接半圆，视觉上仍是胶囊 */
+private val TabsCorner = 28.dp
+
+/**
+ * 显式圆角 + **不做** 50% 百分比。
+ * `Capsule()` 内部是 `RoundedCornerShape(50%)`，在非整数像素高度（56dp × 密度）上
+ * 会算出 27.5px 之类的半径，shader 画圆角时没有覆盖采样，边缘就出现一圈半透明毛刺。
+ * 固定 28dp 后半径落在整像素上，锯齿明显减少。
+ */
+private val TabsShape: Shape = RoundedCornerShape(TabsCorner)
+
+/**
+ * 边缘「收口」：在玻璃图层之上再描一圈极细的同色边。
+ *
+ * 为什么需要它：液态玻璃的 blur / lens 是 AGSL shader 直接栅格化的，形状边缘没有
+ * 多重采样抗锯齿；再加上 8dp 模糊会把边缘外的透明像素混进来，圆角内侧会留一条
+ * 半透明的灰边（用户说的「毛边」）。用 1dp 描边压住这一圈，圆角就干净了。
+ * 描边颜色跟主题底色一致、且做垂直渐变，看起来是玻璃边的自然高光，不像加了个框。
+ */
+private fun Modifier.cleanEdge(corner: Dp, brush: Brush, width: Dp = 1.dp): Modifier =
+    drawWithContent {
+        drawContent()
+        val stroke = width.toPx()
+        // 内缩半个描边宽：描边以路径为中心线，不内缩的话外侧会被自身边界裁掉一半，
+        // 圆角处就会出现「半边粗半边细」的台阶，反而更像毛边。
+        val inset = stroke / 2f
+        val r = (corner.toPx() - inset).coerceAtLeast(0f)
+        drawRoundRect(
+            brush = brush,
+            topLeft = Offset(inset, inset),
+            size = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f)),
+            cornerRadius = CornerRadius(r, r),
+            style = Stroke(width = stroke)
+        )
+    }
 
 @Composable
 fun LiquidBottomTabs(
@@ -75,6 +118,18 @@ fun LiquidBottomTabs(
     val containerColor =
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
         else Color(0xFF121212).copy(0.4f)
+    // 边缘收口用色：亮色主题用近白（把灰毛边盖成干净的亮边），
+    // 暗色主题用低透明白（只提亮一点边，不抢画面）。
+    val edgeBrush =
+        if (isLightTheme) {
+            Brush.verticalGradient(
+                listOf(Color(0xFFFFFFFF).copy(0.85f), Color(0xFFFFFFFF).copy(0.25f))
+            )
+        } else {
+            Brush.verticalGradient(
+                listOf(Color(0xFFFFFFFF).copy(0.22f), Color(0xFFFFFFFF).copy(0.05f))
+            )
+        }
 
     val tabsBackdrop = rememberLayerBackdrop()
 
@@ -163,7 +218,7 @@ fun LiquidBottomTabs(
                 }
                 .drawBackdrop(
                     backdrop = backdrop,
-                    shape = { Capsule() },
+                    shape = { TabsShape },
                     effects = {
                         vibrancy()
                         blur(8f.dp.toPx())
@@ -177,6 +232,8 @@ fun LiquidBottomTabs(
                     },
                     onDrawSurface = { /* 不画实色底，仅保留 blur/lens 折射，消除毛边 */ }
                 )
+                // 圆角收口：盖住 shader 栅格化留下的半透明毛边（见 cleanEdge 注释）
+                .cleanEdge(TabsCorner, edgeBrush)
                 .then(interactiveHighlight.modifier)
                 .height(56f.dp)
                 .fillMaxWidth()
@@ -200,7 +257,7 @@ fun LiquidBottomTabs(
                     }
                     .drawBackdrop(
                         backdrop = backdrop,
-                        shape = { Capsule() },
+                        shape = { TabsShape },
                         effects = {
                             val progress = dampedDragAnimation.pressProgress
                             vibrancy()
@@ -238,7 +295,7 @@ fun LiquidBottomTabs(
                 .then(dampedDragAnimation.modifier)
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
-                    shape = { Capsule() },
+                    shape = { TabsShape },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
                         lens(
@@ -279,6 +336,8 @@ fun LiquidBottomTabs(
                         drawRect(Color.Black.copy(alpha = 0.03f * progress))
                     }
                 )
+                // 滑块同样收口：它是画面上最亮的元素，圆角毛边最显眼
+                .cleanEdge(TabsCorner, edgeBrush, 0.9.dp)
                 .height(56f.dp)
                 .fillMaxWidth(1f / tabsCount)
         )

@@ -10,19 +10,28 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
 /**
- * 控制中心磁贴：一键开关「行走模式」。
+ * 控制中心磁贴：一键开关「自动跟随步行」。
  *
- * 【为什么关一下不需要中转页，开一下需要】
- * 关：写配置 + 发 STOP 指令给早已运行的服务即可，不涉及后台启动限制。
- * 开：`WalkPreviewService` 是 `camera` 类型前台服务，Android 14+ 禁止从后台
- * （QS 面板展开时本应用处于后台）直接 `startForegroundService` 一个 camera FGS，
- * 会抛 SecurityException / ForegroundServiceStartNotAllowedException。
- * 官方稳定豁免是「启动瞬间应用有可见 Activity」，所以开的那一侧交给
- * [WalkToggleActivity] 这个透明中转页去启动，用户几乎无感。
+ * 【它到底切什么】
+ * 行走模式有两个独立配置：
+ *  - `enableRearCamera`：路况预览总开关（有画面 / 没画面）
+ *  - `rearCamAuto`：自动跟随步行（走起来自动显示、停下收起；关 = 常显）
+ * 磁贴管的是**自动跟随步行**：点亮 = 走起来才弹小窗，再点 = 关掉自动跟随。
+ * 所以点亮时两个配置都要写成 true（没有总开关就没有画面），熄灭时两个都写 false ——
+ * 只把 auto 写成 false 会留下「总开关还是开、档位是常显」的状态，下次开机
+ * `AutoStartActivity` 一启动服务就会常显小窗，等于关不干净。
+ *
+ * 【为什么关不需要中转页，开需要】
+ * 关：写配置 + 发 STOP 给服务即可，不启动任何组件。
+ * 开：如果服务已在跑（原本是常显档），只改配置 + 发 SHOW，不用中转页；
+ * 如果服务没跑，`WalkPreviewService` 是 `camera` 类型前台服务，QS 面板展开时
+ * 应用在后台，Android 14+ 直接 `startForegroundService` 会抛
+ * ForegroundServiceStartNotAllowedException。官方稳定豁免是「启动瞬间应用有
+ * 可见 Activity」，所以这一次交给 [WalkToggleActivity] 这个透明中转页去起服务。
  *
  * 【状态为什么不看 isAlive()】
- * 见 [WalkTileStatePolicy]：配置为开就显示激活，否则点完到服务起来的两秒内
- * 磁贴还是灰的，像点了没反应。服务没活只在副标题里提示「点一下重试」。
+ * 见 [WalkTileStatePolicy]：自动跟随开着就显示激活，否则点完到服务起来的两秒内
+ * 磁贴还是灰的，像点了没反应。服务没活只在副标题里提示。
  */
 class WalkTileService : TileService() {
 
@@ -50,8 +59,9 @@ class WalkTileService : TileService() {
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
         val master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
         val walk = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
+        val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
 
-        when (WalkTileStatePolicy.resolve(master, walk)) {
+        when (WalkTileStatePolicy.resolve(master, walk, auto)) {
             WalkTileStatePolicy.UNAVAILABLE -> {
                 // 置灰状态通常点不动，但个别 ROM 仍会回调：给一句明确原因，别让人以为坏了
                 toast("总开关已关闭，请先在安全出行里打开")
@@ -60,24 +70,39 @@ class WalkTileService : TileService() {
 
             WalkTileStatePolicy.ACTIVE -> turnOff()
 
-            else -> turnOn()
+            else -> turnOn(walk)
         }
         refreshTile()
     }
 
-    /** 关：写配置 → 通知服务停止 → 刷新磁贴。全程不需要可见界面。 */
+    /** 关：自动跟随 + 路况预览一起关，服务停止。全程不需要可见界面。 */
     private fun turnOff() {
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
-        sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, false).commit()
+        sp.edit()
+            .putBoolean(SafeWalkPrefKey.enableRearCamera, false)
+            .putBoolean(SafeWalkPrefKey.rearCamAuto, false)
+            .commit()
         SafeWalkConfig.exportConfig(this)
         WalkPreviewService.send(this, WalkPreviewService.ACTION_STOP, null)
-        DiagLog.log("[tile] 磁贴 → 关闭行走模式")
-        toast("行走模式已关闭")
+        DiagLog.log("[tile] 磁贴 → 关闭自动跟随步行（同时停掉预览服务）")
+        toast("已关闭自动跟随步行")
     }
 
-    /** 开：交给透明中转页（相机前台服务必须有可见 Activity 才能从后台拉起）。 */
-    private fun turnOn() {
-        DiagLog.log("[tile] 磁贴 → 请求开启行走模式（经透明中转页启动相机前台服务）")
+    /**
+     * 开：优先走「服务已在跑」的轻量路径，只切档位、不闪中转页。
+     * 服务没跑才需要可见 Activity 去拉起 camera 前台服务。
+     */
+    private fun turnOn(walkOn: Boolean) {
+        if (walkOn && WalkPreviewService.isAlive()) {
+            val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
+            sp.edit().putBoolean(SafeWalkPrefKey.rearCamAuto, true).commit()
+            SafeWalkConfig.exportConfig(this)
+            WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, null)
+            DiagLog.log("[tile] 磁贴 → 服务已在跑，切到自动跟随档（走起来显示/停下收起）")
+            toast("已开启自动跟随：走起来才显示")
+            return
+        }
+        DiagLog.log("[tile] 磁贴 → 请求开启自动跟随（经透明中转页启动相机前台服务）")
         val launch = {
             startActivityAndCollapseCompat(
                 Intent(this, WalkToggleActivity::class.java)
@@ -119,9 +144,12 @@ class WalkTileService : TileService() {
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
         val master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
         val walk = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
-        tile.state = WalkTileStatePolicy.resolve(master, walk)
+        val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
+        tile.state = WalkTileStatePolicy.resolve(master, walk, auto)
         tile.label = getString(R.string.tile_walk_label)
-        tile.subtitle = WalkTileStatePolicy.subtitle(master, walk, WalkPreviewService.isAlive())
+        tile.subtitle = WalkTileStatePolicy.subtitle(
+            master, walk, auto, WalkPreviewService.isAlive()
+        )
         tile.updateTile()
     }
 

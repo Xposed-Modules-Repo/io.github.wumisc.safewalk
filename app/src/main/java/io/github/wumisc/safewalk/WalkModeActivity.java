@@ -199,6 +199,8 @@ public final class WalkModeActivity extends Activity {
             if (swRearCam.isChecked()) {
                 WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);
             }
+            // 控制中心磁贴显示的就是「自动跟随」这一档，切完立刻同步
+            WalkTileService.refresh(this);
         });
 
         // 【新增对比度 UI 模块】开关只切 HUD 文字层，不动透明度、不动相机采集。

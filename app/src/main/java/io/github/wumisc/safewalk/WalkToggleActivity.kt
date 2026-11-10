@@ -12,6 +12,11 @@ import android.provider.Settings
 /**
  * 控制中心磁贴的「开」中转页（透明、不进最近任务、无动画）。
  *
+ * 【它负责把配置写成什么】
+ * 磁贴管的是「自动跟随步行」，所以这里同时写两个 key：
+ * `enableRearCamera=true`（没有预览总开关就没有画面）+ `rearCamAuto=true`
+ * （走起来才显示、停下收起）。只写前者会落到「常显」档，与磁贴语义不符。
+ *
  * 【为什么磁贴不能自己启动服务】
  * [WalkPreviewService] 是 `camera` 类型前台服务。QS 面板展开时本应用在后台，
  * Android 14+ 从后台启动 camera FGS 会直接抛异常（CAMERA 属于 while-in-use 权限）。
@@ -20,7 +25,7 @@ import android.provider.Settings
  *
  * 【权限不齐时怎么办】
  * 不写配置、不启动服务，直接把用户送到权限引导页并说明缺哪一项。
- * 如果把 `enableRearCamera` 先写成 true、服务却没起来，磁贴会显示「已开启」
+ * 如果把配置先写成 true、服务却没起来，磁贴会显示「已开启」
  * 而屏幕上什么都没有 —— 这是最难排查的一类"假开"。
  */
 class WalkToggleActivity : Activity() {
@@ -60,18 +65,32 @@ class WalkToggleActivity : Activity() {
             return
         }
 
-        // 配置先落盘再启动：服务在 onCreate 里就要读到 enableRearCamera=true
-        sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, true).commit()
+        // 配置先落盘再启动：服务 onCreate 就要读到「总开关=开 + 自动跟随=开」
+        // 只写 enableRearCamera 会落到「常显」档，站着不动也一直挂着画面，
+        // 与磁贴的「自动跟随」语义不符。
+        sp.edit()
+            .putBoolean(SafeWalkPrefKey.enableRearCamera, true)
+            .putBoolean(SafeWalkPrefKey.rearCamAuto, true)
+            .commit()
         SafeWalkConfig.exportConfig(this)
-        DiagLog.log("[tile] 中转页：已写开关=开，启动预览服务")
+        DiagLog.log("[tile] 中转页：已写「总开关=开 + 自动跟随=开」，启动预览服务")
         // 配置已是「开」，磁贴立刻切成激活态，不必等用户下次拉开面板
         WalkTileService.refresh(this)
 
+        var started = true
         try {
             WalkPreviewService.start(this)
         } catch (t: Throwable) {
+            // 注意不能在这里 return：本页是透明中转页，不 finish 会留一个看不见的
+            // Activity 挡在上面。失败也照样走下面的延时退出。
+            started = false
             DiagLog.log("[tile] 中转页启动预览服务失败: ${t.javaClass.simpleName} ${t.message}")
             toast("启动失败，请从应用内开启")
+        }
+        if (started) {
+            // 服务已经起来，但自动跟随要「走起来」才显示，先说清楚，
+            // 否则用户点完磁贴站着不动、屏幕没动静，会以为磁贴没生效。
+            toast("已开启自动跟随：走起来才显示")
         }
 
         // 等服务把 startForeground() 提上去再退出，避免「Activity 已销毁 → 进程可回收」
