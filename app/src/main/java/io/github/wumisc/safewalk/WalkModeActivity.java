@@ -33,6 +33,9 @@ public final class WalkModeActivity extends Activity {
 
     // 【新增对比度 UI 模块】增强对比度独立开关（整卡可点）
     private SwitchCompat swPreviewContrast;
+    // 【对比度强度进度条】开关是总闸，滑条调 HUD 描边/阴影/衬底强弱（0~100）
+    private SeekBar seekContrastLevel;
+    private TextView tvContrastLevel;
     // HyperOS 版本适配入口已按需求收敛到首页 MainActivity（两处共用
     // SafeWalkPrefKey.hyperOsMode）。本页不再持有其控件与状态，避免重复入口。
 
@@ -62,7 +65,7 @@ public final class WalkModeActivity extends Activity {
         DiagLog.log("[walk] 打开行走模式页 rearCam=" + swRearCam.isChecked()
                 + " mode=" + rearMode
                 + " opacity=" + (seekOpacity.getProgress() + 10)
-                + " contrast=" + swPreviewContrast.isChecked()
+                + " contrast=" + swPreviewContrast.isChecked() + "/" + seekContrastLevel.getProgress() + "%"
                 + " master=" + SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
                 + " | 日志=" + DiagLog.status());
     }
@@ -87,6 +90,9 @@ public final class WalkModeActivity extends Activity {
         // 【新增对比度 UI 模块】
         swPreviewContrast = findViewById(R.id.sw_preview_contrast);
         findViewById(R.id.card_preview_contrast).setOnClickListener(v -> swPreviewContrast.toggle());
+        // 【对比度强度进度条】与开关卡片平级，点滑条不会误触发开关 toggle
+        seekContrastLevel = findViewById(R.id.seek_contrast_level);
+        tvContrastLevel = findViewById(R.id.tv_contrast_level);
         // HyperOS 版本适配卡片已从本页布局删除，此处不再绑定其控件
         // （否则 findViewById 返回 null，点击时直接 NPE）。
         seekOpacity = findViewById(R.id.seek_opacity);
@@ -130,6 +136,11 @@ public final class WalkModeActivity extends Activity {
         swAuto.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false));
         // 【新增对比度 UI 模块】增强对比度默认关，不影响老用户既有观感
         swPreviewContrast.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enablePreviewContrast, false));
+        // 【对比度强度进度条】0~100，默认 50（老用户没有这项时沿用默认适中档）
+        int contrastLevel = SafePrefs.getInt(sp, SafeWalkPrefKey.previewContrastLevel, 50);
+        contrastLevel = Math.max(0, Math.min(100, contrastLevel));
+        seekContrastLevel.setProgress(contrastLevel);
+        updateContrastLabel(contrastLevel);
         // HyperOS 适配模式由首页 MainActivity 单独读写，本页不再加载该配置。
 
         rearMode = SafePrefs.getString(sp, SafeWalkPrefKey.rearCamMode, RearCameraOverlay.MODE_FULLSCREEN);
@@ -190,10 +201,33 @@ public final class WalkModeActivity extends Activity {
             sp.edit().putBoolean(SafeWalkPrefKey.enablePreviewContrast, c).commit();
             SafeWalkConfig.exportConfig(this);
             DiagLog.log("[contrast] 增强对比度 → " + (c ? "开（文字描边/阴影/衬底）" : "关")
+                    + " 强度=" + seekContrastLevel.getProgress() + "%"
                     + " | 透明度滑块保持原有取值不变");
+            // 关掉总闸时强度滑条同步置灰，避免用户拖了半天没反应
+            refreshContrastControls();
             // 立即刷新运行中的悬浮窗：doShow 会带上新的 contrast 值，
             // show() 检测到 Style 变化会走 updateViewLayout 切 HUD 可见性。
             previewIfEnabled();
+        });
+
+        // 【对比度强度进度条】拖动中只更新数值标签，松手那一刻落盘 + 导出 + 刷新预览。
+        // 这延续「删除保存按钮后后端即时保存」的语义：改完即生效、无需再点保存；
+        // 但不每移动一个像素就 commit()/重建悬浮窗，避免频繁 IO 和画面抖动。
+        seekContrastLevel.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                updateContrastLabel(progress);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+                int level = sb.getProgress();
+                sp.edit().putInt(SafeWalkPrefKey.previewContrastLevel, level).commit();
+                SafeWalkConfig.exportConfig(WalkModeActivity.this);
+                DiagLog.log("[contrast] 强度 → " + level + "%"
+                        + " | 描边/阴影/衬底同步变化，画面透明度不变");
+                previewIfEnabled();
+            }
         });
 
         seekOpacity.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -403,6 +437,22 @@ public final class WalkModeActivity extends Activity {
 
     // ========== 显示刷新 ==========
 
+    /** 【对比度强度进度条】数值 + 档位说明，让用户知道拖到哪是什么效果 */
+    private void updateContrastLabel(int level) {
+        String tier = level < 25 ? "轻微" : level < 60 ? "适中" : level < 85 ? "明显" : "最强";
+        tvContrastLevel.setText(level + "% · " + tier);
+    }
+
+    /**
+     * 【对比度强度进度条】总闸 = 行走模式开关 && 增强对比度开关。
+     * 两道闸任一关闭，强度滑条置灰（仍显示上次的值，不重置用户设置）。
+     */
+    private void refreshContrastControls() {
+        boolean usable = swRearCam.isChecked() && swPreviewContrast.isChecked();
+        setEnabledState(seekContrastLevel, usable);
+        tvContrastLevel.setAlpha(usable ? 1f : 0.45f);
+    }
+
     private void refreshAll() {
         refreshDependencies();
         refreshModeChips();
@@ -448,6 +498,8 @@ public final class WalkModeActivity extends Activity {
         setDimmed(modeChips[1], rearOn);
         for (TextView chip : posChips) setDimmed(chip, rearOn && small);
         setEnabledState(seekOpacity, rearOn);
+        // 【对比度强度进度条】行走模式或总闸任一关闭时，强度滑条置灰不可拖
+        refreshContrastControls();
 
         tvCornerTitle.setAlpha(small ? 1f : 0.4f);
 

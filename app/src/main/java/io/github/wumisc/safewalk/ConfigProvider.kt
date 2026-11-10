@@ -73,8 +73,10 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.testRearCamTs,
             // 本次迭代新增（跨进程给 Hook 用）：
             //  · enablePreviewContrast 悬浮窗对比度开关（App 侧悬浮窗也读，顺带透传保持一致）；
+            //  · previewContrastLevel 对比度强度 0~100（同上，保证导出配置不丢这一项）；
             //  · hyperOsMode           HyperOS 适配模式，两个进程用同一份版本结论。
             SafeWalkPrefKey.enablePreviewContrast,
+            SafeWalkPrefKey.previewContrastLevel,
             SafeWalkPrefKey.hyperOsMode
         )
     }

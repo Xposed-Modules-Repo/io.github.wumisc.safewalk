@@ -134,6 +134,17 @@ object SafeWalkPrefKey {
     const val enablePreviewContrast = "enablePreviewContrast"
 
     /**
+     * 【对比度强度进度条】增强对比度的强度，Int 0~100，默认 50。
+     *
+     * 与 [enablePreviewContrast] 配合：开关是总闸，本值是强度。强度越高 →
+     * HUD 文字层的黑色外描边越粗、阴影越大、深色衬底越不透明；强度越低 →
+     * 越接近原始画面。无论取何值都不影响 [rearCamOpacity] 对画面层的透明度作用，
+     * 也不改相机采集链路。必须同步加入 ConfigProvider.WHITELIST，否则导出的
+     * JSON 配置里会丢掉这一项。
+     */
+    const val previewContrastLevel = "previewContrastLevel"
+
+    /**
      * 【HyperOS 版本适配模块】适配模式串，默认 [HyperOsCompat.MODE_AUTO]。
      *
      * 合法值：auto（方案A，自动识别）/ hos3 / hos4（方案B，手动强制兜底）。

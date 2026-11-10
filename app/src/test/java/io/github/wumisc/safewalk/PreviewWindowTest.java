@@ -143,4 +143,30 @@ public class PreviewWindowTest {
         assertTrue("小窗高度不该和全屏一样",
                 recorder.params.height != ViewGroup.LayoutParams.MATCH_PARENT);
     }
+
+    @Test
+    public void contrastLevel_isAcceptedAndTogglesHudVisibility() {
+        build();
+        // 【对比度强度进度条】六参 show：开关开 + 强度 85%，窗口仍正常挂载，
+        // 容器含画面层 + HUD 文字层，且 HUD 层可见。
+        overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
+                true, false, 85);
+        assertNotNull(recorder.params);
+        assertTrue("窗口根必须是 FrameLayout 容器", recorder.view instanceof ViewGroup);
+        ViewGroup root = (ViewGroup) recorder.view;
+        assertTrue("容器应含画面层 + HUD 文字层", root.getChildCount() >= 2);
+        assertEquals("增强对比度开启时 HUD 层应可见",
+                View.VISIBLE, root.getChildAt(1).getVisibility());
+        assertEquals("容器 alpha 恒为 1（文字层永不被调淡）",
+                1.0f, root.getAlpha(), 0.001f);
+
+        // 关掉总闸：HUD 层置 GONE，透明度仍只作用于画面层
+        overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 85);
+        ViewGroup root2 = (ViewGroup) recorder.view;
+        assertEquals("增强对比度关闭时 HUD 层应隐藏",
+                View.GONE, root2.getChildAt(1).getVisibility());
+        assertEquals("画面层透明度不受对比度开关影响",
+                0.50f, root2.getChildAt(0).getAlpha(), 0.01f);
+    }
 }

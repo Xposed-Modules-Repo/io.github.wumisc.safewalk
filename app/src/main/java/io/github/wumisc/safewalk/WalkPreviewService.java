@@ -346,6 +346,10 @@ public final class WalkPreviewService extends Service {
         // 【新增对比度 UI 模块】把「增强对比度」开关透传给悬浮窗。
         // 悬浮窗会把 HUD 文字层（描边/阴影/深色衬底）单独渲染，且不受 opacity 影响。
         boolean contrast = SafePrefs.getBool(sp, SafeWalkPrefKey.enablePreviewContrast, false);
+        // 【对比度强度进度条】0~100，默认 50。强度只作用于 HUD 文字层的
+        // 描边/阴影/衬底，绝不改相机采集，也不改画面层 alpha。
+        int contrastLevel = SafePrefs.getInt(sp, SafeWalkPrefKey.previewContrastLevel, 50);
+        contrastLevel = Math.max(0, Math.min(100, contrastLevel));
 
         // 【BUG 修复 · 夜间手电联动对象纠正】
         // 用户明确：「闪光灯是跟角落小窗一起打开，联动的是角落小窗」。
@@ -360,12 +364,12 @@ public final class WalkPreviewService extends Service {
         boolean linkEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorchGait, false);
         boolean night = isNightTime();
         boolean torchWithPreview = linkEnabled && night;
-        overlay.show(mode, opacity, corner, contrast, torchWithPreview);
+        overlay.show(mode, opacity, corner, contrast, torchWithPreview, contrastLevel);
         DiagLog.log("[torch:overlay] 小窗联动闪光灯 | 开关=" + linkEnabled
                 + " 夜间区间=" + night + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
                 + " | 生命周期=小窗显示即亮、收起即灭（预览会话内 FLASH_MODE_TORCH）");
         DiagLog.log("[overlay] doShow | mode=" + mode + " opacity=" + opacity
-                + " corner=" + corner + " 增强对比度=" + contrast
+                + " corner=" + corner + " 增强对比度=" + contrast + "(" + contrastLevel + "%)"
                 + " | 窗口生命周期=attach/update（容器含画面层+HUD层）");
         reportPreviewState();
     }

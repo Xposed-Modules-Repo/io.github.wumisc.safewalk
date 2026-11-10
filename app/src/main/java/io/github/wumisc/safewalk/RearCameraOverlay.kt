@@ -104,6 +104,8 @@ class RearCameraOverlay(
     private data class Style(
         val mode: String, val opacity: Int, val corner: String,
         val enhanceContrast: Boolean,
+        /** 【对比度强度进度条】0~100，驱动 HUD 描边/阴影/衬底强弱 */
+        val contrastLevel: Int,
         /** 【小窗联动闪光灯】在预览会话内开 FLASH_MODE_TORCH，随小窗显示/收起开关 */
         val torchWithPreview: Boolean
     )
@@ -131,10 +133,10 @@ class RearCameraOverlay(
      */
     private var rootView: FrameLayout? = null
     /** 增强对比度开启时显示的 HUD 文字层；关闭时置 GONE，不移除（避免频繁重建） */
-    private var hudView: TextView? = null
+    private var hudView: HudTextView? = null
 
     private var isShowing = false
-    private var style = Style(MODE_FULLSCREEN, 50, CORNER_BR, false, false)
+    private var style = Style(MODE_FULLSCREEN, 50, CORNER_BR, false, 50, false)
 
     /**
      * 【小窗联动闪光灯】后置相机是否带闪光灯。
@@ -206,8 +208,11 @@ class RearCameraOverlay(
      * @param enhanceContrast 【新增】增强对比度：开启后在画面之上叠加带描边/阴影/
      *        深色衬底的 HUD 文字层，且该层**不受 opacity 影响**。
      * @param torchWithPreview 【小窗联动闪光灯】开启时在预览会话的 CaptureRequest 里
-     *        常亮闪光灯；小窗收起 → 会话关闭 → 灯自动灭。@JvmOverloads 保证 Java
-     *        侧旧的三参/四参调用继续可用。
+     *        常亮闪光灯；小窗收起 → 会话关闭 → 灯自动灭。
+     * @param contrastLevel 【对比度强度进度条】0~100，只在 [enhanceContrast] 开启时生效，
+     *        控制 HUD 文字层描边宽度 / 阴影半径 / 深色衬底不透明度。画面层透明度
+     *        始终只由 [opacity] 决定，两者互不干扰。
+     * @JvmOverloads 保证 Java 侧旧的三参/四参/五参调用继续可用。
      */
     @JvmOverloads
     fun show(
@@ -215,7 +220,8 @@ class RearCameraOverlay(
         opacity: Int = 50,
         corner: String = CORNER_BR,
         enhanceContrast: Boolean = false,
-        torchWithPreview: Boolean = false
+        torchWithPreview: Boolean = false,
+        contrastLevel: Int = 50
     ) {
         // 硬失败静默期：Hook 每 2s 一次 ACTION_HOOK_SHOW 会不断把我们叫醒，
         // 但相机被策略禁用/无权限不会自己变好。静默期内直接拒绝拉起，
@@ -230,21 +236,25 @@ class RearCameraOverlay(
             opacity.coerceIn(10, 100),
             corner,
             enhanceContrast,
+            contrastLevel.coerceIn(0, 100),
             torchWithPreview
         )
-        // 【小窗联动闪光灯】只切换联动开关、其余参数没变时，不要重建窗口/相机：
-        // 相机会话还在跑，只需重新下发一次 repeating request 就能开关闪光灯，
-        // 避免「切个开关画面黑一下 + 重新握手 400ms」。
+        // 【原地快刷】只改「对比度强度 / 闪光灯联动」这类不需要重建视图的参数时，
+        // 不重建窗口、不重开相机：HUD 层改样式只要 invalidate，闪光灯只要重新下发
+        // 一次 repeating request。否则拖一下进度条就「画面黑一下 + 重新握手 400ms」。
+        // torchChanged / contrastChanged 必须在 style 被覆盖前算好。
+        val torchChanged = target.torchWithPreview != style.torchWithPreview
+        val contrastChanged = target.contrastLevel != style.contrastLevel
         if (isShowing && rootView?.parent != null
             && target.mode == style.mode
             && target.opacity == style.opacity
             && target.corner == style.corner
             && target.enhanceContrast == style.enhanceContrast
-            && target.torchWithPreview != style.torchWithPreview
+            && (contrastChanged || torchChanged)
         ) {
             style = target
-            hudView?.visibility = if (style.enhanceContrast) View.VISIBLE else View.GONE
-            refreshTorchInSession()
+            applyHudStyle()
+            if (torchChanged) refreshTorchInSession()
             return
         }
         // 除了参数未变，还要确认视图真的还挂在 WindowManager 上；
@@ -368,17 +378,18 @@ class RearCameraOverlay(
         val renderAlpha = minOf(style.opacity / 100f, 0.99f)
         texture.alpha = renderAlpha
 
-        // 增强对比度开关：只切 HUD 层的可见性，不重建视图、不碰相机。
-        hudView?.visibility = if (style.enhanceContrast) View.VISIBLE else View.GONE
+        // 增强对比度：开关决定 HUD 层可见性，强度决定描边/阴影/衬底，
+        // 都只作用于文字层，不重建视图、不碰相机、不改变画面层 alpha。
+        applyHudStyle()
 
         val lp = buildParams()
         try {
             if (root.parent == null) {
                 wm.addView(root, lp)
-                stage("窗口已挂载: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast} torch=${style.torchWithPreview}")
+                stage("窗口已挂载: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast}/${style.contrastLevel}% torch=${style.torchWithPreview}")
             } else {
                 wm.updateViewLayout(root, lp)
-                stage("窗口已更新: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast} torch=${style.torchWithPreview}")
+                stage("窗口已更新: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast}/${style.contrastLevel}% torch=${style.torchWithPreview}")
             }
             armFrameWatchdog()
         } catch (t: Throwable) {
@@ -395,48 +406,70 @@ class RearCameraOverlay(
     }
 
     /**
-     * 【新增对比度 UI 模块】构建 HUD 状态文字层。
+     * 【对比度强度进度条】可动态调强度的 HUD 状态文字层。
      *
-     * 用自定义 TextView 覆写 onDraw 画「黑色外描边 + 白色实心字」，再叠一层
-     * 半透明深色圆角衬底和阴影。这样即使把相机画面透明度调到很低（看得清路况），
-     * 这行提示文字仍然边缘分明、可直接阅读，不会被背景纹理吞掉。
+     * 覆写 onDraw 画「黑色外描边 + 白色实心字」，再叠一层半透明深色圆角衬底
+     * 和阴影。强度 [level] 0~100 线性映射到：
+     *   · 描边宽度 1dp → 5dp
+     *   · 阴影半径 1dp → 4dp
+     *   · 衬底不透明度 约 16% → 86%
+     * 强度调低时更接近原始画面、少遮挡路况；调高时文字从花哨背景里被拎出来。
+     * 无论怎么调，画面层 alpha 只由 style.opacity 决定，两者互不干扰。
      */
-    private fun buildHudView(): TextView {
-        return object : TextView(ctx.applicationContext) {
-            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                // 黑色外描边宽度，随屏幕密度缩放
-                strokeWidth = dp(2).toFloat().coerceAtLeast(2f)
-                color = Color.BLACK
+    private inner class HudTextView(context: Context) : TextView(context) {
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.BLACK
+        }
+        private val bg = GradientDrawable()
+
+        /** 0~100；写入时立即重算描边/阴影/衬底并 invalidate */
+        var level: Int = 50
+            set(value) {
+                field = value.coerceIn(0, 100)
+                applyLevel()
             }
 
-            override fun onDraw(canvas: Canvas) {
-                // 第一遍：黑色描边（略粗，形成外轮廓）
-                val text = text.toString()
-                val cx = width / 2f
-                val baseline = baseline.toFloat()
-                strokePaint.textSize = paint.textSize
-                strokePaint.typeface = paint.typeface
-                strokePaint.textAlign = Paint.Align.CENTER
-                canvas.drawText(text, cx, baseline, strokePaint)
-                // 第二遍：白色实心字（正常 TextView 绘制）
-                super.onDraw(canvas)
-            }
-        }.apply {
-            // 半透明深色圆角衬底：既压住花哨的背景，又不至于完全挡住画面
-            background = GradientDrawable().apply {
-                setColor(0xB3000000.toInt())   // 约 70% 黑，兼顾衬底与透光
-                cornerRadius = dp(12).toFloat()
-            }
+        init {
+            background = bg
             setTextColor(Color.WHITE)
             textSize = 13f
-            // 软阴影进一步把字从背景里拎出来
-            setShadowLayer(dp(2).toFloat(), 0f, dp(1).toFloat(), Color.BLACK)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
             isClickable = false
             isFocusable = false
+            setPadding(dp(14), dp(8), dp(14), dp(8))
             text = "路况预览中 · 增强对比度"
+            applyLevel()
         }
+
+        private fun applyLevel() {
+            val t = level / 100f
+            strokePaint.strokeWidth = dp(1).toFloat() + dp(4).toFloat() * t
+            bg.setColor(Color.argb((40 + 180 * t).toInt(), 0, 0, 0))
+            bg.cornerRadius = dp(12).toFloat()
+            setShadowLayer(dp(1).toFloat() + dp(3).toFloat() * t, 0f, dp(1).toFloat(), Color.BLACK)
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            // 第一遍：黑色描边形成外轮廓；第二遍交给 super 画白色实心字
+            strokePaint.textSize = paint.textSize
+            strokePaint.typeface = paint.typeface
+            strokePaint.textAlign = Paint.Align.CENTER
+            canvas.drawText(text.toString(), width / 2f, baseline.toFloat(), strokePaint)
+            super.onDraw(canvas)
+        }
+    }
+
+    private fun buildHudView(): HudTextView = HudTextView(ctx.applicationContext)
+
+    /**
+     * 【对比度强度进度条】把当前 style 应用到 HUD 文字层：开关决定可见性，
+     * 强度决定描边/阴影/衬底。可反复调用，不重建 View、不碰相机。
+     */
+    private fun applyHudStyle() {
+        val hud = hudView ?: return
+        hud.visibility = if (style.enhanceContrast) View.VISIBLE else View.GONE
+        hud.level = style.contrastLevel
     }
 
     private fun buildTextureView(): TextureView {
