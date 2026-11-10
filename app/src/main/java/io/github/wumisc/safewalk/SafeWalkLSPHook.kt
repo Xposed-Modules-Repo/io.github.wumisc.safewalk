@@ -1292,17 +1292,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 等于「只要开了行走模式就永远不提醒手电」—— 自动模式下没在显示画面时也白跳过。
         val rearCamShowing = lastSentShow == true
         if (isNightTime() && screenOn && !rearCamShowing) {
-            // 【BUG 修复】小窗联动开关打开时，夜间闪光灯由 App 侧「角落小窗显示」
-            // 在预览会话内联动点亮。这里跳过旧的「50 步达标 / 环境暗光」一次性
-            // setTorchMode 点灯：那条链路会与预览抢摄像头、且被床上假步数误触发。
+            // 单一「夜间手电」开关（enableNightTorchGait）走 App 侧「角落小窗显示」
+            // 预览会话内联动点亮，由 WalkPreviewService 负责，这里不再点灯。
+            // 旧版「lux 暗光 + SystemUI 侧 setTorchMode 独立点灯」链路已删除：
+            // 它会与预览抢摄像头、且被床上假步数误触发（即用户反馈的
+            // 「bug1 闪光灯在床上自动打开」），不再保留。
             if (pref(SafeWalkPrefKey.enableNightTorchGait, false)) {
                 diag("[torch] 小窗联动开关已开：闪光灯随角落小窗显示时点亮、收起时熄灭，跳过旧自动点灯")
-            } else if (pref(SafeWalkPrefKey.enableNightTorchAuto, false) && luxIsDark()) {
-                diag("[torch] 夜间暗光(%.1f lux < %.0f) → 自动开灯"
-                    .format(lastLux, luxDarkThreshold))
-                releasePreviewForTorch()
-                setTorchWithRetry(true, 0)
-                fired.add("夜间自动开灯")
             } else if (pref(SafeWalkPrefKey.enableNightTorch, true)) {
                 nm?.let {
                     it.flashlightSuggest()

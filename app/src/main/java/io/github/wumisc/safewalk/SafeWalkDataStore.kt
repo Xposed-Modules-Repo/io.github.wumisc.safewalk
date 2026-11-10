@@ -18,8 +18,6 @@ object SafeWalkPrefKey {
     const val enableSitHealthRemind = "enableSitHealthRemind" // 久坐提醒
     const val enableSocialTipCard = "enableSocialTipCard"    // 社交礼仪提示
     const val enableNightTorch = "enableNightTorch"          // 夜间手电提醒
-    /** 夜间自动开灯：夜里+暗光(lux<阈值)判定出门走路时直接点亮手电，亮着不开。默认关 */
-    const val enableNightTorchAuto = "enableNightTorchAuto"
     /** 夜间时段起点(小时 0-23)，默认 22 点 */
     const val nightTorchStartHour = "nightTorchStartHour"
     /** 夜间时段终点(小时 0-23)，默认 6 点 */
@@ -118,9 +116,9 @@ object SafeWalkPrefKey {
      * key 名沿用历史值以避免破坏 ConfigProvider 白名单与已有用户配置。
      *
      * 与既有开关彼此独立、互不覆盖：
-     *  · [enableNightTorch]     —— 只弹「建议开手电」通知，不点灯（保留原行为）；
-     *  · [enableNightTorchAuto] —— 「50 步达标 + 环境暗光」时点一次灯（保留原行为）；
-     *  · 本开关                —— 只认「时间区间 + 角落小窗显示」。
+     *  · [enableNightTorch] —— 只弹「建议开手电」通知，不点灯（保留原行为）；
+     *  · 本开关            —— 只认「时间区间 + 角落小窗显示」，是夜间手电的唯一开关
+     *    （原「夜间自动开灯」lux 暗光独立点灯路径已合并删除，二者本为同一功能）。
      */
     const val enableNightTorchGait = "enableNightTorchGait"
 

@@ -32,7 +32,7 @@ public final class SmartReminderActivity extends Activity {
 
     private SharedPreferences sp;
 
-    private SwitchCompat swBattery, swIdcard, swSit, swNightTorch, swNightTorchAuto, swSocial;
+    private SwitchCompat swBattery, swIdcard, swSit, swNightTorch, swSocial;
     private SwitchCompat swAutoMode;
     /** 【BUG 修复】夜间手电·步态联动开关：时间区间 + walking 同步点灯、停止自动灭灯 */
     private SwitchCompat swNightTorchGait;
@@ -87,7 +87,6 @@ public final class SmartReminderActivity extends Activity {
         swIdcard = findViewById(R.id.sw_idcard);
         swSit = findViewById(R.id.sw_sit);
         swNightTorch = findViewById(R.id.sw_night_torch);
-        swNightTorchAuto = findViewById(R.id.sw_night_torch_auto);
         swNightTorchGait = findViewById(R.id.sw_night_torch_gait);
         swSocial = findViewById(R.id.sw_social);
         tvNightTime = findViewById(R.id.tv_night_time);
@@ -110,7 +109,6 @@ public final class SmartReminderActivity extends Activity {
         findViewById(R.id.card_idcard).setOnClickListener(v -> swIdcard.toggle());
         findViewById(R.id.card_sit).setOnClickListener(v -> swSit.toggle());
         findViewById(R.id.card_night_torch).setOnClickListener(v -> swNightTorch.toggle());
-        findViewById(R.id.card_night_torch_auto).setOnClickListener(v -> swNightTorchAuto.toggle());
         findViewById(R.id.card_night_torch_gait).setOnClickListener(v -> swNightTorchGait.toggle());
         findViewById(R.id.card_social).setOnClickListener(v -> swSocial.toggle());
         findViewById(R.id.row_night_time).setOnClickListener(v -> pickNightTime());
@@ -129,8 +127,7 @@ public final class SmartReminderActivity extends Activity {
         swIdcard.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableIdReminder, true));
         swSit.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableSitHealthRemind, true));
         swNightTorch.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorch, true));
-        swNightTorchAuto.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorchAuto, false));
-        // 步态联动默认关：不与旧的「提醒 / 暗光自动开灯」语义冲突，用户主动打开才接管
+        // 小窗联动（单夜间手电开关）默认关：用户主动打开才接管
         swNightTorchGait.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorchGait, false));
         swSocial.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableSocialTipCard, true));
         swAutoMode.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableAutoTravelMode, false));
@@ -151,7 +148,6 @@ public final class SmartReminderActivity extends Activity {
         swIdcard.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableIdReminder, c));
         swSit.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableSitHealthRemind, c));
         swNightTorch.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableNightTorch, c));
-        swNightTorchAuto.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableNightTorchAuto, c));
         // 【BUG 修复】小窗联动开关：写入即 commit + exportConfig（后端实时保存），
         // 下一轮预览显示/收起时 WalkPreviewService 就会按新值决定是否联动闪光灯。
         swNightTorchGait.setOnCheckedChangeListener((v, c) -> {
@@ -202,7 +198,6 @@ public final class SmartReminderActivity extends Activity {
         swIdcard.setChecked(on);
         swSit.setChecked(on);
         swNightTorch.setChecked(on);
-        swNightTorchAuto.setChecked(on);
         swNightTorchGait.setChecked(on);
         swSocial.setChecked(on);
         binding = false;
@@ -212,7 +207,6 @@ public final class SmartReminderActivity extends Activity {
                 .putBoolean(SafeWalkPrefKey.enableIdReminder, on)
                 .putBoolean(SafeWalkPrefKey.enableSitHealthRemind, on)
                 .putBoolean(SafeWalkPrefKey.enableNightTorch, on)
-                .putBoolean(SafeWalkPrefKey.enableNightTorchAuto, on)
                 .putBoolean(SafeWalkPrefKey.enableNightTorchGait, on)
                 .putBoolean(SafeWalkPrefKey.enableSocialTipCard, on)
                 .commit();

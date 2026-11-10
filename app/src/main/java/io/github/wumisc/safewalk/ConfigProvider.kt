@@ -47,12 +47,9 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.enableSitHealthRemind,
             SafeWalkPrefKey.enableSocialTipCard,
             SafeWalkPrefKey.enableNightTorch,
-            SafeWalkPrefKey.enableNightTorchAuto,
             SafeWalkPrefKey.nightTorchStartHour,
             SafeWalkPrefKey.nightTorchEndHour,
-            // 本次迭代新增：夜间手电「步态联动」开关。Hook 侧 check() 每次 tick
-            // 都要读它来决定是否随 walking 自动点/灭灯，不加白名单会永远读到默认 false，
-            // 表现就是「夜间手电怎么设都不生效」——这正是用户反馈的核心现象之一。
+            // 单一「夜间手电」开关（小窗联动）：Hook 侧 check() 读它判断是否跳过旧点灯链路。
             SafeWalkPrefKey.enableNightTorchGait,
             SafeWalkPrefKey.enableRearCamera,
             SafeWalkPrefKey.rearCamMode,

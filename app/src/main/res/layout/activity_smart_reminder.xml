@@ -220,35 +220,10 @@
 
             <View style="@style/RowDivider" />
 
-            <LinearLayout
-                android:id="@+id/card_night_torch_auto"
-                style="@style/RowStyle">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        style="@style/RowTitle"
-                        android:text="夜间自动开灯" />
-
-                    <TextView
-                        style="@style/RowHint"
-                        android:layout_marginTop="2dp"
-                        android:text="夜里且太黑（lux&lt;15）才自动亮，亮着不开" />
-                </LinearLayout>
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/sw_night_torch_auto"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <!-- 【BUG 修复】夜间手电·步态联动：设定时间 + 检测到走路才自动点灯，停下自动灭 -->
-            <View style="@style/RowDivider" />
-
+            <!-- 合并「夜间自动开灯」与「夜间手电·小窗联动」为单一开关：
+                 原两条开关本质同一功能，用户确认只需一个开关。保留「小窗联动」这条
+                 （App 侧预览会话内点灯、随小窗显示/收起，不抢摄像头、不误触床上抖动），
+                 删除旧的 SystemUI 侧 lux 暗光独立点灯路径。 -->
             <LinearLayout
                 android:id="@+id/card_night_torch_gait"
                 style="@style/RowStyle">
@@ -261,12 +236,12 @@
 
                     <TextView
                         style="@style/RowTitle"
-                        android:text="夜间手电 · 小窗联动" />
+                        android:text="夜间手电" />
 
                     <TextView
                         style="@style/RowHint"
                         android:layout_marginTop="2dp"
-                        android:text="设定时段内角落小窗显示时闪光灯一起点亮，小窗收起自动熄灭" />
+                        android:text="夜间时段内，角落小窗显示时闪光灯一起点亮，小窗收起自动熄灭" />
                 </LinearLayout>
 
                 <androidx.appcompat.widget.SwitchCompat
