@@ -146,6 +146,9 @@ public final class WalkPreviewService extends Service {
     /** Hook 广播接收器：让路（收起）或恢复（显示）由 SystemUI 进程指挥 */
     private BroadcastReceiver hookCmdReceiver;
 
+    /** 【锁屏误报修复】亮屏/解锁/熄屏状态接收器，用于收起与恢复后视预览 */
+    private BroadcastReceiver screenReceiver;
+
     /** Hook 端指挥广播（SystemUI → App，跨进程必须 EXPORTED + 令牌） */
     public static final String ACTION_HOOK_SHOW = "io.github.wumisc.safewalk.REAR_CAM_HOOK_SHOW";
     public static final String ACTION_HOOK_HIDE = "io.github.wumisc.safewalk.REAR_CAM_HOOK_HIDE";
@@ -218,7 +221,13 @@ public final class WalkPreviewService extends Service {
         gaitHandler.postDelayed(gaitTick, 1000L);
         overlay = new RearCameraOverlay(this,
                 reason -> {
-                    new SafeWalkNotificationManager(WalkPreviewService.this).previewFailed(reason);
+                    // 锁屏/灭屏期间的失败一律静默：多半是系统暂时禁用相机，
+                    // 弹通知只会变成锁屏上的骚扰（用户反复反馈的「还是显示这个问题」）。
+                    if (isScreenUsable()) {
+                        new SafeWalkNotificationManager(WalkPreviewService.this).previewFailed(reason);
+                    } else {
+                        DiagLog.log("[cam] 锁屏/灭屏期间预览失败，静默处理不弹通知: " + reason);
+                    }
                     // 看门狗判定失败后会自己 hide()，服务这边必须同步回执，
                     // 否则 Hook 以为画面还在，下一次「该显示」的指令会被去重吞掉
                     reportPreviewState();
@@ -226,6 +235,12 @@ public final class WalkPreviewService extends Service {
                 },
                 step -> {
                     DiagLog.log("[cam] " + step);
+                    // 画面恢复后立刻撤掉上一条「后视画面打不开」，
+                    // 否则旧通知还挂在锁屏上误导用户（截图里的现象）。
+                    if (step != null && step.startsWith("✅ 已收到画面")) {
+                        new SafeWalkNotificationManager(WalkPreviewService.this)
+                                .cancelPreviewFailed();
+                    }
                     // 分步诊断推回行走模式页（同进程广播，也走令牌校验保持一致）
                     try {
                         Intent i = new Intent("io.github.wumisc.safewalk.PREVIEW_STAGE");
@@ -270,6 +285,29 @@ public final class WalkPreviewService extends Service {
         f.addAction(WalkPreviewService.ACTION_HOOK_SHOW);
         f.addAction(WalkPreviewService.ACTION_HOOK_HIDE);
         ReceiverCompat.registerExported(this, hookCmdReceiver, f);
+
+        // 【BUG 修复 · 锁屏误报】亮屏/解锁状态变化要重新评估预览：
+        // 熄屏立刻收起，解锁后自动恢复。系统广播，无需 exported/令牌。
+        screenReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent i) {
+                String a = (i == null) ? null : i.getAction();
+                DiagLog.log("[screen] " + a + " → 重新评估后视预览");
+                if (Intent.ACTION_SCREEN_OFF.equals(a)) {
+                    if (overlay != null) overlay.hide();
+                    reportPreviewState();
+                } else {
+                    // ACTION_SCREEN_ON 时可能仍锁屏，isScreenUsable() 会挡住；
+                    // ACTION_USER_PRESENT（真正解锁）才放行。
+                    evaluateShow();
+                }
+            }
+        };
+        IntentFilter sf = new IntentFilter();
+        sf.addAction(Intent.ACTION_SCREEN_ON);
+        sf.addAction(Intent.ACTION_SCREEN_OFF);
+        sf.addAction(Intent.ACTION_USER_PRESENT);
+        try { registerReceiver(screenReceiver, sf); } catch (Throwable ignored) {}
     }
 
     @Override
@@ -325,6 +363,18 @@ public final class WalkPreviewService extends Service {
      * 让路（hookHidden）期间保持收起，等 Hook 发恢复信号再来评估。
      */
     private void evaluateShow() {
+        // 【BUG 修复 · 锁屏误报】锁屏/灭屏时绝不拉起后视预览。
+        // HyperOS/MIUI 在锁屏、灭屏、后台省电策略下会禁用相机
+        // （openCamera 抛 CAMERA_DISABLED / 会话回调 ERROR_CAMERA_DISABLED）。
+        // 旧逻辑把这种「暂时不可用」当成故障弹「后视画面打不开」常驻通知，
+        // 用户在锁屏上反复看到。真正走路时屏幕亮且已解锁，不受影响。
+        if (!isScreenUsable()) {
+            if (overlay != null && overlay.getShowing()) {
+                overlay.hide();
+                reportPreviewState();
+            }
+            return;
+        }
         if (hookHidden) return;
         if (!SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)) return;
         if (SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)) {
@@ -637,6 +687,23 @@ public final class WalkPreviewService extends Service {
     }
 
     /**
+     * 亮屏且已解锁：只有这种状态才允许打开相机。
+     * 取不到系统服务时保守放行，避免个别 ROM 上把功能彻底锁死。
+     */
+    private boolean isScreenUsable() {
+        try {
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isInteractive()) return false;
+            android.app.KeyguardManager km =
+                    (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+            if (km != null && km.isKeyguardLocked()) return false;
+        } catch (Throwable ignored) {
+        }
+        return true;
+    }
+
+    /**
      * 收起后冷却（防「显示→收起→秒开」死循环，也就是用户反馈的「没完没了」）。
      * 判定停下收起后 [STOP_COOLDOWN_MS] 内，手持乱动几秒又凑够 confirmSteps 步时
      * **不立即显示**，必须达到「持续判走」（累计步 ≥ 门槛两倍）才放行。
@@ -717,6 +784,10 @@ public final class WalkPreviewService extends Service {
         if (hookCmdReceiver != null) {
             try { unregisterReceiver(hookCmdReceiver); } catch (Throwable ignored) {}
             hookCmdReceiver = null;
+        }
+        if (screenReceiver != null) {
+            try { unregisterReceiver(screenReceiver); } catch (Throwable ignored) {}
+            screenReceiver = null;
         }
         stopGait();
         gaitHandler.removeCallbacks(gaitTick);

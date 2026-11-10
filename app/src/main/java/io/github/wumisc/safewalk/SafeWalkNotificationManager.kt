@@ -152,6 +152,19 @@ class SafeWalkNotificationManager(private val ctx: Context) {
     }
 
     /**
+     * 【BUG 修复 · 锁屏误报】画面恢复后主动撤掉失败通知。
+     *
+     * 旧通知带 setAutoCancel + 60 秒超时，但 HyperOS 超级岛常把它留在锁屏上，
+     * 用户看到的是「画面明明好了，通知还挂着说打不开」。收到首帧时调一次，
+     * 同时清掉该 id 的冷却记录，保证下次真出故障时还能正常提示。
+     */
+    fun cancelPreviewFailed() {
+        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(ID_PREVIEW)
+        lastNotifyTs.remove(ID_PREVIEW)
+    }
+
+    /**
      * 夜间手电通知：超级岛带两个按钮
      * 1. 开手电筒 → 投给应用自己的 TorchActionReceiver（它负责让预览先让路再点灯）
      * 2. 打开SafeWalk → 打开配置页

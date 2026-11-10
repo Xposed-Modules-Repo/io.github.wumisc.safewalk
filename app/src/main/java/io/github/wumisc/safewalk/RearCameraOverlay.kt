@@ -86,12 +86,15 @@ class RearCameraOverlay(
         private const val MAX_CAMERA_RETRY = 2
 
         /**
-         * 不可恢复失败（相机被系统/策略禁用、无相机权限）后的「静默期」。
+         * 不可恢复失败（目前只剩「应用没有相机权限」）后的「静默期」。
          *
          * 这类失败重试不会自己变好，但 Hook 每 2s 的 updateOverlay 仍会不断
          * 发 ACTION_HOOK_SHOW，App 每次都 show → 开相机失败 → hide → 回执 false，
          * 于是日志里出现一串「false → true → false」乒乓，既反复开相机耗电、又刷屏。
-         * 静默期内 show() 直接拒绝拉起；用户主动重试或相机恢复时再解除。
+         * 静默期内 show() 直接拒绝拉起；用户主动重试或授权后解除。
+         *
+         * 注意：系统/策略禁用相机（锁屏、灭屏、后台省电）是**暂时**不可用，
+         * 已改由 handlePolicyDisabled 静默处理，绝不能进这个静默期。
          */
         private const val HARD_FAILURE_BACKOFF_MS = 5 * 60 * 1000L
     }
@@ -224,8 +227,9 @@ class RearCameraOverlay(
         contrastLevel: Int = 50
     ) {
         // 硬失败静默期：Hook 每 2s 一次 ACTION_HOOK_SHOW 会不断把我们叫醒，
-        // 但相机被策略禁用/无权限不会自己变好。静默期内直接拒绝拉起，
+        // 但「无相机权限」不会自己变好。静默期内直接拒绝拉起，
         // 让窗口保持「未显示」→ 回执稳定为 false，掐断 false→true→false 乒乓。
+        // 系统策略禁用是暂时状态，不走这里（见 handlePolicyDisabled）。
         if (System.currentTimeMillis() < hardFailureBackoffUntil) {
             // 兜底：静默期内万一有残留窗口，收掉它，保证 showing 恒为 false
             if (isShowing) hide()
@@ -697,17 +701,48 @@ class RearCameraOverlay(
         mainHandler.postDelayed(r, FRAME_TIMEOUT_MS)
     }
 
+    /**
+     * 【BUG 修复 · 锁屏/后台策略禁用不再误报】
+     *
+     * HyperOS / MIUI 在锁屏、灭屏、省电或后台策略下会临时回收相机：
+     * openCamera 同步抛 CAMERA_DISABLED，或已打开的会话回调
+     * ERROR_CAMERA_DISABLED。这是「现在不让用」，不是「相机坏了」——
+     * 亮屏解锁后立刻恢复。用户锁屏截图里的那条通知正是这么来的：
+     * 日志同一秒还打着 ✅ 已收到画面，下一秒就弹「后视画面打不开 /
+     * 相机被系统或策略禁用」，还附带一句误导的「6 秒内没有收到画面」。
+     *
+     * 旧逻辑把它当不可恢复故障：hide + 弹常驻通知 + 5 分钟硬静默，
+     * 于是锁屏时反复弹、解锁后还要等满 5 分钟才恢复，等于功能被自己锁死。
+     *
+     * 现在：静默收起窗口、留一行诊断、不通知、不封禁；
+     * WalkPreviewService 的亮屏解锁闸门会在解锁后重新拉起预览。
+     */
+    private fun handlePolicyDisabled(where: String) {
+        diag("⏸ 系统暂时禁用相机（$where，多为锁屏/后台/省电策略）→ 静默收起，解锁后自动恢复")
+        stage("⏸ 系统暂时禁用相机（锁屏/后台策略），等待亮屏解锁后自动恢复")
+        // 关键：绝不调 reportFailure —— 那会触发 onFailure 弹通知并写进 5 分钟封禁。
+        // 也不设置 hardFailureBackoffUntil，解锁后 Hook 的下一次放行即可重开。
+        cancelWatchdog()
+        hide()
+    }
+
     private fun reportFailure(reason: String) {
-        // 只有「不可恢复」的原因才进入长静默期。
+        // 只有「应用没有相机权限」是不可恢复的，才进入长静默期。
         // 「相机没有返回画面」可能只是偶发黑屏/被占用，属于可恢复，不能一封就是 5 分钟。
-        if (reason == "相机被系统或策略禁用" || reason == "应用没有相机权限") {
+        // 系统/策略禁用（锁屏、灭屏、后台省电）是暂时不可用，已由
+        // handlePolicyDisabled 静默处理，不会再走到这里。
+        if (reason == "应用没有相机权限") {
             hardFailureBackoffUntil = System.currentTimeMillis() + HARD_FAILURE_BACKOFF_MS
             diag("⏸ 检测到不可恢复的相机失败（$reason），${HARD_FAILURE_BACKOFF_MS / 60_000} 分钟内暂停自动拉起；用户主动预览可提前解除")
         }
         if (failureReported) return
         failureReported = true
         diag("❌ 预览失败: $reason")
-        stage("❌ $reason（${FRAME_TIMEOUT_MS / 1000} 秒内没有收到画面）")
+        // 只有「超时没等到帧」才配这句说明。权限缺失等其它原因硬套
+        // 「6 秒内没有收到画面」会误导排查（日志里明明已有 ✅ 已收到画面）。
+        val suffix = if (reason == "相机没有返回画面")
+            "（${FRAME_TIMEOUT_MS / 1000} 秒内没有收到画面）" else ""
+        stage("❌ $reason$suffix")
         try { onFailure?.invoke(reason) } catch (_: Throwable) {}
     }
 
@@ -950,11 +985,9 @@ class RearCameraOverlay(
                     Log.e(TAG, "相机错误: $error")
                     diag("❌ 相机错误: $error")
                     if (error == CameraDevice.StateCallback.ERROR_CAMERA_DISABLED) {
-                        // 系统/策略禁用了相机（企业策略、屏幕使用时间、家长控制等）：
-                        // 此时重试多少次都打不开，必须直接报出准确原因，
-                        // 而不是走 recoverCamera 空转几轮后弹出误导性的「相机没有返回画面」
-                        hide()
-                        reportFailure("相机被系统或策略禁用")
+                        // 【BUG 修复 · 锁屏误报】见 handlePolicyDisabled：
+                        // 这不是故障，是系统现在不允许用相机，静默等解锁即可。
+                        handlePolicyDisabled("onError($error)")
                         return
                     }
                     recoverCamera(gen, "相机错误 $error")
@@ -972,8 +1005,7 @@ class RearCameraOverlay(
             previewSurface = null
             lastCloseAt = android.os.SystemClock.uptimeMillis()
             if (e.reason == CameraAccessException.CAMERA_DISABLED) {
-                hide()
-                reportFailure("相机被系统或策略禁用")
+                handlePolicyDisabled("openCamera(reason=${e.reason})")
             } else {
                 // 被占用（CAMERA_IN_USE / MAX_CAMERAS_IN_USE）等仍可重试的错误
                 recoverCamera(cameraGen, "打开相机被拒(${e.reason})")
