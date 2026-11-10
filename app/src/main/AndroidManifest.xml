@@ -68,6 +68,14 @@
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!--
+        specialUse 是 camera 被 ROM 拒绝时的降级档。它的 type 权限是**独立**的：
+        只声明 service 的 foregroundServiceType 而不声明这条，运行时
+        startForeground(..., FOREGROUND_SERVICE_TYPE_SPECIAL_USE) 会直接抛
+        SecurityException —— 降级链就在最需要它的那一刻断掉。lint 的
+        ForegroundServicePermission 检查抓到的正是这一点。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!--
         车祸预警（急救卡）：检测到撞击后自动求助。
@@ -267,11 +275,22 @@
             行走模式预览服务（App 进程）：持有相机 + 悬浮窗。
             行走模式开关开着期间常驻（camera 前台服务），收到 Hook 的
             「走起来/停下来」广播后显示/收起预览，手动预览也直接指挥它。
+
+            【为什么声明两个 type】camera 是后台用相机的前提（Android 11 起相机属于
+            while-in-use 权限），但 HyperOS 4 / Android 16 上从后台拉起 camera 型 FGS
+            会被直接拒（ForegroundServiceStartNotAllowedException）。所以运行时按
+            camera → specialUse 的顺序尝试（见 WalkPreviewService.goForeground），
+            失败才退到 specialUse 把服务先立起来，保证进程与悬浮窗还在。
+            这条降级链对 HyperOS 3 同样安全：它在 HOS3 上根本不会触发。
         -->
         <service
             android:name=".WalkPreviewService"
             android:exported="false"
-            android:foregroundServiceType="camera" />
+            android:foregroundServiceType="camera|specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="walking_preview|后台持续显示身后路况小窗，需要常驻进程持有相机与悬浮窗" />
+        </service>
 
         <!--
             控制中心磁贴：下拉控制中心点一下即开关「行走模式」。

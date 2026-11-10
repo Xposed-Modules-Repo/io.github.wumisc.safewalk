@@ -165,6 +165,12 @@ public final class WalkPreviewService extends Service {
      */
     private boolean hookHidden = false;
 
+    /** 悬浮窗权限被回收的累计次数：只在日志里做「是不是反复发生」的判断依据。 */
+    private int overlayLostCount = 0;
+
+    /** 「前台服务已降级」是否已提示过：同一进程只提示一次，避免每次走起来都弹通知。 */
+    private boolean fgsDegradeNotified = false;
+
     /**
      * 无障碍通道报告「相机类应用在前台」。
      *
@@ -479,7 +485,41 @@ public final class WalkPreviewService extends Service {
         }
     }
 
+    /**
+     * 悬浮窗权限当前是否可用。
+     *
+     * 只有「明确拿到 false」或「查询本身抛异常」才算不可用 —— 后者按不可用处理是刻意的：
+     * 与其让 addView 抛 BadTokenException 后被静默吞掉（用户完全不知道发生了什么），
+     * 不如拦住并明确提示去重新授权。minSdk 33 上 canDrawOverlays 行为稳定。
+     */
+    private boolean canDrawOverlayNow() {
+        try {
+            return android.provider.Settings.canDrawOverlays(this);
+        } catch (Throwable t) {
+            DiagLog.log("[overlay] 查询悬浮窗权限失败：" + t.getClass().getSimpleName()
+                    + "，按不可用处理（避免 addView 抛 BadTokenException 后被静默吞掉）");
+            return false;
+        }
+    }
+
     private void doShow() {
+        // 【HyperOS 适配真正落地 · 悬浮窗复核】
+        // HyperOsCompat 里那条 "strict" 建议此前只打日志、从不执行。HOS3/4 都会在
+        // 系统升级、一键清理、省电策略触发后把 SYSTEM_ALERT_WINDOW 这个 AppOps 收回去，
+        // 此时 WindowManager.addView 抛 BadTokenException，被外层 catch 吞掉后
+        // 用户只看到「走起来没反应」。这里每次显示前复核一次（AppOps 查询开销极低，
+        // doShow 的调用频率也只有「走起来 / 停下」级别），失权就明确告知，不静默失败。
+        if (!canDrawOverlayNow()) {
+            overlayLostCount++;
+            DiagLog.log("[overlay] ⛔ 悬浮窗权限不可用（系统已回收）→ 本次不显示；"
+                    + "累计 " + overlayLostCount + " 次。请在应用内「权限与无障碍」重新授予「悬浮窗」");
+            try {
+                new SafeWalkNotificationManager(this).overlayLost();
+            } catch (Throwable ignored) {
+            }
+            reportPreviewState();
+            return;
+        }
         String mode = SafePrefs.getString(sp, SafeWalkPrefKey.rearCamMode, RearCameraOverlay.MODE_FULLSCREEN);
         if (mode == null) mode = RearCameraOverlay.MODE_FULLSCREEN;
         int opacity = SafePrefs.getInt(sp, SafeWalkPrefKey.rearCamOpacity, 50);
@@ -1010,6 +1050,21 @@ public final class WalkPreviewService extends Service {
         notifyPreviewState(showing);
     }
 
+    /**
+     * 提起前台。
+     *
+     * 【为什么不再按 ROM 版本猜 type】3.3 之前有一份「HyperOS 4 就用 plain 类型」的建议，
+     * 但它只出现在日志里，从没落地；而且真按它落地反而更糟：去掉 camera 语义后，
+     * Android 11 起相机属于 while-in-use 权限，后台根本打不开相机，小窗就再也显示不出来。
+     *
+     * 现在改成**运行时降级链**，对所有 ROM 一视同仁：
+     *   camera（首选，后台能用相机的唯一合法类型）
+     *     → specialUse（camera 被 ROM 拒绝时，先把服务立起来，保住进程与悬浮窗）
+     *     → 无 type（API 28 及以下，或前面都失败）
+     *
+     * 这样做的好处是：HyperOS 3 上第一条就成功、根本不进降级分支；HyperOS 4 上自动
+     * 走降级；将来 HyperOS 5 换了限制，也不需要改代码 —— 不存在「版本判断猜错了就废掉」。
+     */
     private void goForeground() {
         NotificationChannel ch = new NotificationChannel(
                 CHANNEL_WALK, "行走模式", NotificationManager.IMPORTANCE_LOW);
@@ -1023,19 +1078,82 @@ public final class WalkPreviewService extends Service {
                 .setContentText("身后路况持续显示中")
                 .setOngoing(true)
                 .build();
+
+        final String osTag = fgsOsTag();
+        if (Build.VERSION.SDK_INT >= 29) {
+            for (int type : FGS_TYPE_CHAIN) {
+                try {
+                    startForeground(NOTIF_ID, n, type);
+                    fgsType = type;
+                    DiagLog.log("[FGS] 前台服务已提起｜type=" + fgsTypeName(type) + "｜" + osTag);
+                    if (type != ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) {
+                        // 降级后相机在后台会被拒，这一点必须写进日志，
+                        // 否则用户看到「服务活着、小窗不来」会以为又是别的 bug。
+                        DiagLog.log("[FGS] 已从 camera 降级到 " + fgsTypeName(type)
+                                + "：进程与悬浮窗保住了，但后台访问相机会被系统拒绝，"
+                                + "小窗只在应用可见时能出画面");
+                        // 同一进程只提示一次：每次走起来都弹一条谁都受不了，
+                        // 但完全不提示又会变成「黑箱」。
+                        if (!fgsDegradeNotified) {
+                            fgsDegradeNotified = true;
+                            try {
+                                new SafeWalkNotificationManager(this).fgsDegraded();
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    }
+                    return;
+                } catch (Throwable t) {
+                    DiagLog.log("[FGS] type=" + fgsTypeName(type) + " 被拒｜" + osTag
+                            + "｜" + t.getClass().getSimpleName()
+                            + (t.getMessage() == null ? "" : "：" + t.getMessage()));
+                }
+            }
+        }
         try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
-            } else {
-                startForeground(NOTIF_ID, n);
-            }
+            startForeground(NOTIF_ID, n);
+            fgsType = -1;
+            DiagLog.log("[FGS] 已用无 type 方式提起前台｜" + osTag);
         } catch (Throwable t) {
-            // 个别 ROM 对 camera 类型有额外限制：降级尝试普通方式，
-            // 再不行就让服务继续跑（预览在前台打开 App 时依然可用）
-            try {
-                startForeground(NOTIF_ID, n);
-            } catch (Throwable ignored) {
-            }
+            fgsType = -2;
+            DiagLog.log("[FGS] 前台服务完全无法提起｜" + osTag
+                    + "｜" + t.getClass().getSimpleName()
+                    + "；预览将只在本应用可见时可用，请把本应用加入电池优化白名单");
+        }
+    }
+
+    /**
+     * camera 必须排第一，理由见 {@link #goForeground()}。
+     * 第二档 specialUse 在 manifest 里已声明，且不带相机语义，用来在 camera 被拒时
+     * 至少把前台服务立起来（否则服务会被系统在 5 秒内杀掉，悬浮窗一起没）。
+     */
+    private static final int[] FGS_TYPE_CHAIN = {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+    };
+
+    /** 最近一次成功的前台服务类型：-1=无 type，-2=完全失败，0=尚未提起。仅用于诊断。 */
+    private volatile int fgsType = 0;
+
+    private static String fgsTypeName(int type) {
+        if (type == ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) return "camera";
+        if (type == ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) return "specialUse";
+        if (type == -1) return "none";
+        if (type == -2) return "failed";
+        return String.valueOf(type);
+    }
+
+    /**
+     * 只用于日志的一行 ROM 说明。**不参与任何行为决策** —— 决策全部基于运行时结果，
+     * 避免「版本识别错了导致功能被错误降级」。
+     */
+    private String fgsOsTag() {
+        try {
+            HyperOsCompat.Os os = HyperOsCompat.current(sp, SafeWalkPrefKey.hyperOsMode);
+            return "os=" + os.name() + " sdk=" + Build.VERSION.SDK_INT
+                    + " 已用=" + fgsTypeName(fgsType);
+        } catch (Throwable t) {
+            return "os=unknown sdk=" + Build.VERSION.SDK_INT;
         }
     }
 

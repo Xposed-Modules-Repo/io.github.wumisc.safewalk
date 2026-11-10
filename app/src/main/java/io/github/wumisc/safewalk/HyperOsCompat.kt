@@ -98,6 +98,9 @@ object HyperOsCompat {
     /** 日志默认前缀；[logEnvironment] 的 tag 缺省值与之相同。 */
     private const val DEFAULT_TAG = "[VER]"
 
+    /** 前台服务类型的降级链，由 `WalkPreviewService.goForeground()` 逐档尝试。 */
+    private const val FGS_CHAIN = "camera→specialUse→none"
+
     /** 高频路径失败日志的节流窗口，避免 2s tick 刷屏（与 DiagLog 的省电约定一致）。 */
     private const val WARN_INTERVAL_MS = 5_000L
 
@@ -277,54 +280,41 @@ object HyperOsCompat {
     }
 
     /**
-     * 前台服务（FGS）类型策略。
+     * 前台服务（FGS）类型的**尝试顺序**，不再是「该用哪个 type」。
      *
-     * 返回 `"camera"` / `"specialUse"` / `"plain"` 三种之一，供调用方决定
-     * `startForeground()` 的 type：
-     * - [Os.OTHER] → `camera`：AOSP 及非 HyperOS 上 camera 类型合法、能持续持有相机权限，保持现状；
-     * - [Os.HOS3] → `specialUse`：HOS3 已开始收紧 camera/dataSync 类型的后台启动，改用
-     *   `specialUse` 声明特殊用途可降低被拒概率，但仍需靠"启动瞬间有可见 Activity"豁免；
-     * - [Os.HOS4] → `plain`：**HOS4 对后台启动 camera 类型 FGS 最严**，连 BOOT_COMPLETED 之后
-     *   也常直接抛 `ForegroundServiceStartNotAllowedException`。建议退到不带相机语义的 `plain`
-     *   类型，同时提示用户把本应用加入电池优化白名单 / 允许后台运行，靠白名单而非 FGS 类型保活。
+     * 【4.0 修正】3.3~3.5 这里返回 `plain` / `specialUse` / `camera` 三选一，但：
+     * 1. 返回值只被打进日志，`WalkPreviewService` 一直硬编码 CAMERA，等于没落地；
+     * 2. 就算落地也是错的 —— camera 是 Android 11 起「后台能访问相机」的唯一合法类型，
+     *    换成 plain 会让小窗彻底拍不到画面，是把功能阉掉而不是适配。
      *
-     * 这是低优先级建议：现有 `WalkPreviewService` 是否采纳由调用方决定。
+     * 现在统一返回降级链 `camera→specialUse→none`，由 `WalkPreviewService.goForeground()`
+     * 逐档尝试。这条链对 HOS3 / HOS4 / 未来的 HOS5 都成立：能过第一档就不降级，
+     * 过不了就往下走 —— **不需要判断 ROM 版本**，也就不会因为识别错了把功能废掉。
      */
     @JvmStatic
-    fun foregroundServiceStrategy(os: Os): String = when (os) {
-        Os.HOS4 -> "plain"
-        Os.HOS3 -> "specialUse"
-        Os.OTHER -> "camera"
-    }
+    fun foregroundServiceStrategy(os: Os): String = FGS_CHAIN
 
     /**
-     * 打开手电筒（torch）的策略。
+     * 手电（torch）策略。
      *
-     * 返回 `"releasePreviewFirst"` / `"direct"`：
-     * - [Os.HOS4] → `releasePreviewFirst`：**HOS4 上闪光灯与相机互斥更严**，Camera2 会话还占着
-     *   相机时直接开 torch 常失败或把预览打黑。必须先释放/关闭预览会话，再打开手电，用完按需恢复；
-     * - [Os.HOS3] / [Os.OTHER] → `direct`：互斥没那么紧，可直接开灯，减少一次预览重建的闪烁。
+     * 【4.0 修正】旧返回值 `releasePreviewFirst` 已经过时：3.2 起手电统一开在
+     * **预览会话内部**（`CaptureRequest.FLASH_MODE_TORCH`），不再用
+     * `CameraManager.setTorchMode()` 单独抢设备，因此不存在「先释放预览再开灯」这一步。
+     * 返回 `inSession` 表示：灯跟小窗同生同灭，由预览会话自己管理。
      */
     @JvmStatic
-    fun torchOpenStrategy(os: Os): String = when (os) {
-        Os.HOS4 -> "releasePreviewFirst"
-        Os.HOS3, Os.OTHER -> "direct"
-    }
+    fun torchOpenStrategy(os: Os): String = "inSession"
 
     /**
-     * 悬浮窗权限复核策略。
+     * 悬浮窗权限策略。
      *
-     * 返回 `"strict"` / `"normal"`：
-     * - [Os.HOS4] → `strict`：**HOS4 更频繁地回收悬浮窗权限**（系统升级、清理、省电策略触发后
-     *   `ACTION_MANAGE_OVERLAY_PERMISSION` 可能被重置）。每次显示浮层前都要重新
-     *   `canDrawOverlays()` 复核，未授权时引导用户重新开启；
-     * - [Os.HOS3] / [Os.OTHER] → `normal`：授予后基本稳定，只在入口处检查一次即可。
+     * 【4.0 修正】`strict` 以前只是日志里的建议。现在 `WalkPreviewService.doShow()`
+     * 每次显示前都真的查一次 `Settings.canDrawOverlays()`，失权时拦下并发通知，
+     * 不再让 `WindowManager.addView` 抛 `BadTokenException` 后被静默吞掉。
+     * 三种 ROM 都走这条路径（查询开销极低，调用频率也只有「走起来/停下」级别）。
      */
     @JvmStatic
-    fun overlayPermissionStrategy(os: Os): String = when (os) {
-        Os.HOS4 -> "strict"
-        Os.HOS3, Os.OTHER -> "normal"
-    }
+    fun overlayPermissionStrategy(os: Os): String = "verifyBeforeShow"
 
     /**
      * ROOT 命令形式建议（用于 Hook 未激活时的 su 兜底，例如重启 SystemUI）。
@@ -427,19 +417,35 @@ object HyperOsCompat {
     /**
      * 一行中文摘要，供设置页 / Toast / 日志展示。
      *
-     * 形如「适配目标=HyperOS 4｜来源=手动强制(hos4)｜前台服务=plain｜手电=releasePreviewFirst｜
-     * 悬浮窗=strict」。
+     * 【4.0 改版】旧版输出形如「前台服务=plain｜手电=releasePreviewFirst｜悬浮窗=strict」，
+     * 三件事都有问题：一是全是内部代号，普通用户看不懂；二是 `plain` 与 `strict` 当时
+     * 根本没被执行，属于「日志里写了、实际没做」；三是把「策略」写成静态值，容易让人
+     * 以为 HOS3 和 HOS4 跑的是两套完全不同的代码。
+     *
+     * 现在只讲事实：**两种版本走同一条运行时链路**，差别只在系统会不会触发降级。
      */
     @JvmStatic
     fun describe(os: Os, mode: String?): String {
         val name = when (os) {
             Os.HOS3 -> "HyperOS 3"
             Os.HOS4 -> "HyperOS 4"
-            Os.OTHER -> "非 HyperOS/未识别（保守策略）"
+            Os.OTHER -> "非 HyperOS / 未识别"
         }
-        val src = if (isManual(mode)) "手动强制($mode)" else "自动识别(方案A)"
-        return "适配目标=$name｜来源=$src｜前台服务=${foregroundServiceStrategy(os)}" +
-                "｜手电=${torchOpenStrategy(os)}｜悬浮窗=${overlayPermissionStrategy(os)}"
+        return "适配目标=$name｜前台服务 $FGS_CHAIN｜显示前复核悬浮窗权限｜手电随小窗"
+    }
+
+    /**
+     * 给用户看的「HyperOS 3 到底能不能用」一句话回答。
+     *
+     * 刻意不写「完美支持」：本应用不针对某个 HyperOS 版本做硬判断，而是所有版本共用
+     * 一条「先按标准路径做，被系统拒绝就自动降级」的链路，所以 HOS3 / HOS4 / 后续版本
+     * 的行为是一致的、可预期的；真遇到系统拦截时日志里会写清是哪一档被拒。
+     */
+    @JvmStatic
+    fun supportNote(os: Os): String = when (os) {
+        Os.HOS3 -> "HyperOS 3 走标准路径：camera 前台服务 + 常显小窗 + 悬浮窗。"
+        Os.HOS4 -> "HyperOS 4 的相机前台服务更容易被拒，会按 camera → specialUse 自动降级。"
+        Os.OTHER -> "非 HyperOS：走标准 Android 路径，无厂商额外限制。"
     }
 
     /**

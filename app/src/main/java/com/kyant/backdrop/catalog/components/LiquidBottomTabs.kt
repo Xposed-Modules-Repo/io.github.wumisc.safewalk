@@ -118,18 +118,29 @@ fun LiquidBottomTabs(
     val containerColor =
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
         else Color(0xFF121212).copy(0.4f)
-    // 边缘收口用色：亮色主题用近白（把灰毛边盖成干净的亮边），
-    // 暗色主题用低透明白（只提亮一点边，不抢画面）。
+    // 边缘收口用色。
+    //
+    // 【为什么亮色要单独一套】3.5 在两种主题下都用了「白 0.85→0.25」描边：
+    // 暗色底上白边是自然高光，毛边被压住，用户反馈「深色好多了」；
+    // 亮色底（#F5F5F7 一类）上白边和背景几乎同色，等于没画，那 1~2dp
+    // 半透明灰带照样露出来 —— 这就是「浅色页面还有毛边」的直接原因。
+    //
+    // 现在亮色改用**低透明度**的纯白（只做一丝边光，不形成白框），
+    // 真正的去毛边交给外层 `graphicsLayer(clip = true)` 的硬件抗锯齿裁切。
     val edgeBrush =
         if (isLightTheme) {
             Brush.verticalGradient(
-                listOf(Color(0xFFFFFFFF).copy(0.85f), Color(0xFFFFFFFF).copy(0.25f))
+                listOf(Color(0xFFFFFFFF).copy(0.55f), Color(0xFFFFFFFF).copy(0.10f))
             )
         } else {
             Brush.verticalGradient(
                 listOf(Color(0xFFFFFFFF).copy(0.22f), Color(0xFFFFFFFF).copy(0.05f))
             )
         }
+
+    // 亮色下 blur 半径收敛：边缘内侧的半透明过渡宽度与模糊半径正相关，
+    // 8dp 在浅底上是一条肉眼可见的灰箍，6dp 只剩极细的一圈。
+    val blurRadius = if (isLightTheme) 6.dp else 8.dp
 
     val tabsBackdrop = rememberLayerBackdrop()
 
@@ -215,13 +226,23 @@ fun LiquidBottomTabs(
             Modifier
                 .graphicsLayer {
                     translationX = panelOffset
+                    // 【浅色毛边根因修复】AGSL 是直接栅格化的，圆角处没有覆盖率采样，
+                    // 形状边界会输出一条 1~2dp 的半透明带；叠在浅色底上就是一圈灰箍
+                    // （深色底上几乎不可见，所以「深色好多了」）。
+                    // 让 RenderNode 按同一形状做硬件裁剪：outline 裁剪自带抗锯齿，
+                    // 把那条半透明带和外溢的模糊采样一起裁掉，边界只剩 1px 过渡。
+                    //
+                    // 代价：layerBlock 里按住时的轻微放大（+5%）会被裁掉，视觉上只剩
+                    // 高亮和透镜，不再「膨胀」。比起圆角毛边，这个损失可以接受。
+                    shape = TabsShape
+                    clip = true
                 }
                 .drawBackdrop(
                     backdrop = backdrop,
                     shape = { TabsShape },
                     effects = {
                         vibrancy()
-                        blur(8f.dp.toPx())
+                        blur(blurRadius.toPx())
                         lens(24f.dp.toPx(), 24f.dp.toPx())
                     },
                     layerBlock = {

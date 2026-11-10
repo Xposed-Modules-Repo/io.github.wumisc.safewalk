@@ -457,8 +457,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         }
         HyperOsCompat.Os os = HyperOsCompat.current(xsp(), SafeWalkPrefKey.hyperOsMode);
         boolean manual = HyperOsCompat.isManual(hosMode);
+        // 两行：第一行讲「识别成了什么、走什么链路」，第二行直接回答「这个版本到底能不能用」。
+        // 旧版把内部代号（plain / strict / releasePreviewFirst）原样贴给用户，既看不懂，
+        // 也容易让人以为 HOS3 和 HOS4 是两套完全不同的代码。
         tvHyperosDetected.setText((manual ? "手动兜底" : "自动识别") + "："
-                + HyperOsCompat.describe(os, hosMode));
+                + HyperOsCompat.describe(os, hosMode)
+                + "\n" + HyperOsCompat.supportNote(os));
     }
 
     private void paintChip(TextView chip, boolean on) {

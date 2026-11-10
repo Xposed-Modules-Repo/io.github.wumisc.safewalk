@@ -25,6 +25,10 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         const val ID_TORCH = 1005
         /** 预览失败提示（不是提醒，是故障告知） */
         const val ID_PREVIEW = 1006
+        /** 悬浮窗权限被系统回收（HyperOS 大版本升级 / 一键清理 / 省电策略后常见） */
+        const val ID_OVERLAY = 1007
+        /** 前台服务被降级（camera 被 ROM 拒绝，退到 specialUse） */
+        const val ID_FGS = 1008
 
         /** 本模块包名，用于构造跨进程 PendingIntent */
         private const val APP_PKG = "io.github.wumisc.safewalk"
@@ -168,6 +172,47 @@ class SafeWalkNotificationManager(private val ctx: Context) {
             baseBuilder(
                 "SafeWalk 后视画面打不开",
                 "原因：$reason。\n\n相机在本应用内打开：请确认已授予「相机」权限，且没有其他应用（相机、扫码、视频通话）正占用后置摄像头。"
+            )
+        )
+    }
+
+    /**
+     * 前台服务被降级提示（camera → specialUse）。
+     *
+     * 降级后服务与悬浮窗都还在，但**后台访问相机会被系统拒绝**（Android 11 起
+     * CAMERA 属于 while-in-use 权限）。如果不提示，用户看到的是「小窗打开了但没有
+     * 画面」，这是最难自查的一类现象：权限全给了、日志里也没有报错。
+     */
+    fun fgsDegraded() {
+        if (!checkCooldown(ID_FGS)) return
+        notify(
+            ID_FGS,
+            baseBuilder(
+                "系统限制了后台相机",
+                "这台机器不允许从后台拉起「相机」类型的前台服务，已自动降级保住进程。\n\n" +
+                        "影响：屏幕黑着或应用在后台时，小窗可能没有画面；打开应用后正常。\n" +
+                        "建议：把本应用加入电池优化白名单（省电策略选「无限制」），可显著降低该限制。"
+            )
+        )
+    }
+
+    /**
+     * 悬浮窗权限丢失提示。
+     *
+     * 【为什么单独做一条】HyperOS 3/4 会在系统升级、一键清理、省电策略触发后把
+     * `SYSTEM_ALERT_WINDOW` 这个 AppOps 悄悄收回去。此时窗口加不上，`addView` 抛的
+     * BadTokenException 会被外层 catch 吞掉 —— 用户只看到「走起来没反应」，
+     * 日志里也只是一行异常，根本不知道是权限被收走了。
+     */
+    fun overlayLost() {
+        if (!checkCooldown(ID_OVERLAY)) return
+        notify(
+            ID_OVERLAY,
+            baseBuilder(
+                "SafeWalk 悬浮窗权限被回收",
+                "系统把「显示在其他应用上层」权限收回去了，角落小窗无法显示。\n\n" +
+                        "点此进入应用 → 权限与无障碍 → 重新打开「悬浮窗」。\n" +
+                        "HyperOS 在系统升级、一键清理后容易回收该权限，属于系统行为。"
             )
         )
     }

@@ -1,5 +1,77 @@
 # 更新日志
 
+## [4.0] - 2026-11-10 稳定版：HyperOS 3/4 适配真正落地 + 浅色导航栏去毛边
+
+### 🔍 先说结论：HyperOS 3 能用，而且比 HyperOS 4 更稳
+
+这个版本把「HyperOS 适配」从**日志里的建议**改成了**运行时真正执行的降级链**。
+
+3.3~3.5 的代码里有一张很漂亮的兼容表（HOS3 用 `specialUse`、HOS4 用 `plain`、
+手电 `releasePreviewFirst`、悬浮窗 `strict`），但**它们全部只出现在日志里**：
+`WalkPreviewService` 一直硬编码 `FOREGROUND_SERVICE_TYPE_CAMERA`，
+`describe()` 输出的那串「前台服务=plain｜手电=releasePreviewFirst｜悬浮窗=strict」
+是把建议值当现状展示——等于给用户看了一份没落地的方案。你截图里那行字就是这么来的。
+
+更关键的是：**那张表本身也是错的**。把前台服务类型换成 `plain` 会去掉 camera 语义，
+而 Android 11 起 CAMERA 属于 while-in-use 权限，后台就打不开相机——小窗会彻底拍不到
+画面。那不是适配，是把功能阉掉。
+
+4.0 的做法：
+
+| 改动 | 说明 |
+| --- | --- |
+| 前台服务 | `camera` → `specialUse` → 无 type，三档逐级尝试；camera 永远排第一 |
+| 判定依据 | **不看 ROM 版本**，只看 `startForeground` 的运行时结果（HOS5 换了限制也不用改代码） |
+| 悬浮窗 | 每次显示前真的查 `Settings.canDrawOverlays()`，失权就拦下并发通知 |
+| 手电 | 明确为 `inSession`：灯跟小窗同生同灭，不存在「先释放预览再点灯」 |
+| 首页文案 | 内部代号换成一句人话，并直接回答「这个版本能不能用」 |
+
+关于「HOS3 到底行不行」，还有一个容易被忽略的事实：本项目 `targetSdk 35`
+（= Android 15 = HyperOS 3 的基座），`compileSdk 37`。
+
+- 在 **HyperOS 3** 上，targetSdk 与系统版本一致，走的是最标准的路径，没有兼容性妥协；
+- 在 **HyperOS 4**（Android 16）上，targetSdk 低一档，系统会启用兼容行为，
+  但厂商对 camera 型前台服务的拦截更积极，所以**降级链主要是为 HOS4 准备的**。
+
+换句话说：HOS3 不是"勉强能用"，它是这次改动里最不需要特殊照顾的那个。
+
+### ✨ 浅色导航栏：这次找到了真正的根因
+
+3.5 只改了两侧描边颜色，深色立刻变好、浅色几乎没变。原因是毛边的来源判断错了：
+
+- 玻璃的 AGSL shader 是**直接栅格化**的，圆角处不做覆盖率采样，
+  形状边界会输出一条 1~2dp 的**半透明带**；
+- 这条带叠在深色底上几乎看不见（暗 + 暗），叠在浅色底上就是一圈**灰箍**——
+  这才是「深色好多了、浅色还有」的全部原因；
+- 3.5 的白色描边只能盖住形状**内侧**那半个像素，而灰带在边界上，盖不住；
+  浅色底上白描边又与背景同色，等于没画。
+
+4.0 的修法：给玻璃节点加 `graphicsLayer(shape = TabsShape, clip = true)`，
+让 **RenderNode 按同一个圆角做硬件裁剪**——outline 裁剪自带抗锯齿，
+把那条半透明带连同外溢的模糊采样一起切掉，边界只剩 1px 过渡。
+
+配套：
+
+- 浅色 blur 半径 8dp → 6dp（边缘过渡宽度与模糊半径正相关，6dp 只剩极细一圈）；
+- 浅色描边降为白 0.55→0.10（只留一丝边光，不再形成白框）；
+- 深色保持原样（白 0.22→0.05，1dp）；
+- 代价：按住时玻璃的 +5% 膨胀会被裁掉，视觉上只剩高亮与透镜。已在代码里注明。
+
+### 🧹 其他
+
+- lint 抓到一处会**让降级链在最需要它的时刻断掉**的缺陷：
+  声明 `foregroundServiceType="specialUse"` 却没声明
+  `FOREGROUND_SERVICE_SPECIAL_USE` 权限，运行时 `startForeground(..., SPECIAL_USE)`
+  会直接抛 `SecurityException`。已补。
+- 降级到 `specialUse` 时发一次通知说明「后台相机被限制、建议加白名单」，
+  同一进程只发一次，避免每次走起来都弹。
+- 新增 `HyperOsCompatStrategyTest` 6 条防回归：camera 必须排第一、
+  HOS3/HOS4 必须共用同一条链、文案里不许出现内部代号、不许写"完美支持"。
+
+验证：`assembleDebug` BUILD SUCCESSFUL，单测 **104/104**，`lintDebug` **0 error**，
+APK `versionCode 40 / versionName 4.0`，清单实测
+`foregroundServiceType=0x40000040`（camera|specialUse）+ specialUse 权限已声明。
+
 ## [3.5] - 2026-11-10 磁贴改为「自动跟随步行」+ 导航栏圆角收口
 
 ### 🔧 磁贴语义修正（3.4 理解错了）
