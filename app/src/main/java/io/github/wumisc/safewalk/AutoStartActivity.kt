@@ -1,6 +1,7 @@
 package io.github.wumisc.safewalk
 
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -47,13 +48,21 @@ class AutoStartActivity : Activity() {
         } catch (_: Throwable) {
         }
 
-        val fromUid = try {
-            launchedFromUid
-        } catch (_: Throwable) {
+        // `launchedFromUid` 是 API 34 才有的属性。minSdk 33 上直接读会抛 NoSuchMethodError
+        // （被下面 catch 吞掉后 fromUid=-1，虽然不至于崩，但日志里会变成「uid=-1 拒绝」，
+        // 排查时极易误判成「被第三方拉起」）。这里显式按版本取值。
+        val fromUid = if (Build.VERSION.SDK_INT >= 34) {
+            try {
+                launchedFromUid
+            } catch (_: Throwable) {
+                -1
+            }
+        } else {
             -1
         }
         if (!isTrustedLauncher(fromUid)) {
-            DiagLog.log("[walk] AutoStart 被不可信 uid=$fromUid 拉起，拒绝")
+            DiagLog.log("[walk] AutoStart 被不可信 uid=$fromUid 拉起，拒绝"
+                    + (if (fromUid < 0) "（本机 SDK=${Build.VERSION.SDK_INT}，取不到启动方 uid，仅按令牌判定）" else ""))
             finish()
             return
         }

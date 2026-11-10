@@ -1,5 +1,6 @@
 package io.github.wumisc.safewalk
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -420,6 +421,9 @@ class RearCameraOverlay(
      * 强度调低时更接近原始画面、少遮挡路况；调高时文字从花哨背景里被拎出来。
      * 无论怎么调，画面层 alpha 只由 style.opacity 决定，两者互不干扰。
      */
+    // 这块文字只在 WindowManager 悬浮层里自绘，不在 AppCompat 布局树中，
+    // 换成 AppCompatTextView 没有意义（也不可用，它要求 Theme.AppCompat 上下文）
+    @SuppressLint("AppCompatCustomView")
     private inner class HudTextView(context: Context) : TextView(context) {
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE

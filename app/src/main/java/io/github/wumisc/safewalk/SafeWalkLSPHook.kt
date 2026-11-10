@@ -1,5 +1,6 @@
 package io.github.wumisc.safewalk
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -1729,6 +1730,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         return top.topActivity?.packageName ?: top.baseActivity?.packageName
     }
 
+    // 「使用情况访问」是 appop，未授予时 queryEvents 会抛 SecurityException（外层已 catch）。
+    // 清单里显式声明了 PACKAGE_USAGE_STATS，这里标注只是为了让 lint 不再重复报同一条。
+    @SuppressLint("MissingPermission")
     private fun pkgFromUsageEvents(): String? {
         val c = ctx ?: return null
         val usm = c.getSystemService(Context.USAGE_STATS_SERVICE)

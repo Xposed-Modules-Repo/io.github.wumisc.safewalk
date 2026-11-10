@@ -1,6 +1,7 @@
 package io.github.wumisc.safewalk
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -74,6 +75,7 @@ object PlaceArrivalMonitor {
     private var lastSampleLogTs = 0L
 
     @JvmStatic
+    @SuppressLint("MissingPermission")   // 上面 hasLocationPermission() 已判定，且整体包在 try/catch 里
     fun start(ctx: Context) {
         if (running) return
         val c = ctx.applicationContext
@@ -95,6 +97,10 @@ object PlaceArrivalMonitor {
         if (provider == null) {
             DiagLog.log("[place] 系统定位开关未开启 → 到达提醒暂不生效")
             return
+        }
+        if (!hasBackgroundLocation(c)) {
+            DiagLog.log("[place] ⚠ 未授予「后台定位」→ 到达提醒只在打开 App 时生效"
+                    + "（权限引导页 → 后台定位 → 位置选「始终允许」）")
         }
 
         val l = object : LocationListener {
@@ -142,6 +148,24 @@ object PlaceArrivalMonitor {
         val fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
         return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * 是否已授予「后台定位」。
+     *
+     * 只授「使用应用期间」时，应用一进后台系统就停定位回调 —— 而「到达某地」几乎
+     * 总发生在屏幕黑着、手机装兜里的时候，等于这条功能只在打开 App 的几秒内有效。
+     * 没授予不报错，但要在日志里说清楚，别让用户以为「判定坏了」。
+     */
+    private fun hasBackgroundLocation(ctx: Context): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return true
+        return try {
+            ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun onLocation(loc: Location) {

@@ -390,6 +390,22 @@
                     android:orientation="vertical">
 
                     <LinearLayout
+                        android:id="@+id/btn_permissions"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="权限与无障碍" />
+
+                        <TextView
+                            style="@style/RowChevron" />
+                    </LinearLayout>
+
+                    <View style="@style/RowDivider" />
+
+                    <LinearLayout
                         android:id="@+id/btn_tips"
                         style="@style/RowStyle">
 

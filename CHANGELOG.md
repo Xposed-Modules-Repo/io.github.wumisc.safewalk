@@ -1,5 +1,48 @@
 # 更新日志
 
+## [3.3] - 2026-11-10 修复：无障碍没有入口 / 快捷方式不生效 / 后台收不到定位
+
+### 🐞 系统「无障碍」里找不到本应用（用户反馈）
+
+**现象**：权限引导页把「无障碍」列成一项，点进去只能到系统无障碍总列表，里面根本没有
+「安全出行」，也就没有从那里打开应用的入口。
+
+**根因**：应用从未声明任何 `AccessibilityService`，系统列表自然没有条目；而引导页的
+状态读的是 `ACCESSIBILITY_ENABLED` **总开关**——只要系统里开着任意一个无障碍服务
+（输入法、手势、屏幕朗读）就显示「已开启」，是纯粹的状态误报。
+
+**修复**：
+- 新增 `SafeWalkA11yService`（只订阅 `TYPE_WINDOW_STATE_CHANGED`，`canRetrieveWindowContent=false`，
+  不读屏、不联网），清单注册并带 `settingsActivity` → 系统列表里点「设置」即可打开本应用；
+- 作用：前台是相机 / 录像 / 视频通话类应用时自动收起角落小窗（不依赖 Xposed 的备用通道），
+  名单与匹配规则抽成 `CameraAppPolicy` 并加单测；
+- 引导页「无障碍」改为**直达本服务详情页**（`android.settings.ACCESSIBILITY_DETAILS_SETTINGS`），
+  状态按 `ENABLED_ACCESSIBILITY_SERVICES` 里有没有本组件精确判断。
+
+### 🐞 长按图标没有快捷方式
+
+`res/xml/shortcuts.xml` 里两个快捷方式（切换总开关 / 打开急救卡）早就写好了，但清单里
+缺 `android.app.shortcuts` 这条 meta-data，系统根本不会读它 —— 资源等于凭空存在。
+
+### 🐞 到达提醒在后台从不触发
+
+`PlaceArrivalMonitor` 只申请了前台定位。Android 10 起应用进后台就停回调，而「到达某地」
+几乎总发生在屏幕黑着、手机装兜里的时候 → 到达提醒只在打开 App 的几秒内有效。
+现声明 `ACCESS_BACKGROUND_LOCATION`，引导页新增「后台定位」一项（位置选「始终允许」），
+未授予时日志明确提示「只在打开 App 时生效」。
+
+### 🧹 其他修复
+
+- `AutoStartActivity` 在 Android 13 上读 `launchedFromUid`（API 34 才有）→ 异常被吞后 uid=-1，
+  日志误报「被不可信 uid 拉起」；改为按版本取值并在日志里说明。
+- 清单补 `PACKAGE_USAGE_STATS`（Hook 前台检测第四级兜底用，未授予时原本每次抛 SecurityException）。
+- 引导页「无障碍」状态不再把「别的无障碍服务开着」误报成本应用已开启。
+- 「关于」页新增常驻入口「权限与无障碍」：引导页只弹一次，此前用户想补授权再也找不到地方。
+- 消除 5 条 lint error（MissingPermission / NewApi / AppCompatCustomView），`lintDebug` 通过。
+
+验证：`assembleDebug` BUILD SUCCESSFUL，单测 92/92（新增 `CameraAppPolicyTest` 4 条），
+`lintDebug` 0 error，APK `versionCode 33 / versionName 3.3`。
+
 ## [3.2] - 2026-11-10 修复：自动跟随全程不触发（纯加速度门槛不可达）
 
 ### 🐞 「连续走 N 步」永远等不到

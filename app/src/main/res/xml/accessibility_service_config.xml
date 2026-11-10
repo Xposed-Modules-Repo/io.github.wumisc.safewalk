@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    无障碍服务配置。
+
+    accessibilityEventTypes 只订阅「窗口状态变化」，不订阅内容变化 —— 取前台包名只需要这一个事件；
+    canRetrieveWindowContent=false 明确表示**不读取屏幕上的任何文字**（用户装个无障碍服务最怕
+    隐私被读屏，这里从配置层就关死）。
+    settingsActivity 指向 MainActivity：系统「无障碍 → 已下载的应用」里本条目右侧的
+    「设置」就是靠它打开的 —— 这正是用户反馈缺失的「应用打开入口」。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/a11y_service_desc"
+    android:notificationTimeout="100"
+    android:settingsActivity="io.github.wumisc.safewalk.MainActivity" />

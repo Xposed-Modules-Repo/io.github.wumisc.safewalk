@@ -80,6 +80,9 @@ class PermissionOnboardingActivity : Activity() {
 
         private const val REQ_RUNTIME = 1001
 
+        /** 后台定位单独一个请求码：它必须在「前台定位已授予」之后才申请 */
+        private const val REQ_BG_LOCATION = 1002
+
         /**
          * 「所有文件访问」设置页 action。刻意用字符串常量而不是 Settings 里的常量：
          * 该 action 在部分 ROM 上并不存在，用字符串可以让 startActivity 失败时干净地
@@ -174,6 +177,7 @@ class PermissionOnboardingActivity : Activity() {
         "电池优化白名单",
         "所有文件访问",
         "自启动 / 后台活动（HyperOS）",
+        "后台定位（到达提醒）",
         "无障碍"
     )
     private var specialIndex = 0
@@ -362,13 +366,19 @@ class PermissionOnboardingActivity : Activity() {
             { allFilesState() }
         ),
         PermItem(
-            "⑥ 无障碍（可选）",
-            "备用通道，本项目主用 Xposed / LSPosed",
+            "⑥ 后台定位（到达提醒）",
+            "屏幕黑着、手机装兜里也能识别「到了车站/景区/商圈」并提醒",
+            "需手动开启 · 位置选「始终允许」",
+            { backgroundLocationState() }
+        ),
+        PermItem(
+            "⑦ 无障碍（可选）",
+            "在系统无障碍里提供本应用入口；开启后可自动避让相机类应用",
             "可选 · 手动开启",
             { a11yState() }
         ),
         PermItem(
-            "⑦ ROOT 与传感器",
+            "⑧ ROOT 与传感器",
             "ROOT 仅用于「重启系统界面」兜底；加速度计 / 光线 / 计步器由系统直接提供",
             "仅说明 · 不申请、不弹授权框",
             { rootState() }
@@ -467,25 +477,50 @@ class PermissionOnboardingActivity : Activity() {
         PermState("需手动确认（系统不提供查询接口，点『逐项开启』跳转）", colorNeutral, true)
 
     /**
-     * 无障碍：只能读到系统无障碍「总开关」（Settings.Secure.ACCESSIBILITY_ENABLED），
-     * 无法精确判断本应用是否被勾选；且本项目主用 Xposed，它只是备用通道，
-     * 因此不计入待处理项，避免把「可选」误报成「缺失」。
+     * 后台定位：只有「始终允许」才能在锁屏 / 后台继续拿到位置。
+     *
+     * 旧版这里根本没有这一项，而 [PlaceArrivalMonitor] 只在应用前台有效 ——
+     * 用户真正「到达某地」时手机通常黑屏装兜里，于是到达提醒几乎从不触发。
      */
-    private fun a11yState(): PermState {
-        val on = try {
-            Settings.Secure.getInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
+    private fun backgroundLocationState(): PermState {
+        val bg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+            } catch (_: Throwable) {
+                false
+            }
+        } else {
+            true
+        }
+        if (bg) return PermState("已开启（后台也能判类）", colorOk)
+        val fine = try {
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
         } catch (_: Throwable) {
             false
         }
         return PermState(
-            if (on) {
-                "可选 · 备用通道（系统无障碍总开关已开启）"
-            } else {
-                "可选 · 备用通道（未开启，本项目主用 Xposed / LSPosed）"
-            },
-            colorNeutral
+            if (fine) "未开启（仅为「使用期间」，后台收不到位置）"
+            else "未开启（前台定位也还没授予）",
+            colorNeutral,
+            true
         )
     }
+
+    /**
+     * 无障碍：查**本应用的服务**有没有被勾选。
+     *
+     * 旧版读的是 `ACCESSIBILITY_ENABLED` 总开关 —— 只要系统里开着任意一个无障碍服务
+     * （输入法、手势、屏幕朗读）就显示「已开启」，而本应用从来没声明过服务，
+     * 系统列表里根本没有条目。用户按提示去找，自然找不到「打开应用」的入口。
+     */
+    private fun a11yState(): PermState =
+        if (SafeWalkA11yService.isEnabled(this)) {
+            PermState("已开启（可从系统无障碍打开本应用；相机类应用自动避让）", colorOk)
+        } else {
+            PermState("未开启（可选，点『逐项开启』直达本服务页）", colorNeutral)
+        }
 
     private fun rootState(): PermState =
         if (rootAvailable) {
@@ -582,6 +617,16 @@ class PermissionOnboardingActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_BG_LOCATION) {
+            val ok = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            DiagLog.log(
+                if (ok) "[PERM:GRANTED] 后台定位已授予 → 到达提醒可在后台判类"
+                else "[PERM:MISSING] 后台定位未授予 → 到达提醒只在打开 App 时生效"
+            )
+            refreshStates()
+            return
+        }
         if (requestCode != REQ_RUNTIME) return
         DiagLog.log("[PERM] 收到运行时权限回调，共 ${permissions.size} 项")
 
@@ -646,7 +691,16 @@ class PermissionOnboardingActivity : Activity() {
             1 -> openBattery()
             2 -> openAllFiles()
             3 -> openAutoStart()
-            4 -> openAccessibility()
+            4 -> openBackgroundLocation()
+            5 -> openAccessibility()
+        }
+    }
+
+    /** 轻量提示：本页所有 Toast 都走这里，避免各分支重复 try/catch（部分 ROM 后台禁止弹 Toast）。 */
+    private fun toast(msg: String) {
+        try {
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        } catch (_: Throwable) {
         }
     }
 
@@ -719,10 +773,49 @@ class PermissionOnboardingActivity : Activity() {
         fallbackAppDetails("自启动 / 后台")
     }
 
-    /** ⑤ 无障碍：本项目主用 Xposed，这一项只是备用通道，放最后引导且算可选。 */
+    /**
+     * ⑤ 后台定位：到达提醒要在「屏幕黑着、手机装兜里」时采样。
+     *
+     * 只授「使用应用期间」是无效的 —— Android 10 起应用一进后台，定位回调就停，
+     * 而「到达某个地方」恰恰发生在用户不看手机的时候。所以这里补一次后台定位申请：
+     * Android 11+ 允许单独请求该权限，系统会弹「允许所有时间」的说明页并跳设置；
+     * 请求失败再退到应用详情页，让用户自己选「位置 → 始终允许」。
+     */
+    private fun openBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            toast("系统版本无需后台定位权限")
+            return
+        }
+        val fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (fine != PackageManager.PERMISSION_GRANTED) {
+            toast("请先授予「定位」前台权限，再来开后台定位")
+            fallbackAppDetails("后台定位（先授前台定位）")
+            return
+        }
+        try {
+            requestPermissions(
+                arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                REQ_BG_LOCATION
+            )
+            DiagLog.log("[PERM] 已申请后台定位（ACCESS_BACKGROUND_LOCATION）")
+            return
+        } catch (t: Throwable) {
+            DiagLog.log("[PERM:SYSTEM] 后台定位申请失败：${t.message}，退回应用详情页")
+        }
+        fallbackAppDetails("后台定位")
+    }
+
+    /** ⑥ 无障碍：直达**本服务**的详情页，而不是让用户在系统总列表里找一个看不见的服务。 */
     private fun openAccessibility() {
-        val ok = startSafely("无障碍") {
-            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        val ok = try {
+            startActivity(SafeWalkA11yService.detailsIntent(this))
+            DiagLog.log("[PERM] 已拉起本应用无障碍服务的系统详情页")
+            true
+        } catch (t: Throwable) {
+            DiagLog.log("[PERM:SYSTEM] 无障碍详情页不可用：${t.javaClass.simpleName}，退回总列表")
+            startSafely("无障碍 · 系统列表") {
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            }
         }
         if (!ok) fallbackAppDetails("无障碍")
     }

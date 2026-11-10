@@ -305,6 +305,15 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 出门踩坑指南
         findViewById(R.id.btn_tips).setOnClickListener(v ->
                 startActivity(new Intent(this, TipsActivity.class)));
+        // 权限与无障碍：引导页只弹一次，之后用户想补授权（尤其「始终允许定位」「无障碍」）
+        // 就再也找不到入口了 —— 这里常驻一个入口，随时可以重新走一遍逐项引导。
+        findViewById(R.id.btn_permissions).setOnClickListener(v -> {
+            try {
+                PermissionOnboardingActivity.start(this);
+            } catch (Throwable t) {
+                DiagLog.log("[ui] 打开权限引导页失败: " + t.getMessage());
+            }
+        });
         // GitHub 项目地址
         findViewById(R.id.btn_github).setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk"));

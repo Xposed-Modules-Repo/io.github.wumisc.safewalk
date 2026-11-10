@@ -166,6 +166,15 @@ public final class WalkPreviewService extends Service {
     private boolean hookHidden = false;
 
     /**
+     * 无障碍通道报告「相机类应用在前台」。
+     *
+     * 与 [hookHidden] 并列而不是合并：Hook 让路是跨进程指挥（手电、相机应用、总开关），
+     * 由 Hook 自己发 SHOW 恢复；这一条来自本进程的无障碍服务，离开相机应用就自动恢复，
+     * 两条通道各管各的，谁也不会把对方的「收起」状态顶掉。
+     */
+    private boolean a11yCameraForeground = false;
+
+    /**
      * 上一次回执给 Hook 的预览真实状态，只在「真正跳变」时才发回执。
      *
      * 没有这个去重：自动模式下站着不动时，Hook 每 2s 发一次放行信号，App 每次都
@@ -217,6 +226,39 @@ public final class WalkPreviewService extends Service {
      */
     public static boolean isAlive() {
         return INSTANCE != null && INSTANCE.get() != null;
+    }
+
+    /**
+     * 前台应用变化（来自 [SafeWalkA11yService]，不依赖 Xposed 的备用通道）。
+     *
+     * 服务没起来时是空操作：判断当前有没有在显示预览本来就没意义，也不能为了这个
+     * 去 startService —— 那会拉起一个 camera 类型前台服务常驻。
+     */
+    public static void onForegroundAppChanged(String pkg) {
+        WalkPreviewService s = INSTANCE == null ? null : INSTANCE.get();
+        if (s != null) s.handleForegroundApp(pkg);
+    }
+
+    /**
+     * 相机 / 录像 / 视频通话类应用包名前缀。
+     *
+     * 只处理「会独占摄像头或需要干净取景」的应用：小窗叠在取景框上会挡画面，
+     * 同时我们自己的预览会话也会让对方拿不到相机（CAMERA_IN_USE）。
+     * 不做「任意应用都收起」——那等于把常显小窗废掉。
+     * 具体名单与匹配规则见 [CameraAppPolicy]（纯逻辑，有单测）。
+     */
+    private boolean isCameraLikePackage(String pkg) {
+        return CameraAppPolicy.isCameraLike(pkg);
+    }
+
+    private void handleForegroundApp(String pkg) {
+        boolean camera = isCameraLikePackage(pkg);
+        if (camera == a11yCameraForeground) return;   // 只在状态跳变时动，避免每次窗口切换都重评估
+        a11yCameraForeground = camera;
+        DiagLog.log("[a11y] 前台应用=" + (pkg == null || pkg.isEmpty() ? "-" : pkg)
+                + (camera ? " → 相机类应用在前台，收起小窗让路"
+                          : " → 已离开相机类应用，恢复按步态判定"));
+        evaluateShow();
     }
 
     public static void start(Context ctx) {
@@ -414,6 +456,14 @@ public final class WalkPreviewService extends Service {
             return;
         }
         if (hookHidden) return;
+        // 无障碍通道：相机 / 录像 / 视频通话类应用在前台时让路（避免遮挡取景、抢占摄像头）
+        if (a11yCameraForeground) {
+            if (overlay != null && overlay.getShowing()) {
+                overlay.hide();
+                reportPreviewState();
+            }
+            return;
+        }
         if (!SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)) return;
         if (SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)) {
             // 自动模式：走起来才显示，停下收起

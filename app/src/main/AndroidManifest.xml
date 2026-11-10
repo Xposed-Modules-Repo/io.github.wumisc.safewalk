@@ -41,6 +41,16 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
     <!--
+        Hook 的前台应用检测第四级兜底用 UsageStatsManager.queryEvents。
+        这个权限是「使用情况访问」类 appop，声明了也不会自动授予，用户在
+        「设置 → 应用 → 特殊权限 → 使用情况访问」里开；不开时走前三级的
+        ActivityTaskManager 反射，功能不受影响。不声明的话 queryEvents 必抛
+        SecurityException（虽然被 catch 吞掉，但会白白多一次异常开销）。
+    -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!--
         行走模式的预览在**本应用进程**里完成：申请 CAMERA 运行时权限后，
         自己开相机、自己挂悬浮窗。不再依赖系统界面进程的相机权限——
         那条权限各 ROM 授不授全看厂商，靠不住，实测也确实开不出画面。
@@ -70,6 +80,12 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!--
+        到达提醒要在「手机装兜里、屏幕黑着」的时候也能判类，只授前台定位是不够的：
+        Android 10 起，应用进入后台后 requestLocationUpdates 不再回调。
+        所以必须声明后台定位，并由引导页带用户去系统设置里选「始终允许」。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!-- 相机/闪光灯非必需，避免没闪光灯的设备装不上 -->
@@ -83,6 +99,16 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.Safewalk">
+
+        <!--
+            桌面长按图标的快捷方式。
+            res/xml/shortcuts.xml 早就写好了两个快捷方式（切换总开关 / 打开急救卡），
+            但清单里一直没有这条 meta-data —— 系统根本不会去读它，资源等于凭空存在，
+            长按图标只有「应用信息」，用户反馈「没有快捷入口」就是这个原因。
+        -->
+        <meta-data
+            android:name="android.app.shortcuts"
+            android:resource="@xml/shortcuts" />
 
         <activity
             android:name=".MainActivity"
@@ -202,6 +228,26 @@
             现在主路径回到应用进程（TorchActionReceiver → TorchController），
             Hook 那条保留作兜底。
         -->
+
+        <!--
+            无障碍服务（可选通道）。
+            ① 让系统「无障碍 → 已下载的应用」里出现本应用，条目内的「设置」由
+               accessibility_service_config.xml 的 settingsActivity 打开 App；
+            ② 前台是相机类应用时收起角落小窗（不依赖 Xposed 的备用通道）。
+            不读取屏幕内容（canRetrieveWindowContent=false）。
+        -->
+        <service
+            android:name=".SafeWalkA11yService"
+            android:exported="true"
+            android:label="@string/a11y_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
 
         <!--
             行走模式预览服务（App 进程）：持有相机 + 悬浮窗。
