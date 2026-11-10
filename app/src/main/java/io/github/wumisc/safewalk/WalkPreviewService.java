@@ -243,6 +243,10 @@ public final class WalkPreviewService extends Service {
         // 否则开机自启时会按空 SP 的默认值（行走模式=关）判断，导致「开机后是关闭的」。
         ConfigBackup.restoreIfNeeded(getApplicationContext());
         sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+        // 【到达提醒】证件 / 到场提示不再由「确认步行」触发，改由 App 侧低频定位
+        // 判定「到达某类场所」后再发（见 PlaceArrivalMonitor）。
+        // 服务是常驻的，挂在这里最稳；start 内部幂等，多入口重复调用无害。
+        PlaceArrivalMonitor.start(getApplicationContext());
         sm = (SensorManager) getSystemService(SENSOR_SERVICE);
         // 静置巡检常驻（每秒一次，仅自动模式且有步时才有动作）
         gaitHandler.postDelayed(gaitTick, 1000L);
@@ -912,6 +916,7 @@ public final class WalkPreviewService extends Service {
             screenReceiver = null;
         }
         stopGait();
+        PlaceArrivalMonitor.stop();
         gaitHandler.removeCallbacks(gaitTick);
         if (overlay != null) overlay.hide();
         // 服务被系统回收时也要通知 Hook：画面已经不在了，

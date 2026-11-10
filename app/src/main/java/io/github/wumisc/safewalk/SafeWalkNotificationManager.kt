@@ -118,9 +118,23 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         notify(ID_BATTERY, baseBuilder("SafeWalk 电量预警", "快没电了，赶紧找个充电宝或就近充电。"))
     }
 
-    fun idReminder() {
+    /**
+     * 证件提醒。
+     *
+     * @param scene 到达的场所类别（旅游 / 求职 …）。带场景时文案换成「到了这儿该
+     *              注意什么」，比原来那句任何时刻都一样的通稿有用得多；null 时为
+     *              通用文案（实验区手动测试走这条）。
+     */
+    @JvmOverloads
+    fun idReminder(scene: String? = null) {
         if (!checkCooldown(ID_IDCARD)) return
-        notify(ID_IDCARD, baseBuilder("SafeWalk 证件提醒", "身份证、护照等重要证件一定要贴身放好。"))
+        val msg = when (scene) {
+            "旅游" -> "已到车站/机场/景区一带：身份证、护照贴身放好，过安检、办入住后记得取回。"
+            "求职" -> "已到面试地点：进门登记要出示身份证，走时别落在前台。"
+            else -> "身份证、护照等重要证件一定要贴身放好。"
+        }
+        val title = if (scene.isNullOrBlank()) "SafeWalk 证件提醒" else "SafeWalk 证件提醒 · $scene"
+        notify(ID_IDCARD, baseBuilder(title, msg))
     }
 
     fun sitRemind() {
@@ -128,9 +142,16 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         notify(ID_SIT, baseBuilder("SafeWalk 久坐提醒", "已坐了2小时了，该起来运动运动了。"))
     }
 
-    fun socialTip(text: String) {
+    /**
+     * 社交/到场提示。
+     *
+     * @param kind 场所类别，带上后标题会显示「· 求职」，用户一眼知道为什么现在弹。
+     */
+    @JvmOverloads
+    fun socialTip(text: String, kind: String? = null) {
         if (!checkCooldown(ID_SOCIAL)) return
-        notify(ID_SOCIAL, baseBuilder("SafeWalk 社交提示", text))
+        val title = if (kind.isNullOrBlank()) "SafeWalk 社交提示" else "SafeWalk 到场提示 · $kind"
+        notify(ID_SOCIAL, baseBuilder(title, text))
     }
 
     /**

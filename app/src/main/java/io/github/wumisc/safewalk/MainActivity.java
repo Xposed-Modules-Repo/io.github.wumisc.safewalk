@@ -68,6 +68,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 【HyperOS 版本适配 · 首页】进入首页打印一次环境快照（厂商/型号/SDK/prop/识别结论），
         // 现场排查「为什么识别成这个版本」时不用连 logcat。
         HyperOsCompat.logEnvironment();
+        // 【到达提醒】证件 / 到场提示按「到达某类场所」触发：进首页就启动定位监控，
+        // 这样即使行走模式没开（服务未起）也能正常提醒。start 幂等，不会重复注册。
+        PlaceArrivalMonitor.start(getApplicationContext());
 
         // 上次在实验区临时打开过预览、又没点「关闭预览」就退出（甚至进程被杀）时，
         // 备份会留在 SP 里。必须在 initUI 之前还原，否则首页会先按旧值渲染一遍。

@@ -129,7 +129,7 @@
                     <TextView
                         style="@style/RowHint"
                         android:layout_marginTop="2dp"
-                        android:text="确认步行出门后，提醒证件贴身存放" />
+                        android:text="到达车站 / 机场 / 景区 / 酒店时提醒证件贴身存放" />
                 </LinearLayout>
 
                 <androidx.appcompat.widget.SwitchCompat
@@ -264,12 +264,12 @@
 
                     <TextView
                         style="@style/RowTitle"
-                        android:text="社交礼仪" />
+                        android:text="到场提示" />
 
                     <TextView
                         style="@style/RowHint"
                         android:layout_marginTop="2dp"
-                        android:text="按下方出行模式给出礼仪提示" />
+                        android:text="到达面试 / 约会 / 聚会等场所时，按场所类型提一条礼节" />
                 </LinearLayout>
 
                 <androidx.appcompat.widget.SwitchCompat
@@ -330,7 +330,7 @@
                 android:layout_height="wrap_content"
                 android:paddingHorizontal="16dp"
                 android:paddingTop="14dp"
-                android:text="决定社交礼仪提示的内容，四种模式各有 5 条本地模板"
+                android:text="到场提示会按「识别到的场所类型」自动匹配模板（求职 / 约会 / 聚会 / 旅游各一套），这里的手动选择仅作偏好记录"
                 android:textColor="@color/text_hint"
                 android:textSize="12sp" />
 

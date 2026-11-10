@@ -87,7 +87,6 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     // ========== 时间戳（冷却用） ==========
     private val steps = mutableListOf<Long>()
     private var lastStepTs = 0L
-    private var lastIdRemindTs = 0L
     private var lastSitRemindTs = 0L
     private var lastTriggerTs = 0L
     private var lastBatteryWarnTs = 0L
@@ -1261,25 +1260,18 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         steps.clear()
         state = State.SLEEP
 
-        // 1. 证件提醒（每日最多1次）
-        if (pref(SafeWalkPrefKey.enableIdReminder, true) && now - lastIdRemindTs > DAILY_COOLDOWN) {
-            nm?.let { it.idReminder(); fired.add("证件") }
-            lastIdRemindTs = now
-        }
+        // 【BUG 修复 · 触发条件与内容语义错配】
+        // 原来这里有两段：
+        //   1) 证件提醒（每日最多 1 次）——只要「确认在持续步行」就弹；
+        //   2) 社交礼仪提示——取用户设置的出行模式模板，拼前 3 条弹一大段。
+        // 结果是在家走动、沙发上起身都会收到「身份证、护照一定要贴身放好」和
+        // 「【求职】优先青旅，只订1晚…」，跟你人在哪儿毫无关系。
+        // 这两条内容的语义是「到了某类场合该注意什么」，属于地点触发，不属于
+        // 步态触发。现已整体迁到 App 侧 PlaceArrivalMonitor：
+        //   定位 → 反编码 → 地点词库判类 → 停留确认 → 按类别发一条到场提示。
+        // Hook 侧不再无条件推送，避免「走路就念一遍」。
 
-        // 2. 社交礼仪提示（4 种出行模式都有模板，原先只有约会/聚会两个分支）
-        if (pref(SafeWalkPrefKey.enableSocialTipCard, true)) {
-            val mode = pref(SafeWalkPrefKey.travelMode, "求职")
-            val tips = TravelTemplate.getTemplate(mode)
-            if (tips.isNotEmpty()) {
-                nm?.let {
-                    it.socialTip("【$mode】" + tips.take(3).joinToString("；"))
-                    fired.add("社交")
-                }
-            }
-        }
-
-        // 3. 夜间手电提醒
+        // 1. 夜间手电提醒
         // 补回原始设计的两个门槛：
         // ① 屏幕必须亮着——黑屏时弹「开手电」通知没有意义；
         // ② 行走模式正在显示后置画面时，相机被预览占用，此时开闪光灯会失败，
@@ -1315,7 +1307,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 以前触发后一个字都不写，用户说「没反应」时无法区分
         // 「没走到 50 步」和「走到了但通知没弹出来」——两者处理方式完全不同。
         if (fired.isEmpty()) {
-            diag("✅ 判定为持续步行（窗口 $counted 步），但三条提醒的开关都关着，没有可发的通知")
+            diag("✅ 判定为持续步行（窗口 $counted 步），本轮没有需要发的提醒"
+                    + "（证件/到场提示已改为「到达场所」触发，由 App 侧定位判定）")
         } else {
             diag("✅ 判定为持续步行（窗口 $counted 步）→ 已发提醒：${fired.joinToString("、")}")
         }

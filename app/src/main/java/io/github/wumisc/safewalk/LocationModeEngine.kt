@@ -89,6 +89,19 @@ object LocationModeEngine {
         return if (top.value - second >= CONFIDENCE_GAP) top.key else null
     }
 
+    /**
+     * 只做反编码，返回地址文本。
+     *
+     * 「到达某类场所」的提醒需要地址本身（既用于判类，也用于日志排查），
+     * 所以把原来私有的反编码开口出来复用，避免再写一套 Geocoder 逻辑。
+     * 注意：Geocoder 是同步阻塞调用，**调用方必须在后台线程**。
+     */
+    @JvmStatic
+    fun addressOf(ctx: Context, loc: Location?): String? {
+        if (loc == null) return null
+        return reverseGeocode(ctx, loc)
+    }
+
     /** 定位 → 地址 → 建议模式（定位空或反编码失败返回 null） */
     @JvmStatic
     fun judge(ctx: Context, loc: Location?): String? {
