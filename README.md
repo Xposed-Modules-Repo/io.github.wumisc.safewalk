@@ -86,6 +86,26 @@ camera（首选）→ specialUse（被拒时保住服务与悬浮窗）→ 无 t
 
 ---
 
+## 📱 国产 UI 适配（HyperOS / MagicOS / ColorOS / OriginOS / AOSP）
+
+功能主干与 ROM 无关：Hook 有 `ActivityThread` 兜底、前台服务三档降级、悬浮窗显示前复核、
+磁贴绕过后台启动限制 —— 这些都不查表。**表只管一件事：把用户送到该去的设置页。**
+
+自启动 / 后台弹窗这类开关没有公开 API，只能指路。指路表按本机 UI 选候选，运行时逐条
+`resolveActivity` 校验，打不开就换下一条，全失败退应用详情页：
+
+```
+候选（component / action）→ 校验 → 打开 → 换下一条 → 应用详情页兜底
+```
+
+首次安装的权限引导页会显示「本机 UI：X · 自启动在『…』」，第 4 步按钮也按本机系统名生成，
+AOSP 上直接写「本系统无此开关，可跳过」。
+
+适配进度与真机验证状态见 **[docs/rom-support-matrix.md](docs/rom-support-matrix.md)**：
+🟡 表示代码就绪但**未真机验证**，不会写成「已支持」。
+
+---
+
 ## 🚀 安装
 
 1. LSPosed 中启用「安全出行」
