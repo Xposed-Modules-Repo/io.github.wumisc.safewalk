@@ -10,4 +10,6 @@
          也承担「前台是相机类应用时收起角落小窗」的避让职责（不依赖 Xposed）。 -->
     <string name="a11y_service_label">安全出行 · 前台避让</string>
     <string name="a11y_service_desc">可选。开启后本应用只读取当前前台应用的包名，在打开相机 / 录像 / 视频通话类应用时自动收起角落小窗，避免遮挡取景或与相机抢占摄像头；不读取任何屏幕文字，不联网上传。</string>
+    <!-- 控制中心磁贴：下拉通知栏 / 控制中心一键开关行走模式 -->
+    <string name="tile_walk_label">路况小窗</string>
 </resources>

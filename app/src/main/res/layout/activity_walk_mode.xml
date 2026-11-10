@@ -450,6 +450,45 @@
 
         </LinearLayout>
 
+        <!-- 快捷入口 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="快捷入口" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:id="@+id/card_add_tile"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="添加到控制中心" />
+
+                    <TextView
+                        android:id="@+id/tv_add_tile_desc"
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="下拉控制中心点一下就开，不用再进应用" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_add_tile_action"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="添加"
+                    android:textColor="@color/seal_red"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+
         <!-- 维护 -->
         <TextView
             style="@style/SectionLabel"

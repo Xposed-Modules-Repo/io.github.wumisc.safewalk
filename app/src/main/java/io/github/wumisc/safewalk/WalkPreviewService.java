@@ -393,6 +393,8 @@ public final class WalkPreviewService extends Service {
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
         goForeground();
+        // 服务起来了：磁贴副标题里的「服务未运行」提示要立刻消失
+        WalkTileService.refresh(this);
 
         String action = intent == null ? null : intent.getAction();
         if (ACTION_STOP.equals(action)) {
@@ -400,6 +402,8 @@ public final class WalkPreviewService extends Service {
             reportPreviewState();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
+            // 预览服务停掉 = 磁贴该变回「关」；面板没展开时也要及时对齐
+            WalkTileService.refresh(this);
             return START_NOT_STICKY;
         }
         if (ACTION_HIDE.equals(action)) {

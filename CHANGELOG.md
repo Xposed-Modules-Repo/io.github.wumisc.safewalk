@@ -1,5 +1,37 @@
 # 更新日志
 
+## [3.4] - 2026-11-10 新增：控制中心磁贴（下拉即开关行走模式）
+
+### ✨ 一点就开
+
+控制中心/下拉通知栏新增磁贴「路况小窗」，点一下开、再点一下关，不用进应用。
+
+- **开**：经透明中转页 `WalkToggleActivity` 启动预览服务。原因是
+  `WalkPreviewService` 是 `camera` 类型前台服务，QS 面板展开时本应用处于后台，
+  Android 14+ 直接 `startForegroundService` 会抛
+  `ForegroundServiceStartNotAllowedException`；官方稳定豁免是「启动瞬间有可见
+  Activity」，中转页存在的 450ms 就是这个窗口，服务提起前台后自己退出，用户无感。
+- **关**：写配置 + 发 STOP，面板不收起，磁贴当场变灰。
+
+### 🎛 状态与文案
+
+- 总开关关闭时磁贴置灰（`STATE_UNAVAILABLE`）：此时点开行走模式也不会生效，
+  不能做成「看着能点、点了没反应」。
+- 副标题说明下一步：`点击开启身后路况` / `身后路况已开启` /
+  `已开启 · 预览未运行，点一下关闭`，避免「点了不知道发生了什么」。
+- 与 App 内开关双向同步：App 改开关、预览服务启停都会
+  `requestListeningState` 主动刷新磁贴，不必等用户下次拉开面板。
+- 支持长按磁贴直达「行走模式」页（`QS_TILE_PREFERENCES`）。
+
+### ➕ 添加路径
+
+行走模式页新增「快捷入口 → 添加到控制中心」，走 Android 13 的
+`StatusBarManager.requestAddTileService()`，由系统弹「要添加吗」，
+不用用户自己进「编辑控制中心」翻列表。失败/系统不支持时给手动添加的说明。
+
+验证：`assembleDebug` BUILD SUCCESSFUL，单测 97/97（新增 `WalkTileStatePolicyTest` 5 条），
+`lintDebug` 0 error，APK `versionCode 34 / versionName 3.4`。
+
 ## [3.3] - 2026-11-10 修复：无障碍没有入口 / 快捷方式不生效 / 后台收不到定位
 
 ### 🐞 系统「无障碍」里找不到本应用（用户反馈）

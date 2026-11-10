@@ -127,6 +127,10 @@ public final class WalkModeActivity extends Activity {
         // 重启系统界面：整卡可点，右侧按钮只是视觉提示（点按钮会冒泡到卡片）
         View restartCard = findViewById(R.id.card_restart_systemui);
         restartCard.setOnClickListener(v -> confirmRestart());
+
+        // 控制中心磁贴：Android 13+ 可直接请求系统弹「是否添加」对话框，
+        // 不必让用户自己进「编辑控制中心」翻列表找。
+        findViewById(R.id.card_add_tile).setOnClickListener(v -> requestAddQsTile());
     }
 
     private void loadConfig() {
@@ -179,6 +183,8 @@ public final class WalkModeActivity extends Activity {
                 WalkPreviewService.send(this, WalkPreviewService.ACTION_STOP, null);
                 tvPreviewStage.setVisibility(View.GONE);
             }
+            // 控制中心磁贴与这里是同一个开关，改完立刻让磁贴对齐
+            WalkTileService.refresh(this);
             refreshDependencies();
         });
 
@@ -401,6 +407,56 @@ public final class WalkModeActivity extends Activity {
     private static final String ACTION_PREVIEW_STAGE = "io.github.wumisc.safewalk.PREVIEW_STAGE";
 
     private android.content.BroadcastReceiver previewStageReceiver;
+
+    // ========== 控制中心磁贴 ==========
+
+    /**
+     * 请求把磁贴加进控制中心。
+     *
+     * Android 13（API 33）起系统提供了 `requestAddTileService`：调用后由系统弹一个
+     * 「要添加吗」的确认框，用户点一下就行 —— 比让用户自己进「编辑控制中心 →
+     * 找到安全出行 → 拖出来」少四五个步骤，很多人根本不知道后面这条路。
+     *
+     * 各 ROM（含 HyperOS）对返回码的处理不完全一致，也可能直接拒绝；
+     * 所以失败时给一句「手动添加」的说明，而不是静默。
+     */
+    private void requestAddQsTile() {
+        if (android.os.Build.VERSION.SDK_INT < 33) {
+            Toast.makeText(this, "系统版本较低，请手动编辑控制中心添加「路况小窗」", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            android.app.StatusBarManager sbm = getSystemService(android.app.StatusBarManager.class);
+            if (sbm == null) {
+                Toast.makeText(this, "当前系统不支持自动添加，请手动编辑控制中心", Toast.LENGTH_LONG).show();
+                return;
+            }
+            android.graphics.drawable.Icon icon = android.graphics.drawable.Icon
+                    .createWithResource(this, R.drawable.ic_qs_walk);
+            sbm.requestAddTileService(
+                    new android.content.ComponentName(this, WalkTileService.class),
+                    getString(R.string.tile_walk_label),
+                    icon,
+                    getMainExecutor(),
+                    result -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        String msg;
+                        if (result == android.app.StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED) {
+                            msg = "已添加到控制中心，下拉即可一键开关";
+                        } else if (result == android.app.StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED) {
+                            msg = "控制中心里已经有「路况小窗」了";
+                        } else {
+                            msg = "系统没允许自动添加，请手动编辑控制中心添加「路况小窗」";
+                        }
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                        DiagLog.log("[tile] requestAddTileService 结果=" + result);
+                    });
+            DiagLog.log("[tile] 已请求系统添加控制中心磁贴");
+        } catch (Throwable t) {
+            DiagLog.log("[tile] requestAddTileService 失败: " + t.getClass().getSimpleName() + " " + t.getMessage());
+            Toast.makeText(this, "请手动编辑控制中心添加「路况小窗」", Toast.LENGTH_LONG).show();
+        }
+    }
 
     // ========== 重启系统界面 ==========
 

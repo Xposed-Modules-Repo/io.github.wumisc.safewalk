@@ -174,6 +174,20 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.Safewalk.Transparent" />
 
+        <!--
+            控制中心磁贴「开」的中转页：同上，camera 前台服务必须有可见 Activity
+            才能从后台拉起。由 WalkTileService 通过 PendingIntent 启动，
+            不 exported（PendingIntent 以本应用身份启动，无需对外暴露）。
+        -->
+        <activity
+            android:name=".WalkToggleActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Safewalk.Transparent" />
+
         <!-- launchMode=singleTask：撞击时 CrashAlertReceiver 会同时走「直接 startActivity」
              与「full-screen intent」两条通道，standard 模式会创建两个实例，各自跑 60 秒
              倒计时，倒计时结束各自 doSos() → 重复发短信、重复拨号。singleTask 保证
@@ -258,6 +272,30 @@
             android:name=".WalkPreviewService"
             android:exported="false"
             android:foregroundServiceType="camera" />
+
+        <!--
+            控制中心磁贴：下拉控制中心点一下即开关「行走模式」。
+            系统通过 BIND_QUICK_SETTINGS_TILE 绑定本服务，故 exported 必须为 true，
+            但该权限是系统签名级，第三方应用绑不上。
+            TOGGLEABLE_TILE 让 Android 13+ 把磁贴当开关渲染（点一下切状态），
+            QS_TILE_PREFERENCES 让长按磁贴能直接进「行走模式」设置页。
+        -->
+        <service
+            android:name=".WalkTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_walk"
+            android:label="@string/tile_walk_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+            <meta-data
+                android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES"
+                android:value="io.github.wumisc.safewalk.WalkModeActivity" />
+        </service>
 
         <!--
             撞击广播接收器（App 进程）：车祸检测在 SystemUI 进程，检测到撞击后
