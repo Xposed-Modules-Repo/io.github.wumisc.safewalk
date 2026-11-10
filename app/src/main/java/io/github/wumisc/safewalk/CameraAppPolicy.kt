@@ -35,4 +35,15 @@ object CameraAppPolicy {
         }
         return false
     }
+
+    /**
+     * 通用相机包名表（只读副本）。
+     *
+     * 供 [RomRegistry] 与各 [RomProfile] 的厂商表做并集。**这里永远是「所有 ROM 通用」
+     * 的部分**，厂商专属包名放在各自的 profile 里，两边不重复维护。
+     *
+     * 返回 `List` 而不是内部数组：调用方拿不到可变引用，改不动这张表。
+     */
+    @JvmStatic
+    fun basePackages(): List<String> = CAMERA_LIKE.toList()
 }
