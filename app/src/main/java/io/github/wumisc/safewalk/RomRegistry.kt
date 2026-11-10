@@ -208,6 +208,22 @@ object RomRegistry {
         }
 
     /**
+     * 「这一类设置在哪」的一行提示，供引导页原文展示。
+     *
+     * 只写**第一条**候选的去处，后面几条只提数量：把五条路径全列出来，用户反而不知道该点哪个。
+     * 真正跳转由 [RomPageLauncher] 逐条试，这里只是让人心里有数。
+     */
+    @JvmStatic
+    fun routeHint(id: RomId, kind: TargetKind): String {
+        val cands = profile(id).pagesOf(kind)
+        if (cands.isEmpty()) {
+            return if (!id.hasVendorPages) "本系统没有这个开关，无需设置" else "未收录，将打开应用详情页"
+        }
+        val first = cands.first().label
+        return if (cands.size > 1) "$first（另有 ${cands.size - 1} 条备选）" else first
+    }
+
+    /**
      * 一行摘要，供日志 / 设置页展示。
      *
      * 刻意不写「已支持 / 完美适配」：本表只保证「指路」，不保证「系统一定放行」。

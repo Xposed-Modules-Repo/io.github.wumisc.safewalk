@@ -91,8 +91,20 @@ class PermissionOnboardingActivity : Activity() {
         private const val ACTION_MANAGE_ALL_FILES =
             "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION"
 
-        /** 小米安全中心包名，自启动 / 后台私有页都在这里。 */
-        private const val MIUI_PKG = "com.miui.securitycenter"
+        /**
+         * 适配表不可用时的通用步骤名。
+         *
+         * 刻意用「自启动 / 后台活动」这种不带系统名的写法：不知道是哪一家，就一个系统名都不提，
+         * 用户至少不会因为看到「HyperOS」而在荣耀手机上困惑。
+         */
+        private val FALLBACK_STEPS = listOf(
+            "悬浮窗",
+            "电池优化白名单",
+            "所有文件访问",
+            "自启动 / 后台活动",
+            "后台定位（到达提醒）",
+            "无障碍"
+        )
 
         /** 是否还需要显示引导页：没写过 onboardingDone 就返回 true。 */
         @JvmStatic
@@ -140,8 +152,23 @@ class PermissionOnboardingActivity : Activity() {
     private var colorDivider = 0xFFDDDDDD.toInt()
     private var colorBtn = 0xFFE3EBF5.toInt()
 
-    /** 读取 Configuration.uiMode 的夜间位，覆盖成对应的一套配色。必须早于构建布局。 */
-    private fun applyThemeColors() {
+    /**
+     * 访问适配表的统一安全壳。
+     *
+     * 表是 Kotlin `object`，首次访问会执行 `init` 块里的 `require` 校验；任何一条 spec 写错
+     * 都会抛 `ExceptionInInitializerError`（属于 `Error`）。用 `Throwable` 兜住，
+     * 保证引导页在最坏情况下仍是一张能用的通用清单，而不是崩溃页。
+     */
+    private fun <T> safeRom(fallback: T, block: () -> T): T = try {
+        block()
+    } catch (t: Throwable) {
+        DiagLog.log(
+            "[ROM] 适配表不可用，降级为通用文案：${t.javaClass.simpleName} ${t.message}"
+        )
+        fallback
+    }
+
+    /** 读取 Configuration.uiMode 的夜间位，覆盖成对应的一套配色。必须早于构建布局。 */    private fun applyThemeColors() {
         val night = (resources.configuration.uiMode
                 and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         if (!night) return
@@ -172,15 +199,14 @@ class PermissionOnboardingActivity : Activity() {
     private val rows = ArrayList<Pair<PermItem, TextView>>()
 
     /** 「逐项开启」的游标：每点一次只跳一个设置页，用户从系统设置返回后再点下一项。 */
-    private val specialSteps = arrayOf(
-        "悬浮窗",
-        "电池优化白名单",
-        "所有文件访问",
-        "自启动 / 后台活动（HyperOS）",
-        "后台定位（到达提醒）",
-        "无障碍"
-    )
+    private var specialSteps: List<String> = emptyList()
     private var specialIndex = 0
+
+    /**
+     * 本机 UI 生态（P1）。只在 onCreate 判一次：`Build.*` 在进程生命周期内不会变，
+     * 每次 onResume 重算既浪费也容易在日志里刷出重复行。
+     */
+    private var romId: RomId = RomId.AOSP
 
     /** ROOT 探测结果在 onCreate 里算一次即可（su 是否存在不会在页面存活期间变化）。 */
     private var rootAvailable = false
@@ -198,6 +224,28 @@ class PermissionOnboardingActivity : Activity() {
         DiagLog.log("[PERM] 首次安装权限引导页 onCreate")
         // 【BUG 修复】必须在构建布局之前切好深浅配色，否则 TextView 已按浅色创建
         applyThemeColors()
+
+        // 【P1 多 ROM】先认本机属于哪一家，再决定「自启动」这一类文案怎么写、往哪儿跳。
+        // 判定只读 Build 的三个字段，不读 prop、不依赖 Hook，冷启动第一页也能用。
+        //
+        // 【为什么每一步都要包 try/catch】RomRegistry 是 Kotlin object，表里任何一条 spec
+        // 写错都会在**首次访问时**抛 ExceptionInInitializerError（Error，不是 Exception）。
+        // 引导页是用户装完 App 打开的第一屏，绝不能因为一张「指路表」白屏 —— 表坏了就退回
+        // 通用文案与通用入口，功能一点也不少，只是少了几句本地化提示。
+        romId = safeRom(RomId.AOSP) { RomDetector.detectFromBuild() }
+        specialSteps = safeRom(FALLBACK_STEPS) { OnboardingSteps.labelsFor(romId) }
+        try {
+            DiagLog.log(
+                "[ROM] " + RomDetector.explain(Build.MANUFACTURER, Build.BRAND, Build.PRODUCT)
+            )
+            DiagLog.log("[ROM] " + RomRegistry.describe(romId))
+            DiagLog.log(
+                "[ROM] 自启动去处：" + RomRegistry.routeHint(romId, TargetKind.AUTOSTART) +
+                    "｜电池：" + RomRegistry.routeHint(romId, TargetKind.BATTERY)
+            )
+        } catch (t: Throwable) {
+            DiagLog.log("[ROM] 适配表不可用，本次只打基础环境：${t.javaClass.simpleName}")
+        }
 
         rootAvailable = detectRoot()
         DiagLog.log(
@@ -238,6 +286,22 @@ class PermissionOnboardingActivity : Activity() {
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
         }
         root.addView(title, itemLp(0))
+
+        // ---- 本机 UI 识别结果（一行，不占地方但能省掉「为什么找不到自启动」的半页问答）----
+        val romLine = TextView(this).apply {
+            text = safeRom("本机 UI：未识别 · 按标准 Android 设置引导") {
+                if (romId.hasVendorPages) {
+                    "本机 UI：${romId.displayName} · 自启动在「" +
+                        RomRegistry.routeHint(romId, TargetKind.AUTOSTART) + "」"
+                } else {
+                    "本机 UI：${romId.displayName} · 无厂商私有开关，全部走标准设置"
+                }
+            }
+            setTextSize(12f)
+            setTextColor(colorNeutral)
+            setLineSpacing(dp(1).toFloat(), 1f)
+        }
+        root.addView(romLine, itemLp(6))
 
         // ---- 说明（精简：一句话讲清用途与操作，替代原来的三行长文）----
         val desc = TextView(this).apply {
@@ -349,14 +413,14 @@ class PermissionOnboardingActivity : Activity() {
         ),
         PermItem(
             "③ 电池优化白名单",
-            "避免 HyperOS 后台杀掉行走检测与悬浮窗",
+            "避免系统在后台杀掉行走检测与悬浮窗",
             "需手动开启",
             { batteryState() }
         ),
         PermItem(
             "④ 自启动 / 后台活动",
-            "开机或被回收后自动恢复行走模式（HyperOS 安全中心私有页）",
-            "需手动开启",
+            safeRom("开机或被回收后自动恢复行走模式") { OnboardingSteps.autostartDesc(romId) },
+            if (romId.hasVendorPages) "需手动开启" else "本系统无需设置",
             { manualState() }
         ),
         PermItem(
@@ -474,7 +538,12 @@ class PermissionOnboardingActivity : Activity() {
      * 亲手确认，所以状态固定提示「需手动确认」，并计入待处理清单。
      */
     private fun manualState(): PermState =
-        PermState("需手动确认（系统不提供查询接口，点『逐项开启』跳转）", colorNeutral, true)
+        if (!romId.hasVendorPages) {
+            // AOSP 没有这个开关，标成「无需设置」且不计入待处理，否则用户会一直看到红字。
+            PermState("本系统无此开关（无需设置）", colorOk)
+        } else {
+            PermState("需手动确认（系统不提供查询接口，点『逐项开启』跳转）", colorNeutral, true)
+        }
 
     /**
      * 后台定位：只有「始终允许」才能在锁屏 / 后台继续拿到位置。
@@ -660,11 +729,16 @@ class PermissionOnboardingActivity : Activity() {
 
     // ============================ 逐项引导特殊权限 ============================
 
+    /**
+     * 按钮文案。步骤名里的括号补充（系统名 / 「可跳过」提示）只用于清单，不进按钮：
+     * 按钮是单行，塞进去会被系统按 ellipsize 截成「…（本系统无此开」，反而看不懂。
+     */
     private fun specialButtonText(): String =
         if (specialIndex >= specialSteps.size) {
             "开启特殊权限（已完成，点此重来）"
         } else {
-            "开启特殊权限 ${specialIndex + 1}/${specialSteps.size} · ${specialSteps[specialIndex]}"
+            val short = specialSteps[specialIndex].substringBefore("（")
+            "开启特殊权限 ${specialIndex + 1}/${specialSteps.size} · $short"
         }
 
     /**
@@ -755,22 +829,24 @@ class PermissionOnboardingActivity : Activity() {
     }
 
     /**
-     * ④ 自启动 / 后台活动：HyperOS 私有入口，AOSP 无对应 Intent。
-     * 已知的两套类名逐个试（不同 MIUI / HyperOS 版本改过），全失败退到应用详情页。
+     * 自启动 / 后台活动：没有公开 API 能查、能改，只能把用户送到系统设置里的某一页。
+     *
+     * 【P1 多 ROM】路径不再写死小米两条 component，而是查 [RomRegistry] 的候选表，
+     * 由 [RomPageLauncher] 逐条 `resolveActivity` 校验 → 打开 → 失败换下一条 →
+     * 全失败退应用详情页。表写错的最坏结果是「多点两下」，不会变成「点了没反应」。
      */
     private fun openAutoStart() {
-        val comps = arrayOf(
-            "com.miui.securitycenter.permission.autostart.AutoStartManagementActivity",
-            "com.miui.permcenter.autostart.AutoStartManagementActivity"
-        )
-        for (cls in comps) {
-            val ok = startSafely("自启动 / 后台（$cls）") {
-                Intent().setClassName(MIUI_PKG, cls)
-            }
-            if (ok) return
+        if (!romId.hasVendorPages) {
+            toast("本系统没有自启动开关，按标准策略管理后台即可")
+            DiagLog.log("[ROM] ${romId.displayName} 无自启动页，跳过（不计入待处理）")
+            return
         }
-        // 非小米设备、或类名又变了：至少把用户带到应用详情页，从「权限 / 自启动」自己找。
-        fallbackAppDetails("自启动 / 后台")
+        val used = RomPageLauncher.openOrDetails(this, TargetKind.AUTOSTART, romId)
+        if (used != null) {
+            toast("已打开：${used.label}")
+        } else {
+            toast("无法打开系统设置，请到应用详情页手动允许自启动")
+        }
     }
 
     /**
