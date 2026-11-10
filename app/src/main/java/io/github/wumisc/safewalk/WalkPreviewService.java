@@ -99,23 +99,30 @@ public final class WalkPreviewService extends Service {
     private static final long STEP_CONFIRM_WINDOW_MS = 10_000L;
     private static final int STEP_CONFIRM_MIN = 2;
     /**
-     * 【沙发误触修复】计步器不可用时的纯加速度判走门槛。
+     * 【沙发误触修复 v3 · 真机日志 2026-11-10 13:48~14:02】
      *
-     * 本机（Redmi / HyperOS）SystemUI 与 App 进程都拿不到 ACTIVITY_RECOGNITION，
-     * TYPE_STEP_COUNTER 从不回调 → stepCounterAlive=false。旧代码此时直接
-     * `return true` 把第二道防误触闸整个短路，只剩纯加速度判定；而沙发上
-     * 「有节奏地挪动手机」既能凑够步数、又能骗过 hasStableGait 的 400ms 容差，
-     * 于是反复误弹出小窗（真机日志 12:47:33 / 12:49:23 两次）。
+     * v2 把纯加速度门槛定成「累计 ≥ max(确认步数×2, 15) 步」，但采集层
+     * [GaitDetector] 的 `peakIntervals` 队列**上限只有 10**（超过就 removeAt(0)），
+     * 所以 `confirmedStepCount()` 永远 ≤ 10，`≥15` 是**永不成立的死条件**。
+     * 真机日志里 `累计=7/15`、`累计=10/7` 刷了 968 条，自动跟随一次都没激活。
      *
-     * 现在纯加速度判走必须同时满足：非平躺 + 节律稳定 + 累计步达标 + 连续步流够久。
-     * 真人走路是连续不断的步流（步间隔通常 <1s），沙发挪动是间歇的（几秒就断），
-     * 用「连续步流时长」把它们分开。
+     * 现在门槛交给 [WalkConfirmPolicy]：不看「累计多少步」，改看**步流的时间形态**
+     * （连续 8~10 步、最大步间隔 ≤1.6s、平均步频 0.7~2.8Hz、整段 ≥4s，
+     * 且相邻间隔离散度受控），既在窗口上限内可达，又能把间歇抖动挡在外面。
      */
-    private static final int ACCEL_ONLY_MIN_STEPS = 15;
+    private WalkConfirmPolicy accelPolicy;
+    /** 纯加速度判定用的合格步时间戳队列（每个真实合格步入队一次，断步清空） */
+    private final java.util.ArrayDeque<Long> accelStepTs = new java.util.ArrayDeque<>();
+    /** 上一帧看到的采集层合格步数，用于识别「本帧新增了一步」 */
+    private int lastAccelCountSeen = 0;
+    /** 纯加速度诊断日志节流：上次打印时间 / 上次原因 */
+    private long lastAccelDiagTs = 0L;
+    private String lastAccelDiagReason = "";
+    /** 本段监听是否已说明过「为什么走纯加速度」（每段只说一次） */
+    private boolean accelFallbackLogged = false;
     /**
-     * 连续步流最短时长。真机日志 13:08:07→13:08:15 只隔 8 秒就放行了一次，
-     * 说明 8s 太短——沙发上连续挪动 8 秒并不难。15 秒 ≈ 真人 18~20 步，
-     * 而沙发挪动很难维持 15 秒不间断的步流。
+     * 有硬件计步器、但 10 秒内只出 0~1 步时的兜底要求：连续步流最短时长。
+     * 真机日志 13:08:07→13:08:15 只隔 8 秒就放行过一次，说明 8s 太短。
      */
     private static final long ACCEL_MIN_STREAK_MS = 15_000L;
     /** 连续步流允许的最大间隙：超过它即视为「走断了」，连续计时清零 */
@@ -474,6 +481,8 @@ public final class WalkPreviewService extends Service {
     private long lastGaitDiagTs = 0L;
     /** 上一次 [ACTIVE] 激活判定节流诊断的时间戳（达标但被拦截时每 2s 一条） */
     private long lastActiveDiagTs = 0L;
+    /** 上一次「收起冷却」诊断的时间戳（冷却期内本方法按帧调用） */
+    private long lastCooldownDiagTs = 0L;
     /**
      * 上一次判定时的累计合格步，用于识别「刚刚跨过门槛」这个瞬间。
      *
@@ -501,6 +510,11 @@ public final class WalkPreviewService extends Service {
         walkingStreakStartTs = 0L;
         lastGuardCountSnapshot = 0;
         lastGaitDiagTs = 0L;
+        accelStepTs.clear();
+        lastAccelCountSeen = 0;
+        lastAccelDiagReason = "";
+        lastAccelDiagTs = 0L;
+        accelFallbackLogged = false;
         registerStepCounter();
         gaitListener = new SensorEventListener() {
             @Override
@@ -513,6 +527,16 @@ public final class WalkPreviewService extends Service {
                 // 步频窗口、主轴一致率，并带 LAY_FLAT（平躺刷手机）一票否决 —— 这是
                 // 原生采集模块自带的防床上误触闸门，本轮修复不再绕开它。
                 boolean stepTick = gait.feedAcc(e.values[0], e.values[1], e.values[2]);
+
+                // ==== 合格步时间戳入队（纯加速度判定的形态依据）====
+                // 不能用 `confirmedStepCount()` 的增量来判断：那是滑动窗口大小，
+                // 满格 10 之后不再增长，新一步进来会同时挤掉最老一步，增量为 0。
+                // 所以以 stepTick（本帧构成一个合格步）为准；窗口未满时补一条增量判断。
+                int accelCnt = gait.confirmedStepCount();
+                if (stepTick || (accelCnt > lastAccelCountSeen && accelCnt > 0)) {
+                    recordAccelStep(now);
+                }
+                lastAccelCountSeen = accelCnt;
 
                 // ==== [GUARD] 姿态 / 节律可信度闸门（修复「床上打开角落小窗」）====
                 // 上一轮为绕开「水平持握走路被 LAY_FLAT 卡住」加的并列判据
@@ -557,6 +581,9 @@ public final class WalkPreviewService extends Service {
                     // 步流中断超过 STREAK_GAP_MS：清掉连续计时，下次要重新连续走满才放行
                     walkingStreakStartTs = 0L;
                     lastGuardCountSnapshot = 0;   // 新一轮，允许再留一条 GUARD 痕迹
+                    // 纯加速度的步流同样作废：留着上一段的时间戳会让「跨度」虚长
+                    accelStepTs.clear();
+                    lastAccelCountSeen = 0;
                 }
 
                 // 被闸门拦下时留痕，真机自测一眼能看出「为什么没激活」。
@@ -610,8 +637,11 @@ public final class WalkPreviewService extends Service {
                 //   反而找不到有用信息；关键状态变化由 [ACTIVE]/[GUARD] 负责留痕。）
                 if (now - lastGaitDiagTs > 10_000L) {
                     lastGaitDiagTs = now;
-                    DiagLog.log("[STEP] 计步回调 | 累计合格步 " + gait.confirmedStepCount()
-                            + "/" + gait.getConfirmSteps() + " 本帧合格步=" + stepTick
+                    // 「本帧合格步」几乎恒为 false（一个合格步只占一帧，日志大概率落在
+                    // 普通帧上），旧文案会让人误以为一步都没走成。改成最近 10 秒的出步数。
+                    DiagLog.log("[STEP] 计步回调 | 连续合格步 " + gait.confirmedStepCount()
+                            + "/" + gait.getConfirmSteps()
+                            + " 最近10s出步=" + accelStepsInWindow(10_000L)
                             + " | " + gait.debugInfo()
                             + " | walking=" + gaitWalking);
                 }
@@ -639,6 +669,8 @@ public final class WalkPreviewService extends Service {
         lastStepTs = 0L;
         walkingStreakStartTs = 0L;
         lastGuardCountSnapshot = 0;
+        accelStepTs.clear();
+        lastAccelCountSeen = 0;
     }
 
     // ========== 硬件计步器（防误触确认） ==========
@@ -776,40 +808,84 @@ public final class WalkPreviewService extends Service {
     }
 
     /**
-     * 【沙发/床上误触修复】计步器不可用时（无传感器 / 无 ACTIVITY_RECOGNITION /
-     * 被后台掐断 / 从未出数）的纯加速度严格确认。
+     * 【沙发/床上误触修复 v3】计步器不可用时（无传感器 / 无 ACTIVITY_RECOGNITION /
+     * 被后台掐断 / 从未出数）的纯加速度确认。
      *
-     * 三重门槛缺一不可：
+     * 判定交给 [WalkConfirmPolicy]，看的是**步流形态**而不是「累计多少步」：
      *   ① 非平躺（LAY_FLAT 直接拦）；
-     *   ② 节律稳定（hasStableGait，步间隔一致，沙发乱晃通常不稳）；
-     *   ③ 累计步达标（≥ max(confirmSteps*2, ACCEL_ONLY_MIN_STEPS)）；
-     *   ④ 连续步流够久（≥ ACCEL_MIN_STREAK_MS，沙发是间歇挪动、走几秒就断）。
-     * 这样才能在「计步器彻底不可用」的真机上把「沙发/床上抖动」与「真走路」分开。
+     *   ② 连续合格步 ≥ 8~10（受采集层 10 步窗口约束，可达）；
+     *   ③ 相邻步最大间隔 ≤ 1.6s、平均步间隔 350~1400ms、整段跨度 ≥ 4s、
+     *      相邻间隔离散度受控 —— 真人走路是连续步流，沙发抖动是间歇的。
+     *
+     * v2 的 `≥15 步` 是死条件（窗口上限 10），已由真机日志证实会让自动跟随彻底失效。
      */
     private boolean accelOnlyConfirm() {
-        if (gait.getAttitude() == PhoneAttitude.LAY_FLAT) {
-            DiagLog.log("[gait] ⛔ 计步器不可用且姿态=平躺 → 判床上/沙发误触，抑制预览");
-            return false;
+        if (accelPolicy == null) {
+            int pref = Math.max(2, Math.min(10,
+                    SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5)));
+            accelPolicy = new WalkConfirmPolicy(WalkConfirmPolicy.requiredStepsFor(pref));
         }
-        if (!gait.hasStableGait()) {
-            DiagLog.log("[gait] ⛔ 计步器不可用且节律不稳 → 纯抖动，抑制预览");
-            return false;
+        if (!accelFallbackLogged) {
+            // 只在每段监听里说一次：用户反馈「自动跟随不灵」时，先看这行就能分清
+            // 是「本机没有计步器」还是「权限被拒/被后台掐断」，不用再猜。
+            accelFallbackLogged = true;
+            DiagLog.log("[gait] 本机走纯加速度判定 | 计步传感器="
+                    + (stepCounterSensor != null ? "有" : "无")
+                    + " 已出步=" + everSteppedTotal
+                    + (stepCounterSensor != null && everSteppedTotal == 0L
+                       ? "（疑似未授予「身体活动」权限或被后台限制，建议在系统设置里允许）" : ""));
         }
-        int need = Math.max(gait.getConfirmSteps() * 2, ACCEL_ONLY_MIN_STEPS);
-        if (gait.confirmedStepCount() < need) {
-            DiagLog.log("[gait] 计步器不可用：纯加速度需累计 "
-                    + gait.confirmedStepCount() + "/" + need + " 步且节律稳定才放行");
-            return false;
+        WalkConfirmPolicy.Verdict v = accelPolicy.evaluate(
+                gait.getAttitude() == PhoneAttitude.LAY_FLAT,
+                gait.confirmedStepCount(),
+                new java.util.ArrayList<>(accelStepTs),
+                System.currentTimeMillis());
+        logAccelVerdict(v);
+        return v.pass;
+    }
+
+    /**
+     * 纯加速度判定的诊断日志（节流）。
+     *
+     * 这一路每帧都会被调用（窗口满格后 `countReached` 恒真），直接 if + log 会在
+     * 无硬件计步器的机型上刷出上百行/秒（真机 13:48:05~13:48:13 共 968 行），
+     * 既是主线程文件 IO、又让日志彻底失去可读性。改为：原因变化时才打（且至少隔
+     * 2 秒），原因不变则 10 秒一条。
+     */
+    private void logAccelVerdict(WalkConfirmPolicy.Verdict v) {
+        long now = System.currentTimeMillis();
+        boolean changed = !v.reason.equals(lastAccelDiagReason);
+        long interval = changed ? 2_000L : 10_000L;
+        if (now - lastAccelDiagTs < interval) return;
+        lastAccelDiagTs = now;
+        lastAccelDiagReason = v.reason;
+        DiagLog.log("[gait] " + (v.pass ? "✅ 纯加速度判走放行" : "⛔ 纯加速度暂不放行")
+                + " | 原因=" + v.reason
+                + " 连续步=" + v.steps + "/" + accelPolicy.requiredSteps()
+                + " 跨度=" + v.spanMs + "ms 最大间隔=" + v.maxGapMs + "ms 均隔=" + v.avgIntervalMs + "ms"
+                + " | 本机无硬件计步器，靠步流形态判走（间歇抖动过不了）");
+    }
+
+    /** 记录一个合格步的时间戳；队列只留最近一段步流，断步由调用方清空 */
+    private void recordAccelStep(long ts) {
+        accelStepTs.addLast(ts);
+        while (accelStepTs.size() > WalkConfirmPolicy.WINDOW_CAP + 4) {
+            accelStepTs.pollFirst();
         }
-        long streak = streakMs();
-        if (streak < ACCEL_MIN_STREAK_MS) {
-            DiagLog.log("[gait] 计步器不可用：连续步流 " + (streak / 1000) + "s < "
-                    + (ACCEL_MIN_STREAK_MS / 1000) + "s，暂不显示（防沙发间歇性挪动误触）");
-            return false;
+        while (!accelStepTs.isEmpty() && ts - accelStepTs.peekFirst() > 30_000L) {
+            accelStepTs.pollFirst();
         }
-        DiagLog.log("[gait] 计步器不可用但连续走 " + (streak / 1000) + "s、节律稳定、累计 "
-                + gait.confirmedStepCount() + " 步 → 放行纯加速度判走");
-        return true;
+    }
+
+    /** 最近 [windowMs] 内记录的合格步数（诊断日志用） */
+    private int accelStepsInWindow(long windowMs) {
+        long now = System.currentTimeMillis();
+        int n = 0;
+        for (java.util.Iterator<Long> it = accelStepTs.descendingIterator(); it.hasNext(); ) {
+            if (now - it.next() <= windowMs) n++;
+            else break;
+        }
+        return n;
     }
 
     /**
@@ -838,13 +914,21 @@ public final class WalkPreviewService extends Service {
     private boolean shouldShowNow() {
         long now = System.currentTimeMillis();
         if (lastStopTs == 0L || now - lastStopTs >= STOP_COOLDOWN_MS) return true;
+        // 本方法在判定帧上会被高频调用，日志必须节流，否则冷却期内同样会刷屏
+        boolean diag = now - lastCooldownDiagTs > 5_000L;
         if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2) {
-            DiagLog.log("[gait] 判定停下冷却内持续判走（累计 "
-                    + gait.confirmedStepCount() + " 步），放行显示");
+            if (diag) {
+                lastCooldownDiagTs = now;
+                DiagLog.log("[gait] 判定停下冷却内持续判走（累计 "
+                        + gait.confirmedStepCount() + " 步），放行显示");
+            }
             return true;
         }
-        DiagLog.log("[gait] 判定停下冷却期内（累计 " + gait.confirmedStepCount()
-                + " 步），暂不显示，等待持续判走");
+        if (diag) {
+            lastCooldownDiagTs = now;
+            DiagLog.log("[gait] 判定停下冷却期内（累计 " + gait.confirmedStepCount()
+                    + " 步），暂不显示，等待持续判走");
+        }
         return false;
     }
 

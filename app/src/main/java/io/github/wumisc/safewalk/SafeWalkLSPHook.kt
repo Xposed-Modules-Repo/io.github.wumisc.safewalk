@@ -1333,7 +1333,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         if (now - lastNightTimeLogTs > 60_000L) {
             lastNightTimeLogTs = now
             diag("[torch:time] 区间判定 | 当前=$hour 时 生效区间=$start:00~$end:00 命中=$hit"
-                + if (hit) "" else "（未到设定时间，步态联动不会点灯）")
+                + if (hit) "" else "（未到设定时间，小窗联动不会点灯）")
         }
         return hit
     }
