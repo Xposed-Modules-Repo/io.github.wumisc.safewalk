@@ -31,7 +31,7 @@ object RomDetector {
 
     /**
      * 关键字 → 生态。**顺序即优先级**，不要随意调整顺序：
-     * 调整会改变交叉授权设备的判定结果（虽然四家的关键字目前互不包含）。
+     * 调整会改变交叉授权设备的判定结果（华为/荣耀是唯一会同时命中的一对，见 TOKENS 末尾注释）。
      */
     private val TOKENS: List<Pair<RomId, Array<String>>> = listOf(
         RomId.HYPEROS to arrayOf("xiaomi", "redmi", "poco", "miui", "hyperos"),
@@ -39,7 +39,20 @@ object RomDetector {
         // oneplus 放前面：部分一加设备的 PRODUCT 里同时含 oppo 与 oneplus，
         // 两者都属于 COLOROS，顺序不影响结果，但先命中先返回能少扫几个关键字
         RomId.COLOROS to arrayOf("oppo", "oneplus", "realme", "oplus", "coloros"),
-        RomId.ORIGINOS to arrayOf("vivo", "iqoo", "originos", "bbk")
+        RomId.ORIGINOS to arrayOf("vivo", "iqoo", "originos", "bbk"),
+        // 华为放最后：荣耀老机型 manufacturer 也是 HUAWEI、brand 是 HONOR，
+        // MAGICOS 排在前面优先命中，正好落在「MagicUI 时期」那份档案里
+        RomId.HARMONYOS to arrayOf("huawei", "harmony", "emui")
+    )
+
+    /**
+     * 明确属于「原生阵营」的关键字。
+     *
+     * 与 [TOKENS] 的区别：[TOKENS] 命中五家厂商，[AOSP_TOKENS] 命中「本来就是原生」。
+     * 两者都不命中 → **认不出来**，见 [isUnrecognized]。
+     */
+    private val AOSP_TOKENS = arrayOf(
+        "google", "pixel", "nexus", "lineage", "aosp", "pixelexperience", "generic"
     )
 
     /**
@@ -51,9 +64,7 @@ object RomDetector {
     fun detect(manufacturer: String?, brand: String?, product: String?): RomId {
         // 拼成一个 haystack 再扫，避免「每个字段扫一遍、漏掉跨字段组合」的写法；
         // 用 | 分隔防止 "mi" + "phone" 这类跨界拼接产生假命中
-        val hay = listOf(manufacturer, brand, product)
-            .filterNotNull()
-            .joinToString("|") { it.lowercase(Locale.US) }
+        val hay = haystack(manufacturer, brand, product)
         if (hay.isEmpty()) return RomId.AOSP
 
         for ((id, tokens) in TOKENS) {
@@ -65,6 +76,27 @@ object RomDetector {
     }
 
     /**
+     * 是否「认不出这是哪一家」。
+     *
+     * 为什么不直接用 `detect(...) == AOSP`：Pixel 和 LineageOS 的判定结果也是 [RomId.AOSP]，
+     * 但那是「它本来就是原生」，跟用户说「本机 UI：原生」完全正确；而三星、摩托罗拉、
+     * 索尼同样落到 [RomId.AOSP]，如果也显示「原生」，用户看到的是一句**明确错误**的话
+     * ——他手机上是 One UI，不是原生 Android。
+     *
+     * 所以分成三种语义：
+     * - 命中 [TOKENS] → 五家之一；
+     * - 命中 [AOSP_TOKENS] → 真是原生；
+     * - 都不命中 → 未收录，UI 上写「未识别（按原生处理）」，让用户知道可以手动指定。
+     */
+    @JvmStatic
+    fun isUnrecognized(manufacturer: String?, brand: String?, product: String?): Boolean {
+        val hay = haystack(manufacturer, brand, product)
+        if (hay.isEmpty()) return true
+        if (TOKENS.any { (_, ts) -> ts.any { hay.contains(it) } }) return false
+        return AOSP_TOKENS.none { hay.contains(it) }
+    }
+
+    /**
      * 运行时判定：读真实 `Build` 字段。
      *
      * 单独一个方法而不是重载 `detect()`，是为了让「无参调用」在代码里一眼可辨——
@@ -72,6 +104,23 @@ object RomDetector {
      */
     @JvmStatic
     fun detectFromBuild(): RomId = detect(Build.MANUFACTURER, Build.BRAND, Build.PRODUCT)
+
+    /** 运行时版本：[isUnrecognized] 的 Build 字段入口。 */
+    @JvmStatic
+    fun isUnrecognizedOnBuild(): Boolean =
+        isUnrecognized(Build.MANUFACTURER, Build.BRAND, Build.PRODUCT)
+
+    /**
+     * 把三个字段拼成小写 haystack。
+     *
+     * 用 `|` 分隔而不是直接相连：否则 `mi` + `phone` 会拼成 `miphone` 之类的假命中。
+     * 三处（[detect] / [isUnrecognized] / [explain]）共用同一个拼法，避免判定与日志
+     * 用两套规则、结果对不上。
+     */
+    private fun haystack(manufacturer: String?, brand: String?, product: String?): String =
+        listOf(manufacturer, brand, product)
+            .filterNotNull()
+            .joinToString("|") { it.lowercase(Locale.US) }
 
     /**
      * 一行判定依据，供日志排查「为什么认成了这一家」。
@@ -82,8 +131,7 @@ object RomDetector {
     @JvmStatic
     fun explain(manufacturer: String?, brand: String?, product: String?): String {
         val id = detect(manufacturer, brand, product)
-        val hay = listOf(manufacturer, brand, product).filterNotNull()
-            .joinToString("|") { it.lowercase(Locale.US) }
+        val hay = haystack(manufacturer, brand, product)
         val hit = TOKENS.firstOrNull { it.first == id }
             ?.second?.firstOrNull { hay.contains(it) }
         return if (hit == null) {

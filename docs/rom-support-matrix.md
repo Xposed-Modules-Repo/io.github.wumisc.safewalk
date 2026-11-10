@@ -1,7 +1,7 @@
 # ROM 支持矩阵
 
 > 本表是**测试台账**，不是宣传页。状态只反映「跑过什么」，不反映「应该能行」。
-> 最后更新：2026-11-10（P1–P3 完成：指路层、包名、图标；P4 真机验证未开始）
+> 最后更新：2026-11-11（4.3.0：新增华为 EMUI/HarmonyOS 档案，选择器改为「五厂商 + 原生」；P4 真机验证仍未开始）
 
 ## 图例
 
@@ -15,18 +15,22 @@
 > 「✅」≠「这家 ROM 上一定好用」。它只表示「这一条不需要真机就能确认的部分是对的」。
 > 真正的可用性判断必须看 🟡 项的真机结果。
 
-## 八项能力 × 五家生态
+## 八项能力 × 五家厂商 + 原生
 
-| # | 能力 | HyperOS | MagicOS | ColorOS | OriginOS | AOSP | 依据 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Hook 注入（4 锚点 + 兜底） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 代码静态可确认 4 条路径，命中情况需真机日志 |
-| 2 | 前台服务降级链 | ✅ | ✅ | ✅ | ✅ | ✅ | `HyperOsCompatStrategyTest` 6 条：camera 优先、三档共用、不看版本 |
-| 3 | 悬浮窗显示前复核 | ✅ | ✅ | ✅ | ✅ | ✅ | 策略常量 + `verifyBeforeShow`，真机需验回收场景 |
-| 4 | 自启动页 | 🟡 | 🟡 | 🟡 | 🟡 | — | P1 已接通：候选 → `resolveActivity` → 打开 → 回退详情页；组件名需真机验 |
-| 5 | 电池白名单 | ✅ | ✅ | ✅ | ✅ | ✅ | 五家共用标准 action（`REQUEST_IGNORE` → `IGNORE_BATTERY_OPTIMIZATION_SETTINGS` → 详情页），无厂商私有页 |
-| 6 | 磁贴 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | `WalkTileStatePolicyTest` 6 条通过；真机需验添加与切换 |
-| 7 | 无障碍收起小窗 | ✅ | ✅ | ✅ | ✅ | ✅ | `CameraAppPolicyTest` 4 条；包名并集已由 `RomRegistryTest` 验证 |
-| 8 | 图标（三层 + 主题图标） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | P3 已实现：矢量前景 + `monochrome` 层 + 渐变背景；五家桌面的主题图标效果需真机看 |
+| # | 能力 | HyperOS | MagicOS | ColorOS | OriginOS | 华为 | AOSP | 依据 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Hook 注入（4 锚点 + 兜底） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 代码静态可确认 4 条路径，命中情况需真机日志 |
+| 2 | 前台服务降级链 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HyperOsCompatStrategyTest` 6 条：camera 优先、三档共用、不看版本 |
+| 3 | 悬浮窗显示前复核 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 策略常量 + `verifyBeforeShow`，真机需验回收场景 |
+| 4 | 自启动页 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | — | P1 已接通：候选 → `resolveActivity` → 打开 → 回退详情页；组件名需真机验 |
+| 5 | 电池白名单 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 五家共用标准 action（`REQUEST_IGNORE` → `IGNORE_BATTERY_OPTIMIZATION_SETTINGS` → 详情页），无厂商私有页 |
+| 6 | 磁贴 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | `WalkTileStatePolicyTest` 6 条通过；真机需验添加与切换 |
+| 7 | 无障碍收起小窗 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `CameraAppPolicyTest` 4 条；包名并集已由 `RomRegistryTest` 验证 |
+| 8 | 图标（三层 + 主题图标） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | P3 已实现：矢量前景 + `monochrome` 层 + 渐变背景；五家桌面的主题图标效果需真机看 |
+
+> 华为一列是 4.3.0 新加的：档案里的两条自启动路径分别对应 EMUI 5–11 与 HarmonyOS 2–4，
+> 都只做了静态核对，**一条都没在真机上点过**。HarmonyOS NEXT（5.0 起）不兼容 Android
+> 应用，本模块装不上，不在矩阵范围内。
 
 > 行 4 从 ⬜ 变 🟡 **不是**「已验证能用」：它只表示代码路径已存在且有单测守着「顺序、兜底、
 > 文案不串台」，但 component 名字在真机上是否命中仍未验证。行 5 的 ✅ 同理：验证的是
@@ -43,6 +47,7 @@
 | MagicOS | `com.hihonor.camera` |
 | ColorOS | `com.oplus.camera`、`com.coloros.camera` |
 | OriginOS | `com.vivo.camera` |
+| 华为 | `com.huawei.camera`（与通用表同一条，这里显式列出便于核对） |
 | AOSP | `com.android.camera2` |
 
 > 并集而非替换：`com.android.camera` 与 `com.android.camera2` 是两个真实包名，
@@ -56,6 +61,7 @@
 | MagicOS | 1 条 component + 1 条 action 兜底 | 标准 action | — | — |
 | ColorOS | 2 条 component + 1 条 action 兜底 | 标准 action | 应用详情 | 1 条 |
 | OriginOS | 1 条 component + 1 条 action 兜底 | 标准 action | 应用详情 | 1 条 |
+| 华为 | 2 条 component（应用启动管理 / 受保护应用）+ 1 条 action 兜底 | 标准 action | 应用详情（无独立页） | — |
 | AOSP | — | 标准 action | — | — |
 
 校验命令：

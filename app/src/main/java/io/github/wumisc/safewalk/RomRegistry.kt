@@ -1,7 +1,7 @@
 package io.github.wumisc.safewalk
 
 /**
- * 五家 UI 生态的适配数据表（P0 交付物）。
+ * 五家厂商 + 原生的适配数据表（P0 交付物）。
  *
  * ## 候选页的来源
  *
@@ -60,10 +60,13 @@ object RomRegistry {
     /** vivo 权限管理。 */
     private const val VIVO_PM = "com.vivo.permissionmanager"
 
+    /** 华为系统管家，EMUI / HarmonyOS 4 及更早的自启动页都在这个包里。 */
+    private const val HUAWEI_SM = "com.huawei.systemmanager"
+
     /** 所有 ROM 都能用的应用详情页，作为最终兜底。 */
     private const val FALLBACK_DETAILS = "android.settings.APPLICATION_DETAILS_SETTINGS"
 
-    /** 标准电池优化页（AOSP 就有，四家国产 ROM 也都保留了这条 action）。 */
+    /** 标准电池优化页（AOSP 就有，五家国产 ROM 也都保留了这条 action）。 */
     private const val ACTION_BATTERY = "android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS"
 
     private val HYPEROS = RomProfile(
@@ -223,6 +226,36 @@ object RomRegistry {
         note = "后台高耗电策略会直接杀进程；iQOO 的相机与紧急呼叫都是独立包名"
     )
 
+    private val HARMONYOS = RomProfile(
+        id = RomId.HARMONYOS,
+        pages = listOf(
+            // EMUI 5 一直到 HarmonyOS 4 都是这一条，社区库里也是最稳的一条
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$HUAWEI_SM/com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+                "手机管家 → 应用启动管理"
+            ),
+            // 更老的 EMUI 没有「应用启动管理」，只有「受保护应用」
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$HUAWEI_SM/com.huawei.systemmanager.optimize.process.ProtectActivity",
+                "手机管家 → 受保护应用（EMUI 旧版）"
+            ),
+            PageTarget.action(
+                TargetKind.AUTOSTART, FALLBACK_DETAILS, "应用详情 → 自启动（兜底）"
+            ),
+            PageTarget.action(
+                TargetKind.BATTERY, ACTION_BATTERY, "电池 → 应用启动管理 → 手动管理"
+            ),
+            // 华为没有「后台弹出界面」这个独立开关，只能进权限页
+            PageTarget.action(
+                TargetKind.BACKGROUND_POPUP, FALLBACK_DETAILS, "应用详情 → 权限 → 悬浮窗"
+            )
+        ),
+        cameraPkgs = setOf("com.huawei.camera"),
+        note = "「应用启动管理」默认全自动，必须改成手动管理才不会被清；HarmonyOS NEXT 不装 APK"
+    )
+
     private val AOSP = RomProfile(
         id = RomId.AOSP,
         pages = listOf(
@@ -241,6 +274,7 @@ object RomRegistry {
         RomId.MAGICOS to MAGICOS,
         RomId.COLOROS to COLOROS,
         RomId.ORIGINOS to ORIGINOS,
+        RomId.HARMONYOS to HARMONYOS,
         RomId.AOSP to AOSP
     )
 

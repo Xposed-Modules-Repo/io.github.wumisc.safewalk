@@ -1,11 +1,12 @@
 # SafeWalk 全国产 UI 适配计划
 
-> 基线：4.0.1（41）｜目标版本：5.0「让开源再次伟大」｜拟稿：2026-11-10
+> 基线：4.0.1（41）｜目标版本：5.0「让开源再次伟大」｜拟稿：2026-11-10｜4.3.0 起扩为「五厂商 + 原生」
 
 ## 0. 一页摘要
 
-把现在的「HyperOS 专用适配」升级成**表驱动的多 ROM 适配层**，覆盖 HyperOS、MagicOS、
-ColorOS、OriginOS、原生/类原生五类，同时把图标从「一张 PNG 前景 + 纯色底」升级成
+把现在的「HyperOS 专用适配」升级成**表驱动的多 ROM 适配层**，覆盖小米（HyperOS）、
+荣耀（MagicOS）、OPPO/一加/realme（ColorOS）、vivo/iQOO（OriginOS）、华为（EMUI/HarmonyOS 4
+及更早）+ 原生/类原生，共五厂商 + 原生；同时把图标从「一张 PNG 前景 + 纯色底」升级成
 **三层自适应图标 + 单色主题图标**。
 
 两条硬约束，先写在最前面：
@@ -75,27 +76,32 @@ RomProfile（纯数据，可单测）
 **原则三：UI 文案用第二人称。**
 「请在系统设置里允许自启动」优于「请开启 HyperOS 自启动」。前者永远不会写错系统名。
 
-## 4. 五家差异矩阵
+## 4. 五厂商差异矩阵（+ 原生）
 
 > ⚠️ component 名称随 ROM 版本漂移，下表为**候选值**，落地时每条都要用
 > `adb shell cmd package resolve-activity --brief <component>` 或真机 `resolveActivity` 校验。
 > 表的价值不在"名字对"，而在"错了会安全回退"。
 
-| 维度 | HyperOS 3/4 | MagicOS 9 | ColorOS 15 | OriginOS 5 | 原生 / 类原生 |
-| --- | --- | --- | --- | --- | --- |
-| SystemUI 包名 | `com.android.systemui` | 同 | 同 | 同 | 同 |
-| 自启动页 | `com.miui.securitycenter` · permcenter/autostart 两套路径 | `com.hihonor.systemmanager` · startupmgr | `com.oplus.safecenter` · startupapp | `com.vivo.permissionmanager` · BgStartUp | 无此概念 |
-| 电池白名单 | 省电策略 → 无限制 | 应用启动管理 → 手动管理 | 耗电管理 → 允许后台活动 | 后台高耗电 → 允许 | `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` |
-| 后台弹窗 | 有独立开关（后台弹出界面） | 无独立开关 | 有（后台弹出界面） | 有（后台弹出） | 无 |
-| 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | `ACTION_MANAGE_OVERLAY_PERMISSION` |
-| 主题图标 | 支持（图标风格） | 支持（主题） | 支持（个性化） | 支持（原子风格） | Android 13+ monochrome |
-| 图标遮罩 | 圆角矩形（可换形状） | 圆角矩形 | 圆形 / 水滴 / 圆角 | 圆形 | 圆形 / 方圆 |
-| 系统级提醒增强 | 超级岛 | 灵动胶囊 | 流体云 | 原子通知 | 无 |
-| 已知收紧点 | camera FGS 后台启动、悬浮窗回收 | 后台进程回收激进 | 后台启动管控、自启动默认关 | 后台高耗电杀进程 | 仅 Doze |
+| 维度 | HyperOS 3/4 | MagicOS 9 | ColorOS 15 | OriginOS 5 | EMUI 13 / HarmonyOS 4 | 原生 / 类原生 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SystemUI 包名 | `com.android.systemui` | 同 | 同 | 同 | 同 | 同 |
+| 自启动页 | `com.miui.securitycenter` · permcenter/autostart 两套路径 | `com.hihonor.systemmanager` · startupmgr | `com.oplus.safecenter` · startupapp | `com.vivo.permissionmanager` · BgStartUp | `com.huawei.systemmanager` · startupmgr（旧版 ProtectActivity） | 无此概念 |
+| 电池白名单 | 省电策略 → 无限制 | 应用启动管理 → 手动管理 | 耗电管理 → 允许后台活动 | 后台高耗电 → 允许 | 应用启动管理 → 手动管理 | `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` |
+| 后台弹窗 | 有独立开关（后台弹出界面） | 无独立开关 | 有（后台弹出界面） | 有（后台弹出） | 无独立开关（权限页找悬浮窗） | 无 |
+| 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | 权限 → 悬浮窗 | `ACTION_MANAGE_OVERLAY_PERMISSION` |
+| 主题图标 | 支持（图标风格） | 支持（主题） | 支持（个性化） | 支持（原子风格） | 支持（图标风格） | Android 13+ monochrome |
+| 图标遮罩 | 圆角矩形（可换形状） | 圆角矩形 | 圆形 / 水滴 / 圆角 | 圆形 | 圆角矩形 | 圆形 / 方圆 |
+| 系统级提醒增强 | 超级岛 | 灵动胶囊 | 流体云 | 原子通知 | 实况窗 | 无 |
+| 已知收紧点 | camera FGS 后台启动、悬浮窗回收 | 后台进程回收激进 | 后台启动管控、自启动默认关 | 后台高耗电杀进程 | 应用启动管理默认全自动 | 仅 Doze |
 
-**关于"系统级提醒增强"**：四家都有自己的岛/胶囊 API，但都需要厂商私有接口或合作白名单。
+**关于"系统级提醒增强"**：五家都有自己的岛/胶囊 API，但都需要厂商私有接口或合作白名单。
 本计划**不接入**，只用标准通知；在 5.0 文案里明确写「不依赖超级岛/灵动胶囊，通知被折叠也不影响功能」——
 把"没适配"说成"不需要适配"，比假装支持更诚实。
+
+> **4.3.0 的界面调整**：首页不再让用户选「HyperOS 3 / 4」，而是「自动 / 小米 / 荣耀 / OPPO /
+> vivo / 华为 / 原生」七个芯片。理由见 `RomSettings.kt` 顶部注释：版本号从来没参与决策，
+> 真正影响行为的是「哪一家 UI」。华为是 4.3.0 新补的一家（EMUI 5–11 / HarmonyOS 2–4），
+> 两条自启动路径仅做过静态核对，尚未真机验证；HarmonyOS NEXT 不兼容 Android 应用，不在范围内。
 
 ## 5. 图标体系：从一张 PNG 到三层矢量
 

@@ -103,11 +103,14 @@ object RomPageLauncher {
     /**
      * 选出该生态、该类别的第一条可用候选；全不可用返回 null。
      *
-     * @param id 不传则现场判定，避免调用方忘传导致「永远用 AOSP 表」这种静默错误。
+     * @param id 不传则按 [RomSettings.effective] 现场判定（手动指定优先）。
+     *   4.3 之前这里直接调 `RomDetector.detectFromBuild()`，结果是：用户在首页手选了
+     *   ColorOS，引导页文案也按 ColorOS 生成，但点「去开启」时**这里又独立判了一次**，
+     *   手选被无声忽略、仍然拿自动识别的表。默认值必须和 UI 用同一个入口。
      */
     @JvmStatic
     @JvmOverloads
-    fun pick(ctx: Context, kind: TargetKind, id: RomId = RomDetector.detectFromBuild()): PageTarget? {
+    fun pick(ctx: Context, kind: TargetKind, id: RomId = RomSettings.effective(ctx)): PageTarget? {
         val cands = candidates(id, kind)
         val hit = firstResolvable(cands) { canResolve(ctx, it) }
         if (hit == null) {
@@ -127,7 +130,7 @@ object RomPageLauncher {
      */
     @JvmStatic
     @JvmOverloads
-    fun open(ctx: Context, kind: TargetKind, id: RomId = RomDetector.detectFromBuild()): PageTarget? {
+    fun open(ctx: Context, kind: TargetKind, id: RomId = RomSettings.effective(ctx)): PageTarget? {
         for (t in candidates(id, kind)) {
             if (!canResolve(ctx, t)) continue
             try {
@@ -156,7 +159,7 @@ object RomPageLauncher {
     fun openOrDetails(
         ctx: Context,
         kind: TargetKind,
-        id: RomId = RomDetector.detectFromBuild()
+        id: RomId = RomSettings.effective(ctx)
     ): PageTarget? {
         val hit = open(ctx, kind, id)
         if (hit != null) return hit

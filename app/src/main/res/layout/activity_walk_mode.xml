@@ -528,8 +528,8 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-        <!-- HyperOS 版本适配入口已统一收敛到首页（activity_main.xml / MainActivity），
-             本二级菜单不再重复提供卡片，避免出现两个配置入口。 -->
+        <!-- 「系统 UI 适配」入口只在首页（activity_main.xml / MainActivity），
+             本二级菜单不再重复提供，避免出现两个配置入口。 -->
 
         </LinearLayout>
 

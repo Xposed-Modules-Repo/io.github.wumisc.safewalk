@@ -179,5 +179,30 @@
         <item name="android:textColor">@color/text_body</item>
         <item name="android:textSize">14sp</item>
     </style>
+    <!--
+        【系统 UI 适配】首页那一行选择芯片。
+
+        七个芯片（自动 + 五家厂商 + 原生）均分一行，360dp 宽的机器上每个只有约 43dp。
+        所以芯片文字用厂商短名（小米/荣耀/OPPO/vivo/华为/原生，最多 4 个字符），
+        再开 autoSize 兜底：系统按可用宽度自己缩字号，永远不溢出、也不会被 ellipsize
+        截成 "Orig…"。minSdk 33，原生 TextView 支持 autoSize（API 26+），不需要 AppCompat。
+
+        宽度/高度/权重写进 style，布局里只留 margin 与文字，省得七段重复属性。
+    -->
+    <style name="RomChip">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">32dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:background">@drawable/bg_choice_chip</item>
+        <item name="android:gravity">center</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:paddingLeft">0dp</item>
+        <item name="android:paddingRight">0dp</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:autoSizeTextType">uniform</item>
+        <item name="android:autoSizeMaxTextSize">11sp</item>
+        <item name="android:autoSizeMinTextSize">7sp</item>
+        <item name="android:autoSizeStepGranularity">0.5sp</item>
+    </style>
 
 </resources>

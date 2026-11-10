@@ -151,13 +151,28 @@ object SafeWalkPrefKey {
     const val previewContrastLevel = "previewContrastLevel"
 
     /**
-     * 【HyperOS 版本适配模块】适配模式串，默认 [HyperOsCompat.MODE_AUTO]。
+     * 【已废弃 · 4.3】HyperOS 版本适配模式串。
      *
-     * 合法值：auto（方案A，自动识别）/ hos3 / hos4（方案B，手动强制兜底）。
-     * 由 [HyperOsCompat.resolve] 统一解析；写进白名单让 SystemUI 侧的 Hook
-     * 也能读到同一份结论，两个进程的版本判断不会打架。
+     * 4.3 起首页不再显示「HyperOS 版本适配」卡片（只对小米有意义，且代码根本
+     * 不读版本），改为 [romOverride] 的「本机 UI 是哪一家」。
+     *
+     * 常量保留是为了**不删旧配置**：常量本身没有副作用，留着能让人看懂老版本
+     * 配置里那行 `hyperOsMode=hos3` 是什么。代码中已无任何读取点。
      */
+    @Deprecated("4.3 起改用 romOverride；本常量仅为兼容旧配置")
     const val hyperOsMode = "hyperOsMode"
+
+    /**
+     * 【系统 UI 适配】用户手动指定的生态，默认 [RomSettings.OVERRIDE_AUTO]。
+     *
+     * 合法值：auto / HYPEROS / MAGICOS / COLOROS / ORIGINOS / HARMONYOS / AOSP
+     * （大小写不敏感，由 [RomSettings.normalize] 兜底）。auto 表示跟随 `Build` 三字段自动识别。
+     *
+     * 这一项**刻意不进** `ConfigProvider.WHITELIST`：SystemUI 侧的 Hook 只关心
+     * 「功能开不开」，不关心「用户以为自己是哪家 UI」。导出它只会让两个进程多一个
+     * 可以不一致的状态。
+     */
+    const val romOverride = "romOverride"
 
     /** 配置文件名，放在 files/ 目录下，Hook端直接读这个文件 */
     const val CONFIG_FILE = "safewalk_config.json"

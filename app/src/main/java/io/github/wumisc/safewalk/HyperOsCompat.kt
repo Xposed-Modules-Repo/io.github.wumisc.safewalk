@@ -12,6 +12,20 @@ import java.util.Locale
 /**
  * HyperOS 3 / HyperOS 4 双版本适配工具类（纯 Kotlin object，全部对外方法带 [JvmStatic]）。
  *
+ * ## 4.3 起：这里只剩「诊断」与「文案」，UI 已移除
+ *
+ * 首页那张「HyperOS 版本适配」卡片（自动识别 / HOS3 / HOS4 三芯片）已经删掉，换成
+ * [RomSettings] 的「本机 UI 是哪一家」。原因很直接：三个策略函数
+ * （[foregroundServiceStrategy] / [torchOpenStrategy] / [overlayPermissionStrategy]）
+ * 的 `os` 参数**一次都没被读过**，真正的决策是 `WalkPreviewService.goForeground()`
+ * 里逐档 try 的运行时降级链。让用户为一个不影响行为的选项做决定，只会制造困惑，
+ * 还会让荣耀 / OPPO / vivo 用户以为这个模块跟他无关。
+ *
+ * 所以本类现在的角色是：
+ * - **诊断**：[logEnvironment] / [detect] 打出 prop 快照与版本结论，排查「为什么是这一档」；
+ * - **文案**：[supportNote] / [describe] 给日志与关于页用；
+ * - **不参与任何行为判断**。新增代码若想按 ROM 分支，请先确认能否改成运行时试（见计划第 3 节）。
+ *
  * ## 设计取舍：方案 A（自动识别优先）+ 方案 B（手动兜底）
  *
  * 本模块是 Xposed 模块：Hook 跑在 SystemUI 进程，App 跑在自己进程，二者通过
@@ -23,8 +37,9 @@ import java.util.Locale
  *   system property，正则提取大版本号，判断 HOS3 / HOS4 / 非小米系。对绝大多数用户零配置，
  *   是首选路径。
  * - **方案 B（兜底）**：ROM 裁剪了 prop、hidden API 反射被拦、或自动识别结论明显不对时，
- *   允许用户在实验区强制指定 [MODE_HOS3] / [MODE_HOS4]。[resolve] / [current] 是统一入口，
+ *   允许用户在实验区强制指定 [MODE_HOS3] / [MODE_HOS4]。[resolve] 是统一入口，
  *   手动值直接短路自动识别，避免"识别错了还必须改代码"。
+ *   **注意：4.3 起 App 内已无任何 UI 写这两个值**，只保留解析能力给旧配置与实验区。
  * - 取 [Os.OTHER] 一律走**最保守**策略：宁可少用激进适配，也不要把普通 Android ROM
  *   误判成 HOS4 后套用更严的降级逻辑。
  *
@@ -287,6 +302,10 @@ object HyperOsCompat {
      * @param sp      `safewalk_xsp` 或其它承载开关的 SharedPreferences。
      * @param modeKey 保存模式串的 key，由调用方提供。
      */
+    @Deprecated(
+        "4.3 起首页已无 HyperOS 版本选择，模式串恒为 auto；业务代码请直接用 detect()",
+        ReplaceWith("detect()")
+    )
     @JvmStatic
     fun current(sp: SharedPreferences, modeKey: String): Os {
         val mode = try {
@@ -324,6 +343,10 @@ object HyperOsCompat {
      *
      * 仅 [MODE_HOS3] / [MODE_HOS4] 返回 true；[MODE_AUTO]、null、未知值均为 false。
      */
+    @Deprecated(
+        "4.3 起首页已无 HyperOS 版本选择，此判断不再有调用点",
+        ReplaceWith("false")
+    )
     @JvmStatic
     fun isManual(mode: String?): Boolean {
         val m = mode?.trim()?.lowercase(Locale.US)

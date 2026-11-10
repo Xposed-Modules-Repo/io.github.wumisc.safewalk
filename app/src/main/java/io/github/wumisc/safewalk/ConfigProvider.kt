@@ -70,11 +70,13 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.testRearCamTs,
             // 本次迭代新增（跨进程给 Hook 用）：
             //  · enablePreviewContrast 悬浮窗对比度开关（App 侧悬浮窗也读，顺带透传保持一致）；
-            //  · previewContrastLevel 对比度强度 0~100（同上，保证导出配置不丢这一项）；
-            //  · hyperOsMode           HyperOS 适配模式，两个进程用同一份版本结论。
+            //  · previewContrastLevel 对比度强度 0~100（同上，保证导出配置不丢这一项）。
+            //
+            // 4.3 移除了 hyperOsMode：首页那张「HyperOS 版本适配」卡片已删，改为
+            // RomSettings.romOverride（本机 UI 是哪一家）。后者只影响设置页跳转与
+            // 文案，Hook 端不需要知道 —— 少一个跨进程状态，就少一种两边不一致的可能。
             SafeWalkPrefKey.enablePreviewContrast,
-            SafeWalkPrefKey.previewContrastLevel,
-            SafeWalkPrefKey.hyperOsMode
+            SafeWalkPrefKey.previewContrastLevel
         )
     }
 

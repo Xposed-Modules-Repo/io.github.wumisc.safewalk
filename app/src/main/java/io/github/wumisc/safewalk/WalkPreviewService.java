@@ -1146,10 +1146,13 @@ public final class WalkPreviewService extends Service {
     /**
      * 只用于日志的一行 ROM 说明。**不参与任何行为决策** —— 决策全部基于运行时结果，
      * 避免「版本识别错了导致功能被错误降级」。
+     *
+     * 4.3 起固定用自动识别（[HyperOsCompat.detect]），不再读 `hyperOsMode`：
+     * 首页那张「HyperOS 版本适配」卡片已删，旧配置里的手动值不该继续影响别人。
      */
     private String fgsOsTag() {
         try {
-            HyperOsCompat.Os os = HyperOsCompat.current(sp, SafeWalkPrefKey.hyperOsMode);
+            HyperOsCompat.Os os = HyperOsCompat.detect();
             return "os=" + os.name() + " sdk=" + Build.VERSION.SDK_INT
                     + " 已用=" + fgsTypeName(fgsType);
         } catch (Throwable t) {

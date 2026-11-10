@@ -252,84 +252,81 @@
 
                 </LinearLayout>
 
-                <!-- 【HyperOS 版本适配 · 首页入口】用户反馈：适配开关应该放在首页。
-                     与行走模式页共用同一个 hyperOsMode 配置 key，两处修改即时互相同步。
-                     方案 A 自动识别优先、方案 B 手动指定兜底。 -->
+                <!-- 【系统 UI 适配】两行结构（4.3 起取代原来的「HyperOS 版本适配」卡片）：
+                     第一行：一行注明，讲清「本机被识别成哪一家」以及是不是手选的；
+                     第二行：七个芯片，自动 + 五家厂商（小米/荣耀/OPPO/vivo/华为）+ 原生。
+                     芯片上写厂商短名而不是 UI 全名：360dp 宽的机器每个芯片只有约 43dp，
+                     “OriginOS”“HarmonyOS”放不下；UI 全名在上一行注明里给。
+                     为什么不再按 HyperOS 版本分：三个策略函数（前台服务 / 手电 / 悬浮窗）
+                     全是运行时降级链，版本号一次都没被读过；真正影响行为的是「哪一家 UI」，
+                     它决定自启动页跳哪儿、第 4 步文案怎么写、用哪张相机包名表。 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:background="@color/card_bg"
                     android:orientation="vertical"
-                    android:paddingLeft="16dp"
-                    android:paddingRight="16dp"
+                    android:paddingLeft="14dp"
+                    android:paddingRight="14dp"
                     android:paddingTop="12dp"
-                    android:paddingBottom="14dp">
+                    android:paddingBottom="12dp">
 
                     <TextView
+                        android:id="@+id/tv_rom_caption"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="HyperOS 版本适配"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="正在识别系统 UI…"
                         android:textColor="@color/text_primary"
-                        android:textSize="15sp" />
-
-                    <TextView
-                        android:id="@+id/tv_hyperos_detected"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="正在识别系统版本…"
-                        android:textColor="@color/text_hint"
-                        android:textSize="12sp" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="默认自动识别；识别不准时可手动指定版本（自动优先，手动兜底）"
-                        android:textColor="@color/text_hint"
-                        android:textSize="12sp" />
+                        android:textSize="12.5sp" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
+                        android:layout_marginTop="9dp"
                         android:orientation="horizontal">
 
                         <TextView
-                            android:id="@+id/chip_hos_auto"
-                            android:layout_width="0dp"
-                            android:layout_height="36dp"
-                            android:layout_weight="1"
-                            android:background="@drawable/bg_choice_chip"
-                            android:gravity="center"
-                            android:text="自动识别"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp" />
+                            android:id="@+id/chip_rom_auto"
+                            style="@style/RomChip"
+                            android:text="自动" />
 
                         <TextView
-                            android:id="@+id/chip_hos3"
-                            android:layout_width="0dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="8dp"
-                            android:layout_weight="1"
-                            android:background="@drawable/bg_choice_chip"
-                            android:gravity="center"
-                            android:text="HyperOS 3"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp" />
+                            android:id="@+id/chip_rom_hyperos"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="小米" />
 
                         <TextView
-                            android:id="@+id/chip_hos4"
-                            android:layout_width="0dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="8dp"
-                            android:layout_weight="1"
-                            android:background="@drawable/bg_choice_chip"
-                            android:gravity="center"
-                            android:text="HyperOS 4"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp" />
+                            android:id="@+id/chip_rom_magicos"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="荣耀" />
+
+                        <TextView
+                            android:id="@+id/chip_rom_coloros"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="OPPO" />
+
+                        <TextView
+                            android:id="@+id/chip_rom_originos"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="vivo" />
+
+                        <TextView
+                            android:id="@+id/chip_rom_harmonyos"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="华为" />
+
+                        <TextView
+                            android:id="@+id/chip_rom_aosp"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="原生" />
                     </LinearLayout>
                 </LinearLayout>
 

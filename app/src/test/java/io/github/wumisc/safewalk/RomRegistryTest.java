@@ -16,14 +16,14 @@ import java.util.Set;
  * P0 验收测试：多 ROM 适配层的数据表与判定逻辑。
  *
  * 对应 `docs/rom-adaptation-plan.md` 第 6 节 P0 的验收标准：
- * 「Registry 覆盖 5 个 RomId，每个 profile 的 cameraPkgs 非空；4.0 的测试全绿」。
+ * 「Registry 覆盖每个 RomId（当前五厂商 + 原生），每个 profile 的 cameraPkgs 非空」。
  *
  * 这组测试锁的是**表的完整性**，不是表里 component 名字对不对——
  * 名字对不对只能靠真机 `resolveActivity` 验，写死在单测里反而会因为 ROM 升级
  * 导致测试红、进而被人删掉，那才是真的失守。
  *
  * 所以这里只守四条底线：
- * 1. 五个生态一个都不能漏，枚举加了新值测试必须提醒；
+ * 1. 六个生态（五厂商 + 原生）一个都不能漏，枚举加了新值测试必须提醒；
  * 2. 除 AOSP 外，每家至少有一条自启动候选（否则引导页第 4 项必然失败）；
  * 3. 所有 spec 格式合法（能交给 ComponentName / Intent 解析）；
  * 4. 未识别设备必须落到 AOSP，绝不能猜成某一家。

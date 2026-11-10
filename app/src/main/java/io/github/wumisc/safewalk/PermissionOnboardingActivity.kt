@@ -232,9 +232,10 @@ class PermissionOnboardingActivity : Activity() {
         // 写错都会在**首次访问时**抛 ExceptionInInitializerError（Error，不是 Exception）。
         // 引导页是用户装完 App 打开的第一屏，绝不能因为一张「指路表」白屏 —— 表坏了就退回
         // 通用文案与通用入口，功能一点也不少，只是少了几句本地化提示。
-        romId = safeRom(RomId.AOSP) { RomDetector.detectFromBuild() }
+        romId = safeRom(RomId.AOSP) { RomSettings.effective(this) }
         specialSteps = safeRom(FALLBACK_STEPS) { OnboardingSteps.labelsFor(romId) }
         try {
+            DiagLog.log("[ROM] " + RomSettings.explain(romId, RomSettings.overrideOf(this)))
             DiagLog.log(
                 "[ROM] " + RomDetector.explain(Build.MANUFACTURER, Build.BRAND, Build.PRODUCT)
             )

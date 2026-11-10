@@ -39,12 +39,32 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     /** 水平滑动判定的最小位移，避免点击/轻微抖动也让导航栏抽动 */
     private static final float SWIPE_SLOP = 24f;
 
-    // ========== 【HyperOS 版本适配 · 首页入口】 ==========
-    // 用户反馈「HyperOS 版本适配应该放在首页」。与行走模式页共用同一个
-    // SafeWalkPrefKey.hyperOsMode，两处都即时落盘 + exportConfig，天然同步。
-    private TextView tvHyperosDetected;
-    private TextView[] hosChips;
-    private String hosMode = HyperOsCompat.MODE_AUTO;
+    // ========== 【系统 UI 适配 · 首页入口】 ==========
+    // 4.3 起取代原来的「HyperOS 版本适配」三芯片。旧版让用户选 HyperOS 3 / 4，
+    // 但三个策略函数（前台服务 / 手电 / 悬浮窗）都是运行时降级链，版本号根本没被读过；
+    // 真正影响行为的是「哪一家 UI」——它决定自启动页跳哪儿、引导文案怎么写、
+    // 用哪张相机包名表。档位从 3 个变成 7 个（自动 + 五家厂商 + 原生），但只占两行：
+    // 一行注明，一行选择。
+    private TextView tvRomCaption;
+    private TextView[] romChips;
+
+    /**
+     * 芯片对应的配置值，下标与 {@link #romChips}、布局里的 chip_rom_* 一一对应。
+     *
+     * 抽成常量而不是在绑定与刷新两处各写一遍：两处漏改一处，就会变成
+     * 「点了华为、高亮小米」这种不报错但明显不对的状态。
+     */
+    private static final String[] ROM_CHIP_KEYS = {
+            RomSettings.OVERRIDE_AUTO,
+            RomId.HYPEROS.name(),
+            RomId.MAGICOS.name(),
+            RomId.COLOROS.name(),
+            RomId.ORIGINOS.name(),
+            RomId.HARMONYOS.name(),
+            RomId.AOSP.name()
+    };
+    /** 当前生效的生态（自动识别或用户手选的结果），用于刷新高亮与文案。 */
+    private RomId romId = RomId.AOSP;
 
     // 状态文字配色（开=绿，关=灰）。取值必须在 onCreate 里从资源读，
     // 原来写死成常量，深色模式下这两个颜色对比度不足。
@@ -65,8 +85,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 【配置防丢】数据被清 / 重装后，先从外部备份恢复行走模式等设置，
         // 必须放在 initUI() 读配置之前，否则首页会先按默认值渲染一遍。
         ConfigBackup.restoreIfNeeded(getApplicationContext());
-        // 【HyperOS 版本适配 · 首页】进入首页打印一次环境快照（厂商/型号/SDK/prop/识别结论），
-        // 现场排查「为什么识别成这个版本」时不用连 logcat。
+        // 【诊断】进入首页打印一次环境快照（厂商/型号/SDK/prop/识别结论）。
+        // 4.3 起首页不再有「HyperOS 版本适配」UI，这段只为现场排查留证据 —— 用户报
+        // 「首页写的是 XX 但我这明明是 YY」时，不用连 logcat 就能对上号。
         HyperOsCompat.logEnvironment();
         // 【到达提醒】证件 / 到场提示按「到达某类场所」触发：进首页就启动定位监控，
         // 这样即使行走模式没开（服务未起）也能正常提醒。start 幂等，不会重复注册。
@@ -272,17 +293,22 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 首页 / 智能提醒页 / 行走模式页的每个开关都是改完立即 commit + exportConfig，
         // 不再需要用户额外点一次保存。
 
-        // 【HyperOS 版本适配 · 首页入口】方案 A 自动识别优先 + 方案 B 手动切换兜底
-        tvHyperosDetected = findViewById(R.id.tv_hyperos_detected);
-        hosChips = new TextView[]{
-                findViewById(R.id.chip_hos_auto),
-                findViewById(R.id.chip_hos3),
-                findViewById(R.id.chip_hos4)
+        // 【系统 UI 适配 · 首页入口】七个芯片：自动 + 五家厂商 + 原生。
+        // 控件顺序、ROM_CHIP_KEYS 顺序、布局里的 XML 顺序三者必须一致，
+        // 否则高亮会落在邻居身上（数组越界有 length 兜着，串位却不会报错）。
+        tvRomCaption = findViewById(R.id.tv_rom_caption);
+        romChips = new TextView[]{
+                findViewById(R.id.chip_rom_auto),
+                findViewById(R.id.chip_rom_hyperos),
+                findViewById(R.id.chip_rom_magicos),
+                findViewById(R.id.chip_rom_coloros),
+                findViewById(R.id.chip_rom_originos),
+                findViewById(R.id.chip_rom_harmonyos),
+                findViewById(R.id.chip_rom_aosp)
         };
-        final String[] HOS_KEYS = {HyperOsCompat.MODE_AUTO, HyperOsCompat.MODE_HOS3, HyperOsCompat.MODE_HOS4};
-        for (int i = 0; i < HOS_KEYS.length; i++) {
-            final String key = HOS_KEYS[i];
-            hosChips[i].setOnClickListener(v -> selectHosMode(key));
+        for (int i = 0; i < ROM_CHIP_KEYS.length && i < romChips.length; i++) {
+            final String key = ROM_CHIP_KEYS[i];
+            romChips[i].setOnClickListener(v -> selectRom(key));
         }
 
         // 底部导航
@@ -362,11 +388,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         swSocial = SafePrefs.getBool(sp, SafeWalkPrefKey.enableSocialTipCard, true);
         swNightTorch = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorch, true);
         swRearCam = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false);
-        // 【HyperOS 首页入口】与行走模式页读同一个 key，返回首页时自动同步最新选择
-        hosMode = SafePrefs.getString(sp, SafeWalkPrefKey.hyperOsMode, HyperOsCompat.MODE_AUTO);
-        if (hosMode == null) hosMode = HyperOsCompat.MODE_AUTO;
+        // 【系统 UI 适配】生效值 = 手动指定优先，否则自动识别。统一走 RomSettings，
+        // 不再各处直接调 RomDetector.detectFromBuild()，否则手选之后这页和引导页
+        // 会得出两个不同的结论。
+        romId = RomSettings.effective(this);
         refreshTileStatus();
-        refreshHosUi();
+        refreshRomUi();
     }
 
     /**
@@ -429,40 +456,42 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         tileWalkStatus.setTextColor(swEnable && swRearCam ? COLOR_ON : COLOR_OFF);
     }
 
-    // ========== 【HyperOS 版本适配 · 首页入口】 ==========
+    // ========== 【系统 UI 适配 · 首页入口】 ==========
 
     /**
-     * 选中「自动识别 / HyperOS 3 / HyperOS 4」之一：即时落盘 + 导出配置
-     * （后端实时保存，无保存按钮），让 Hook 侧在下一次读取时用同一结论。
+     * 用户点了某个芯片：即时落盘（全 App 无「保存」按钮），再刷新高亮与注明行。
+     *
+     * 刻意**不**导出配置：这一项只影响本机 App 内部「把用户送到哪个设置页」，
+     * SystemUI 侧的 Hook 不需要知道，导出只会多一个两边可能不一致的状态。
      */
-    private void selectHosMode(String mode) {
-        hosMode = mode;
-        xsp().edit().putString(SafeWalkPrefKey.hyperOsMode, mode).commit();
-        SafeWalkConfig.exportConfig(this);
-        HyperOsCompat.Os os = HyperOsCompat.resolve(mode);
-        DiagLog.log("[VER] 首页切换适配模式 → " + mode + " | " + HyperOsCompat.describe(os, mode)
-                + " | 前台服务策略=" + HyperOsCompat.foregroundServiceStrategy(os)
-                + " 手电策略=" + HyperOsCompat.torchOpenStrategy(os)
-                + " 悬浮窗策略=" + HyperOsCompat.overlayPermissionStrategy(os)
-                + " | " + HyperOsCompat.rootCmdStrategy(os));
-        refreshHosUi();
+    private void selectRom(String key) {
+        RomSettings.save(this, key);
+        romId = RomSettings.effective(this);
+        DiagLog.log("[ROM] 首页切换系统 UI → " + RomSettings.normalize(key)
+                + "｜" + RomSettings.explain(romId, key));
+        try {
+            DiagLog.log("[ROM] " + RomRegistry.describe(romId)
+                    + "｜自启动去处：" + RomRegistry.routeHint(romId, TargetKind.AUTOSTART));
+        } catch (Throwable t) {
+            // 适配表坏了不能让「点一下芯片」变成崩溃（RomRegistry 是 object，
+            // spec 写错会在首次访问抛 ExceptionInInitializerError，那是 Error）。
+            DiagLog.log("[ROM] 适配表不可用，仅记录选择：" + t.getClass().getSimpleName());
+        }
+        refreshRomUi();
     }
 
-    /** 刷新三态 chip 高亮 + 首页识别结论文案（与行走模式页共用同一套资源） */
-    private void refreshHosUi() {
-        if (tvHyperosDetected == null || hosChips == null) return;
-        final String[] keys = {HyperOsCompat.MODE_AUTO, HyperOsCompat.MODE_HOS3, HyperOsCompat.MODE_HOS4};
-        for (int i = 0; i < keys.length; i++) {
-            paintChip(hosChips[i], keys[i].equals(hosMode));
+    /** 刷新芯片高亮 + 那一行注明。 */
+    private void refreshRomUi() {
+        if (tvRomCaption == null || romChips == null) return;
+        String raw = RomSettings.overrideOf(this);
+        String normalized = RomSettings.normalize(raw);
+        for (int i = 0; i < ROM_CHIP_KEYS.length && i < romChips.length; i++) {
+            paintChip(romChips[i], ROM_CHIP_KEYS[i].equals(normalized));
         }
-        HyperOsCompat.Os os = HyperOsCompat.current(xsp(), SafeWalkPrefKey.hyperOsMode);
-        boolean manual = HyperOsCompat.isManual(hosMode);
-        // 两行：第一行讲「识别成了什么、走什么链路」，第二行直接回答「这个版本到底能不能用」。
-        // 旧版把内部代号（plain / strict / releasePreviewFirst）原样贴给用户，既看不懂，
-        // 也容易让人以为 HOS3 和 HOS4 是两套完全不同的代码。
-        tvHyperosDetected.setText((manual ? "手动兜底" : "自动识别") + "："
-                + HyperOsCompat.describe(os, hosMode)
-                + "\n" + HyperOsCompat.supportNote(os));
+        if (romId == null) romId = RomSettings.effective(this);
+        // 第三个参数只在「自动识别 + 落到 AOSP」时才起作用：三星/摩托这类未收录厂商
+        // 会显示「未识别系统 UI · 按原生处理」，而不是错误地宣称「本机 UI：原生」。
+        tvRomCaption.setText(RomSettings.caption(romId, normalized, RomDetector.isUnrecognizedOnBuild()));
     }
 
     private void paintChip(TextView chip, boolean on) {

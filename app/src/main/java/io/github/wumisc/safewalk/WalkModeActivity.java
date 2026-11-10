@@ -36,8 +36,8 @@ public final class WalkModeActivity extends Activity {
     // 【对比度强度进度条】开关是总闸，滑条调 HUD 描边/阴影/衬底强弱（0~100）
     private SeekBar seekContrastLevel;
     private TextView tvContrastLevel;
-    // HyperOS 版本适配入口已按需求收敛到首页 MainActivity（两处共用
-    // SafeWalkPrefKey.hyperOsMode）。本页不再持有其控件与状态，避免重复入口。
+    // 「系统 UI 适配」入口只在首页 MainActivity（4.3 起由 HyperOS 版本选择改为
+    // 五家厂商 + 原生的 UI 选择）。本页不再持有其控件与状态，避免重复入口。
 
     private String rearMode = "fullscreen";
     private String rearCorner = "bottom_right";
@@ -59,8 +59,8 @@ public final class WalkModeActivity extends Activity {
 
         DiagLog.init(getApplicationContext());
         refreshAll();
-        // 系统版本识别的环境快照仍打印（属于调试日志要求，与 UI 入口无关）；
-        // HyperOS 版本适配的展示与切换已统一收敛到首页 MainActivity。
+        // 环境快照仍打印（纯诊断日志，与 UI 入口无关）；「系统 UI 适配」的选择入口
+        // 已统一收敛到首页 MainActivity。
         HyperOsCompat.logEnvironment();
         DiagLog.log("[walk] 打开行走模式页 rearCam=" + swRearCam.isChecked()
                 + " mode=" + rearMode
@@ -93,8 +93,8 @@ public final class WalkModeActivity extends Activity {
         // 【对比度强度进度条】与开关卡片平级，点滑条不会误触发开关 toggle
         seekContrastLevel = findViewById(R.id.seek_contrast_level);
         tvContrastLevel = findViewById(R.id.tv_contrast_level);
-        // HyperOS 版本适配卡片已从本页布局删除，此处不再绑定其控件
-        // （否则 findViewById 返回 null，点击时直接 NPE）。
+        // “系统 UI 适配”卡片只在首页，本页布局里没有，别在这里 findViewById
+        // （返回 null，后续点击直接 NPE）。
         seekOpacity = findViewById(R.id.seek_opacity);
         seekGaitSteps = findViewById(R.id.seek_gait_steps);
         seekGaitStop = findViewById(R.id.seek_gait_stop);
@@ -515,12 +515,13 @@ public final class WalkModeActivity extends Activity {
         refreshDependencies();
         refreshModeChips();
         refreshPosChips();
-        // HyperOS 版本适配卡片已移到首页，本页不再刷新其 UI。
+        // 「系统 UI 适配」卡片在首页，本页不刷新它。
     }
 
-    // ========== HyperOS 版本适配 ==========
-    // 展示与切换统一在首页 MainActivity；本页仅保留一条环境快照调试日志
-    // （HyperOsCompat.logEnvironment() 于 onCreate 调用），不再持有任何控件/状态。
+    // ========== 系统 UI 适配 ==========
+    // 展示与切换统一在首页 MainActivity（4.3 起由「HyperOS 版本」改为「五家厂商 + 原生」）；
+    // 本页仅保留一条环境快照调试日志（HyperOsCompat.logEnvironment() 于 onCreate 调用），
+    // 不再持有任何控件/状态。
 
     private void refreshDependencies() {
         boolean rearOn = swRearCam.isChecked();
