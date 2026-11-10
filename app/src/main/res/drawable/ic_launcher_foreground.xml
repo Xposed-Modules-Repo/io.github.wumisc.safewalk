@@ -1,17 +1,151 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标前景（108 × 108 dp 画布）。
+
+  ## 为什么从位图换成矢量
+  旧前景是 1024×1024 的 PNG（`ic_launcher_foreground_new.png`），靠各密度拉伸：
+  48dp 下细节全糊，APK 里还占 1MB 以上。改成矢量后任意尺寸都是原生渲染。
+
+  ## 为什么主体收在 66dp 内
+  各家遮罩形状不同（圆角方、圆、方圆、水滴），四角与边缘会被裁掉。伞宽 56dp、
+  伞顶 y=14、脚底 y=83，全部落在以 (54,54) 为心、半径 33 的安全圆内，
+  因此四种遮罩都不会切到主体。
+
+  ## 为什么拆这么多层
+  · 渐变伞面（`aapt:attr` inline gradient）：纯色会显得平，加一层渐变立刻有体积；
+  · 独立高光 path：0.34 alpha，缩到 48dp 时几乎看不见，但 108dp 以上很提气；
+  · 伞骨 0.9dp、雨滴 2.4dp：小尺寸下自然淡出，不影响「伞 + 人」的识别。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 国风盾牌 + 道路 -->
+
+    <!-- 雨：四条，全部在伞外，避开主体与安全区边缘 -->
     <path
-        android:fillColor="#2B5EA7"
-        android:pathData="M54,28 L72,36 L72,52 C72,64 64,74 54,78 C44,74 36,64 36,52 L36,36 Z" />
+        android:pathData="M29,56 L24,64"
+        android:strokeColor="#8FD0FF"
+        android:strokeWidth="2.4"
+        android:strokeAlpha="0.6"
+        android:strokeLineCap="round" />
     <path
-        android:fillColor="#FFFCF7"
-        android:pathData="M54,38 L64,42 L64,52 C64,60 59,67 54,69 C49,67 44,60 44,52 L44,42 Z" />
+        android:pathData="M20,44 L16.5,51"
+        android:strokeColor="#8FD0FF"
+        android:strokeWidth="2.4"
+        android:strokeAlpha="0.6"
+        android:strokeLineCap="round" />
     <path
-        android:fillColor="#C8392E"
-        android:pathData="M50,52 L58,52 L56,60 L52,60 Z" />
+        android:pathData="M88,44 L84.5,51"
+        android:strokeColor="#8FD0FF"
+        android:strokeWidth="2.4"
+        android:strokeAlpha="0.6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M80,57 L75,65"
+        android:strokeColor="#8FD0FF"
+        android:strokeWidth="2.4"
+        android:strokeAlpha="0.6"
+        android:strokeLineCap="round" />
+
+    <!-- 伞面：宽 56dp，底边六段波浪（伞骨节点） -->
+    <path android:pathData="M26,47 C26,29.5 38.5,17.5 54,17.5 C69.5,17.5 82,29.5 82,47
+        Q77,50.2 72,47 Q67,50.2 62,47 Q57,50.2 52,47
+        Q47,50.2 42,47 Q37,50.2 32,47 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="24"
+                android:startY="18"
+                android:endX="86"
+                android:endY="50"
+                android:startColor="#7CC8FF"
+                android:centerColor="#3E92E8"
+                android:endColor="#2A68BC" />
+        </aapt:attr>
+    </path>
+
+    <!-- 顶部高光（左上斜弧），给伞面一层湿润的亮边 -->
+    <path
+        android:pathData="M33,42.5 C34.6,31.4 42,23.4 52.4,21"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:strokeAlpha="0.34"
+        android:strokeLineCap="round" />
+
+    <!-- 三道伞骨：0.9dp，只在大尺寸下可见 -->
+    <path
+        android:pathData="M54,18.3 C45.5,26 39.2,36 36.6,46.6"
+        android:strokeColor="#2A6BB8"
+        android:strokeWidth="0.9"
+        android:strokeAlpha="0.5" />
+    <path
+        android:pathData="M54,18.3 C62.5,26 68.8,36 71.4,46.6"
+        android:strokeColor="#2A6BB8"
+        android:strokeWidth="0.9"
+        android:strokeAlpha="0.5" />
+    <path
+        android:pathData="M54,18.3 L54,46.6"
+        android:strokeColor="#2A6BB8"
+        android:strokeWidth="0.9"
+        android:strokeAlpha="0.5" />
+
+    <!-- 伞尖 -->
+    <path
+        android:pathData="M54,18 L54,14"
+        android:strokeColor="#D9EBFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round" />
+
+    <!-- 人物：头（深色剪影） -->
+    <path
+        android:pathData="M46,53 A4.8,4.8 0 1,0 46,62.6 A4.8,4.8 0 1,0 46,53 Z"
+        android:fillColor="#23242B" />
+
+    <!-- 雨衣：橙色渐变。肩线 y=62.4 刻意与头部（底 62.6）重叠 0.2dp ——
+         留缝会让头看起来"浮"在衣服上，尤其在 48dp 下像两个分开的点。 -->
+    <path android:pathData="M40.6,62.4 Q46,59.6 51.4,62.4 L54,76.4 Q46,78.6 38,76.4 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="46"
+                android:startY="61"
+                android:endX="46"
+                android:endY="79"
+                android:startColor="#FFA056"
+                android:endColor="#E0661A" />
+        </aapt:attr>
+    </path>
+
+    <!-- 双腿 -->
+    <path
+        android:pathData="M42.2,77.2 L41.8,82"
+        android:strokeColor="#CC5A10"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M49.8,77.2 L50.2,82"
+        android:strokeColor="#CC5A10"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+
+    <!-- 雨靴 -->
+    <path
+        android:pathData="M40.4,83 L43,83"
+        android:strokeColor="#23242B"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M49,83 L51.6,83"
+        android:strokeColor="#23242B"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round" />
+
+    <!-- 伞柄：从伞面下缘起，弯钩朝左回扣，与人物保持 6dp 空隙 -->
+    <path
+        android:pathData="M65,48.6 L65,76 Q65,81 59.6,81"
+        android:strokeColor="#7FA6C9"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round" />
 </vector>

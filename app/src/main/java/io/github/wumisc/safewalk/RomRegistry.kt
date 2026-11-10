@@ -3,6 +3,19 @@ package io.github.wumisc.safewalk
 /**
  * 五家 UI 生态的适配数据表（P0 交付物）。
  *
+ * ## 候选页的来源
+ *
+ * 自启动路径参考了开源项目 **judemanutd/AutoStarter**（Apache-2.0，6.7 万次下载量的
+ * 跨 OEM 自启动跳转库）里按品牌维护的 component 表，再与项目原有代码交叉核对：
+ *
+ * · OPPO/ColorOS 的首选是 `...safecenter.permission.startup.StartupAppListActivity`，
+ *   本项目原先只收了 `...startupapp.StartupAppListActivity`（新路径），漏了这条；
+ * · vivo/iQOO 的首选在 `com.iqoo.secure`，而不是 `com.vivo.permissionmanager`；
+ * · 一加（氧 OS）的入口仍在 `com.oneplus.security`。
+ *
+ * 这些条目在本项目里**全部是候选**，运行时逐条 `resolveActivity` 校验，
+ * 因此「多写一条」最坏只是多一次失败尝试，不会让用户卡住。
+ *
  * ## 这张表的边界
  *
  * 表里**只有**「系统没有公开 API、只能把用户送到某个设置页」的四类入口
@@ -95,6 +108,17 @@ object RomRegistry {
                 "$HONOR_SM/com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
                 "系统管家 → 应用启动管理"
             ),
+            // MagicOS 7 之前（仍是华为系统管家包名的老荣耀）走这两条
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "com.huawei.systemmanager/com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+                "手机管家 → 应用启动管理（MagicUI）"
+            ),
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "com.huawei.systemmanager/com.huawei.systemmanager.optimize.process.ProtectActivity",
+                "手机管家 → 受保护应用（MagicUI 旧版）"
+            ),
             PageTarget.action(
                 TargetKind.AUTOSTART, FALLBACK_DETAILS, "应用详情 → 自启动（兜底）"
             ),
@@ -109,6 +133,12 @@ object RomRegistry {
     private val COLOROS = RomProfile(
         id = RomId.COLOROS,
         pages = listOf(
+            // 社区库（judemanutd/AutoStarter）里的首选路径：permission.startup
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$COLOROS_SC/com.coloros.safecenter.permission.startup.StartupAppListActivity",
+                "手机管家 → 自启动管理（ColorOS 11 及更早）"
+            ),
             PageTarget.component(
                 TargetKind.AUTOSTART,
                 "$OPLUS_SC/com.oplus.safecenter.startupapp.StartupAppListActivity",
@@ -118,6 +148,23 @@ object RomRegistry {
                 TargetKind.AUTOSTART,
                 "$COLOROS_SC/com.coloros.safecenter.startupapp.StartupAppListActivity",
                 "手机管家 → 自启动管理（旧版）"
+            ),
+            // OPPO 更老的 com.oppo.safe
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "com.oppo.safe/com.oppo.safe.permission.startup.StartupAppListActivity",
+                "安全中心 → 自启动管理（ColorOS 7 及更早）"
+            ),
+            // 一加（氧 OS / 早期 ColorOS 合并版）仍保留自己的安全中心
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "com.oneplus.security/com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity",
+                "设置 → 应用启动管理（一加）"
+            ),
+            PageTarget.action(
+                TargetKind.AUTOSTART,
+                "com.android.settings.action.BACKGROUND_OPTIMIZE",
+                "设置 → 后台优化（一加 / 部分 OPPO）"
             ),
             PageTarget.action(
                 TargetKind.AUTOSTART, FALLBACK_DETAILS, "应用详情 → 自启动（兜底）"
@@ -141,10 +188,21 @@ object RomRegistry {
     private val ORIGINOS = RomProfile(
         id = RomId.ORIGINOS,
         pages = listOf(
+            // iQOO 独立安全中心（社区库里 iQOO 的首选就在这个包）
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "com.iqoo.secure/com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity",
+                "i管家 → 自启动管理（iQOO）"
+            ),
             PageTarget.component(
                 TargetKind.AUTOSTART,
                 "$VIVO_PM/com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
                 "i管家 → 自启动管理"
+            ),
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "com.iqoo.secure/com.iqoo.secure.ui.phoneoptimize.BgStartUpManager",
+                "i管家 → 后台启动管理（iQOO 旧版）"
             ),
             PageTarget.action(
                 TargetKind.AUTOSTART, FALLBACK_DETAILS, "应用详情 → 自启动（兜底）"

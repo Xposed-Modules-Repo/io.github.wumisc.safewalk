@@ -43,4 +43,33 @@ public class CameraAppPolicyTest {
         assertFalse(CameraAppPolicy.isCameraLike(null));
         assertFalse(CameraAppPolicy.isCameraLike(""));
     }
+
+    /**
+     * P2 补的包名：每个都是「打开后会独占摄像头」的真·相机。
+     *
+     * 三星那条尤其重要 —— 旧表写的是 `com.samsung.android.camera`，而三星实际用的
+     * 是 `com.sec.android.app.camera`。写错的效果是「三星用户开相机，小窗照样盖在
+     * 取景框上」，且日志里一切正常，极难排查。
+     */
+    @Test
+    public void oemCamerasAddedInP2AreDetected() {
+        assertTrue("三星主包名", CameraAppPolicy.isCameraLike("com.sec.android.app.camera"));
+        assertTrue("AOSP 第二个真实包名", CameraAppPolicy.isCameraLike("com.android.camera2"));
+        assertTrue("一加氧 OS", CameraAppPolicy.isCameraLike("com.oneplus.camera"));
+        assertTrue("Moto", CameraAppPolicy.isCameraLike("com.motorola.camera2"));
+        assertTrue("Moto 新机", CameraAppPolicy.isCameraLike("com.motorola.camera3"));
+        assertTrue("索尼", CameraAppPolicy.isCameraLike("com.sonyericsson.android.camera"));
+        assertTrue("华硕", CameraAppPolicy.isCameraLike("com.asus.camera"));
+    }
+
+    /**
+     * 社交类不能进表：它们只在视频通话时占用相机，平时刷消息收起小窗属于误伤。
+     * 这条测试是给「顺手把微信加进去」的改动设的闸。
+     */
+    @Test
+    public void socialAppsStayOutEvenThoughTheyCanUseCamera() {
+        assertFalse(CameraAppPolicy.isCameraLike("com.tencent.mm"));
+        assertFalse(CameraAppPolicy.isCameraLike("com.whatsapp"));
+        assertFalse(CameraAppPolicy.isCameraLike("org.telegram.messenger"));
+    }
 }

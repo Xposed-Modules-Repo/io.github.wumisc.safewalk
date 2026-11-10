@@ -45,6 +45,5 @@
     <color name="bg_overlay">#70FFFFFF</color>
 
     <!-- 自适应图标背景：取自新图标（雨伞插画）四角的深夜蓝，与前景图透明外沿无缝衔接 -->
-    <color name="ic_launcher_background">#0A2542</color>
 
 </resources>

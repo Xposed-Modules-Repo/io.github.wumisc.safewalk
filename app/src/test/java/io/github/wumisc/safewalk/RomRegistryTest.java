@@ -90,7 +90,12 @@ public class RomRegistryTest {
                 if (t.isAction()) {
                     String a = t.action();
                     assertNotNull(a);
-                    assertTrue(where + " 的 action 应以 android. 开头", a.startsWith("android."));
+                    // 标准设置页都是 android.*；但一加/OPPO 的后台优化页用的是
+                    // com.android.settings.action.BACKGROUND_OPTIMIZE —— 它挂在 settings 包下，
+                    // 却不是 AOSP 的公开 action。真实存在，所以放行这两个前缀。
+                    assertTrue(
+                            where + " 的 action 前缀不合法：应以 android. 或 com.android.settings.action. 开头",
+                            a.startsWith("android.") || a.startsWith("com.android.settings.action."));
                 } else {
                     assertTrue(where + " 不是合法的 pkg/cls", t.looksLikeComponent());
                     String c = t.componentSpec();

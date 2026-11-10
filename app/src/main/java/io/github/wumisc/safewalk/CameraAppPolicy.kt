@@ -12,16 +12,51 @@ package io.github.wumisc.safewalk
  */
 object CameraAppPolicy {
 
-    /** 包名精确匹配；带 `:子进程` 后缀也算同一应用。 */
+    /**
+     * 包名精确匹配；带 `:子进程` 后缀也算同一应用。
+     *
+     * ## 为什么这张表这么长
+     *
+     * 漏判的代价是**小窗盖住取景框 + 对方 openCamera 直接 CAMERA_IN_USE**（功能坏掉）；
+     * 误判的代价只是「打开这个 App 时小窗暂时收起」（体验略差，退出即恢复）。
+     * 两者不对称，所以宁可多收几个真·相机包名。
+     *
+     * 但也不能无脑加：只收「打开后会独占摄像头」的应用。社交类（微信 / WhatsApp）
+     * 只在视频通话时占用相机，平时刷消息不该收起小窗，因此刻意不在表内。
+     *
+     * ## 几个容易写错的包名
+     *
+     * · 三星是 `com.sec.android.app.camera`，不是 `com.samsung.android.camera`
+     *   （后者在部分地区版本存在，两个都留着）；
+     * · AOSP 原生相机 `com.android.camera` 与 `com.android.camera2` 是**两个**真实包名，
+     *   取并集而不是二选一；
+     * · 一加在氧 OS 时代是 `com.oneplus.camera`，ColorOS 合并后改用 `com.oplus.camera`。
+     */
     private val CAMERA_LIKE = arrayOf(
+        // AOSP / 类原生
         "com.android.camera",
+        "com.android.camera2",
+        // 小米 / Redmi / POCO
         "com.miui.camera",
+        // Google
         "com.google.android.GoogleCamera",
+        // OPPO / 一加 / realme
         "com.oplus.camera",
+        "com.oneplus.camera",
+        // 三星（sec 才是主包名）
+        "com.sec.android.app.camera",
         "com.samsung.android.camera",
+        // 华为 / 荣耀
         "com.huawei.camera",
         "com.hihonor.camera",
+        // vivo / iQOO
         "com.vivo.camera",
+        // 摩托罗拉 / 索尼 / 华硕
+        "com.motorola.camera2",
+        "com.motorola.camera3",
+        "com.sonyericsson.android.camera",
+        "com.asus.camera",
+        // 第三方
         "com.meitu.meiyancamera",
         "us.zoom.videomeetings",
         "com.tencent.wemeet"

@@ -172,6 +172,23 @@ public class AcknowledgementsActivity extends Activity {
                         ADOPTED_GONE, null),
         }));
 
+        out.add(new Section("国产 UI 适配", new Item[]{
+                new Item("judemanutd/AutoStarter",
+                        "跨 OEM 自启动页的 component 表（小米 / OPPO / vivo / 一加 / 华为等）。"
+                                + "本项目的五家候选表按它的路径重新核对过：补上了 ColorOS 的 "
+                                + "`permission.startup`、iQOO 的 `com.iqoo.secure`、一加的 "
+                                + "`com.oneplus.security`，并砍掉不属于这五家的品牌。"
+                                + "跳转方式不同：它在启动前判断品牌，本项目改为逐条 resolveActivity 校验，"
+                                + "表写错也只是回退到应用详情页。",
+                        ADOPTED_PARTIAL, "https://github.com/judemanutd/AutoStarter"),
+                new Item("urbandroid-team/dont-kill-my-app",
+                        "各厂商后台限制的公开知识库（dontkillmyapp.com 的数据来源）。"
+                                + "用来判断「哪些开关值得引导用户去开、哪些只是心理安慰」——"
+                                + "比如荣耀没有独立的「后台弹出界面」开关，就不该在清单里编一个出来。"
+                                + "没有代码层面的移植。",
+                        ADOPTED_REFERENCE, "https://github.com/urbandroid-team/dont-kill-my-app"),
+        }));
+
         return out;
     }
 

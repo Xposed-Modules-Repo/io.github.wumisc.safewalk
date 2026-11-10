@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  主题图标（monochrome）层。
+
+  ## 为什么必须单独画，不能拿前景去色
+  HyperOS 3 / MagicOS / ColorOS 15 / OriginOS 5 的主题图标会把这一层当 alpha 蒙版整体着色。
+  直接把彩色前景去色会有两个问题：
+  1. 伞骨 0.9dp、雨滴 2.4dp 这些细线在 48dp 下会糊成噪点，整个图标看起来脏；
+  2. 伞面（实心）与头部（实心）之间只有 2.8dp 空隙，缩小后连成一块，认不出形状。
+
+  所以这里只保留三个形状：伞面 + 人 + 伞柄。雨滴、伞骨、高光全部删掉，
+  伞柄加粗到 2.6dp，保证在任何尺寸下都是"一个人打着伞"的干净剪影。
+
+  ## 为什么用纯白
+  系统会按主题色给这一层重新着色（或反相），白色是唯一安全的基色。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 伞面（实心，无波浪细节，缩小后轮廓更稳） -->
+    <path
+        android:pathData="M26,47 C26,29.5 38.5,17.5 54,17.5 C69.5,17.5 82,29.5 82,47
+        Q77,51 72,47 Q67,51 62,47 Q57,51 52,47
+        Q47,51 42,47 Q37,51 32,47 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- 伞尖 -->
+    <path
+        android:pathData="M54,18 L54,13.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round" />
+
+    <!-- 头 -->
+    <path
+        android:pathData="M46,53 A4.8,4.8 0 1,0 46,62.6 A4.8,4.8 0 1,0 46,53 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- 身体（比彩色版略微加宽，避免小尺寸下变成一根竖条） -->
+    <path
+        android:pathData="M39.8,62.4 Q46.2,59.4 52.2,62.4 L54.8,76.6 Q46,78.8 37.4,76.6 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- 双腿（加粗到 3.6dp） -->
+    <path
+        android:pathData="M42.2,77 L41.6,82.4"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M49.8,77 L50.4,82.4"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round" />
+
+    <!-- 伞柄（2.6dp，弯钩保留，是"伞"的关键识别特征） -->
+    <path
+        android:pathData="M65,48.6 L65,76 Q65,81 59.4,81"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round" />
+</vector>

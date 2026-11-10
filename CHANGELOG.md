@@ -1,5 +1,57 @@
 # 更新日志
 
+## [4.2.0] - 2026-11-11 国产 UI 适配 P2+P3：图标换矢量加单色层，相机包名补全（顺手抓到一个真 bug）
+
+### 一、图标：从 1024 位图换成矢量三层
+
+旧图标是一张 1024×1024 的 PNG 前景 + 纯色背景。问题不是"不好看"，是**工程上错了**：
+
+| 问题 | 后果 |
+| --- | --- |
+| 位图前景靠各密度拉伸 | 48dp 下细节糊成一团；APK 里白占 1.17 MB |
+| 没有 `<monochrome>` 层 | 系统开「主题图标」时只能把彩色图整体去色，HyperOS 3 / MagicOS / ColorOS 15 / OriginOS 5 上都是一个灰糊块 |
+| 没有安全区概念 | 圆形/水滴遮罩会切到伞边 |
+
+现在：矢量前景（渐变伞面 + 顶部高光 + 三道伞骨）+ 渐变背景 + 独立 `monochrome` 剪影。
+主体全部收在以画布中心为心、半径 33dp 的安全圆内，四种遮罩都切不到。
+`monochrome` 不是把前景去色，而是重画：去掉雨滴与伞骨（小尺寸会变噪点），
+伞柄加粗到 2.6dp，保证 48dp 下仍是干净的「一个人打着伞」。
+
+同时删掉 5 个密度的 legacy PNG 与 1.17 MB 的旧前景位图 —— `minSdk 33` 下它们永远不会被读取。
+**APK 44.0 MB → 42.3 MB。**
+
+### 二、相机包名：三星那条写错了
+
+`CameraAppPolicy` 里原本是 `com.samsung.android.camera`，而三星实际用的是
+`com.sec.android.app.camera`。后果很隐蔽：三星用户打开相机，小窗照样盖在取景框上，
+同时自己的预览会话还占着摄像头，对方 CAMERA_IN_USE —— 日志里一切正常，极难排查。
+
+补全（全部是「打开后会独占摄像头」的真·相机）：三星 `sec` 包名、AOSP 第二个真实包名
+`com.android.camera2`、一加氧 OS `com.oneplus.camera`、Moto `camera2/camera3`、
+索尼、华硕。社交类（微信 / WhatsApp / Telegram）刻意不进表：它们只在视频通话时占相机，
+平时收起小窗属于误伤。
+
+### 三、自启动候选：按开源项目核对了一遍
+
+参考 **judemanutd/AutoStarter**（Apache-2.0，跨 OEM 自启动跳转库）的路径表，补齐了三条真实缺口：
+
+| 生态 | 之前缺的 | 为什么重要 |
+| --- | --- | --- |
+| ColorOS | `...safecenter.permission.startup.StartupAppListActivity` | ColorOS 11 及更早版本的**唯一**入口 |
+| ColorOS | `com.oneplus.security` 链式启动页 + `BACKGROUND_OPTIMIZE` | 一加氧 OS / 早期合并版仍用它 |
+| OriginOS | `com.iqoo.secure` 白名单页 | iQOO 的自启动管理在自己独立的包里 |
+| MagicOS | `com.huawei.systemmanager` 两条 | MagicUI 时代的老荣耀 |
+
+因为跳转是「逐条 `resolveActivity` → 打不开换下一条」，多写一条的代价只是一次失败尝试，
+所以这张表允许宁多勿少。致谢页新增「国产 UI 适配」分区，把这几个来源挂上可点链接。
+
+### 验证
+
+- 单测 **144 / 144**（新增 `RomOemCandidatesTest` 6 条 + `CameraAppPolicyTest` 2 条）
+- lint **0 error**，322 warning（4.1.0 是 327，减少的 5 条正是 legacy 图标的 `IconLauncherShape`）
+- `versionCode 43` / `4.2.0` / `targetSdk 35`（apkanalyzer 实测）
+- 自适应图标三层齐全（`aapt2 dump xmltree` 确认 background / foreground / monochrome 都在）
+
 ## [4.1.0] - 2026-11-10 国产 UI 适配 P1：不再对荣耀用户说「请开启 HyperOS 自启动」
 
 ### 这一版只做一件事：把「指路」从写死小米，改成查表

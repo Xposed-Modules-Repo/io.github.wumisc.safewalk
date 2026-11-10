@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标。三层：背景（渐变）→ 前景（矢量）→ 单色（主题图标）。
+
+  `monochrome` 是 Android 13 起的标准字段，HyperOS 3 / MagicOS / ColorOS 15 /
+  OriginOS 5 都读它。缺这一层时系统只能把彩色前景整体去色，48dp 下会糊成一团；
+  有了它，桌面开启「主题图标」后本应用会与其他应用保持同一种单色风格。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>

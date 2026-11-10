@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标背景层。
+
+  纯色 #0A2542 在 48dp 下会显得发闷、和深色桌面糊在一起，所以改成自上而下的渐变：
+  顶部 #123C66（雨天夜空的高光）→ 底部 #07182C（更沉），给前景一层"被伞挡住的暗角"。
+  渐变只在背景层，不参与遮罩裁剪，四种形状下都居中。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="#123C66"
+        android:endColor="#07182C"
+        android:type="linear" />
+</shape>
