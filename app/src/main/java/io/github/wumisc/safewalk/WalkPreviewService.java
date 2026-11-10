@@ -470,6 +470,14 @@ public final class WalkPreviewService extends Service {
     private long lastGaitDiagTs = 0L;
     /** 上一次 [ACTIVE] 激活判定节流诊断的时间戳（达标但被拦截时每 2s 一条） */
     private long lastActiveDiagTs = 0L;
+    /**
+     * 上一次判定时的累计合格步，用于识别「刚刚跨过门槛」这个瞬间。
+     *
+     * 真机日志（13:11:40~13:19:10，7.5 分钟）里 [GUARD] 打了 139 条——
+     * 沙发场景累计步在 1~8 之间反复波动，每跨过一次 5 就打一次，5 秒节流
+     * 也压不住。改为只在「从 <门槛 跳到 >=门槛」那一帧留痕，一轮一条。
+     */
+    private int lastGuardCountSnapshot = 0;
     /** 上一次 [GUARD] 姿态/节律闸门拦截诊断的时间戳（独立节流，不与 ACTIVE 抢） */
     private long lastGuardDiagTs = 0L;
 
@@ -487,6 +495,7 @@ public final class WalkPreviewService extends Service {
         gaitWalking = false;
         lastStepTs = 0L;
         walkingStreakStartTs = 0L;
+        lastGuardCountSnapshot = 0;
         lastGaitDiagTs = 0L;
         registerStepCounter();
         gaitListener = new SensorEventListener() {
@@ -543,6 +552,7 @@ public final class WalkPreviewService extends Service {
                 } else if (lastStepTs != 0L && now - lastStepTs > STREAK_GAP_MS) {
                     // 步流中断超过 STREAK_GAP_MS：清掉连续计时，下次要重新连续走满才放行
                     walkingStreakStartTs = 0L;
+                    lastGuardCountSnapshot = 0;   // 新一轮，允许再留一条 GUARD 痕迹
                 }
 
                 // 被闸门拦下时留痕，真机自测一眼能看出「为什么没激活」。
@@ -554,16 +564,20 @@ public final class WalkPreviewService extends Service {
                 // 「明明没走也在拦」，实际只是正常累积过程。
                 // 现在只在「确实攒够门槛却被闸门拦下」这个真异常时刻留痕，
                 // 节流 5 秒，正常累积过程不再输出。
+                int guardCnt = gait.confirmedStepCount();
+                int guardNeed = gait.getConfirmSteps();
                 if (!gaitWalking && !credible && !stepTick
-                        && gait.confirmedStepCount() >= gait.getConfirmSteps()
-                        && now - lastGuardDiagTs > 5000L) {
+                        && guardCnt >= guardNeed
+                        && lastGuardCountSnapshot < guardNeed   // 本帧才刚跨过门槛
+                        && now - lastGuardDiagTs > 3000L) {
                     lastGuardDiagTs = now;
                     DiagLog.log("[GUARD] ⛔ 累计步已达门槛但姿态/节律不可信，抑制激活 | 累计="
-                            + gait.confirmedStepCount() + "/" + gait.getConfirmSteps()
+                            + guardCnt + "/" + guardNeed
                             + " 姿态=" + attitude + " 节律稳定=" + stable
                             + " 硬件计步(10s)=" + hwSteps
                             + " | 防床上/沙发平放抖动误触");
                 }
+                lastGuardCountSnapshot = guardCnt;
 
                 // ==== [ACTIVE] 激活判定（每次判定都留痕，区分卡在哪道闸）====
                 if (!gaitWalking && (stepTick || countReached)) {
@@ -620,6 +634,7 @@ public final class WalkPreviewService extends Service {
         gaitWalking = false;
         lastStepTs = 0L;
         walkingStreakStartTs = 0L;
+        lastGuardCountSnapshot = 0;
     }
 
     // ========== 硬件计步器（防误触确认） ==========
