@@ -78,6 +78,8 @@ public final class WalkPreviewService extends Service {
     private boolean gaitWalking = false;
     /** 上一帧有效步的时间戳，用于静置超时判停 */
     private long lastStepTs = 0L;
+    /** 【沙发误触修复】连续行走步流的起始时间戳，计步器不可用时用它卡「连续走够久」 */
+    private long walkingStreakStartTs = 0L;
     /** 判定停下（静置超时收起）的时刻，用于「收起后冷却」防秒开死循环 */
     private long lastStopTs = 0L;
     /** 收起后冷却时长：冷却内需更强的持续判走才放行，打断「显示→收起→秒开」 */
@@ -96,6 +98,23 @@ public final class WalkPreviewService extends Service {
     /** 硬件计步确认窗口（毫秒）与最少步数 */
     private static final long STEP_CONFIRM_WINDOW_MS = 10_000L;
     private static final int STEP_CONFIRM_MIN = 2;
+    /**
+     * 【沙发误触修复】计步器不可用时的纯加速度判走门槛。
+     *
+     * 本机（Redmi / HyperOS）SystemUI 与 App 进程都拿不到 ACTIVITY_RECOGNITION，
+     * TYPE_STEP_COUNTER 从不回调 → stepCounterAlive=false。旧代码此时直接
+     * `return true` 把第二道防误触闸整个短路，只剩纯加速度判定；而沙发上
+     * 「有节奏地挪动手机」既能凑够步数、又能骗过 hasStableGait 的 400ms 容差，
+     * 于是反复误弹出小窗（真机日志 12:47:33 / 12:49:23 两次）。
+     *
+     * 现在纯加速度判走必须同时满足：非平躺 + 节律稳定 + 累计步达标 + 连续步流够久。
+     * 真人走路是连续不断的步流（步间隔通常 <1s），沙发挪动是间歇的（几秒就断），
+     * 用「连续步流时长」把它们分开。
+     */
+    private static final int ACCEL_ONLY_MIN_STEPS = 12;
+    private static final long ACCEL_MIN_STREAK_MS = 8_000L;
+    /** 连续步流允许的最大间隙：超过它即视为「走断了」，连续计时清零 */
+    private static final long STREAK_GAP_MS = 3_000L;
     /** 启动以来计步器累计产生的步数（自本次注册起）。从未出数 = 该设备计步器不可信，停用确认 */
     private long everSteppedTotal = 0L;
     /** TYPE_STEP_COUNTER 是累计传感器，values[0]=总步数；记录上次回调的总步数以算增量 */
@@ -215,6 +234,9 @@ public final class WalkPreviewService extends Service {
         INSTANCE = new java.lang.ref.WeakReference<>(this);
         // 预览服务可能在主界面之前被拉起（Hook 广播唤醒），独立初始化日志出口
         DiagLog.init(getApplicationContext());
+        // 【配置防丢】服务可能先于主界面被拉起：先尝试从外部备份恢复配置，
+        // 否则开机自启时会按空 SP 的默认值（行走模式=关）判断，导致「开机后是关闭的」。
+        ConfigBackup.restoreIfNeeded(getApplicationContext());
         sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
         sm = (SensorManager) getSystemService(SENSOR_SERVICE);
         // 静置巡检常驻（每秒一次，仅自动模式且有步时才有动作）
@@ -459,6 +481,7 @@ public final class WalkPreviewService extends Service {
                 SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5))));
         gaitWalking = false;
         lastStepTs = 0L;
+        walkingStreakStartTs = 0L;
         lastGaitDiagTs = 0L;
         registerStepCounter();
         gaitListener = new SensorEventListener() {
@@ -502,9 +525,19 @@ public final class WalkPreviewService extends Service {
                 }
                 boolean countReached = credible
                         && gait.confirmedStepCount() >= gait.getConfirmSteps();
+                boolean qualified = stepTick || countReached;
 
-                if (stepTick || countReached) {
+                if (qualified) {
+                    // 【沙发误触修复】维护「连续步流」计时：间隙超过 STREAK_GAP_MS
+                    // 即视为走断，从当前帧重新起算。真人走路步间隔通常 <1s，
+                    // 远小于 3s；沙发上间歇性挪动几秒就断，连续计时攒不起来。
+                    if (walkingStreakStartTs == 0L || now - lastStepTs > STREAK_GAP_MS) {
+                        walkingStreakStartTs = now;
+                    }
                     lastStepTs = now;   // 刷新「上一步」时间戳，防静置巡检秒判停
+                } else if (lastStepTs != 0L && now - lastStepTs > STREAK_GAP_MS) {
+                    // 步流中断超过 STREAK_GAP_MS：清掉连续计时，下次要重新连续走满才放行
+                    walkingStreakStartTs = 0L;
                 }
 
                 // 被闸门拦下时留痕，真机自测一眼能看出「为什么没激活」
@@ -571,6 +604,7 @@ public final class WalkPreviewService extends Service {
         unregisterStepCounter();
         gaitWalking = false;
         lastStepTs = 0L;
+        walkingStreakStartTs = 0L;
     }
 
     // ========== 硬件计步器（防误触确认） ==========
@@ -648,29 +682,21 @@ public final class WalkPreviewService extends Service {
     }
 
     /**
-     * 硬件计步确认（自适应，既不误杀走路、也不放过床上误触）：
-     * 1) 无计步器 / 传感器从未回调 → 不拦，纯加速度判走（外层 GUARD 闸门把关）。
-     * 2) 计步器启动后从未产生任何步数 → 平躺姿态直接拦（床上/沙发误触）；
-     *    非平躺才停用确认、降级纯加速度判走，保证走路不显示问题不复发。
-     *    【2026 修复】旧版此分支无条件放行，是「床上弹小窗」的第二道闸失效点。
+     * 硬件计步确认（自适应，既不误杀走路、也不放过床上/沙发误触）：
+     * 1) 无计步器 / 传感器从未回调 → **不再无条件放行**，走纯加速度严格判定
+     *    [accelOnlyConfirm]（旧版 `return true` 是沙发误触的第二道闸失效点）。
+     * 2) 计步器在线但从未出数（ACTIVITY_RECOGNITION 未授予或被后台掐断）→ 同上严格判定。
      * 3) 计步器正常出数 → 保留确认：10 秒内 ≥2 步放行；计步不足但持续判走
      *    （累计步达门槛两倍）放行；否则拦（疑似拿手机乱动）。
      */
     private boolean hardwareStepConfirm() {
-        if (!stepCounterAlive) return true;
+        // 【沙发误触修复】计步器不可用时绝不无条件放行：旧版这里直接 return true，
+        // 让第二道防误触闸形同虚设，沙发上有节奏地晃手机就能弹出小窗（真机日志
+        // 12:47:33 / 12:49:23 两次）。改为纯加速度严格判定。
+        if (!stepCounterAlive) return accelOnlyConfirm();
         if (everSteppedTotal == 0L) {
-            // 【BUG 修复】上一轮这里无条件 return true，等于「躺床上硬件当然一步没走」
-            // 时把第二道防误触闸也常开；与消费侧那条绕过 LAY_FLAT 的判据叠加，
-            // 就是最新真机日志「bug2 角落小窗床上打开」的完整成因。
-            // 现在收紧：硬件从没出过数时，平躺姿态一律拦；非平躺才降级为纯加速度判走，
-            // 不误杀正常走路（外层 GUARD 闸门已经先挡掉了无节律抖动）。
-            boolean layFlat = gait.getAttitude() == PhoneAttitude.LAY_FLAT;
-            if (layFlat) {
-                DiagLog.log("[gait] ⛔ 硬件计步器从未出数且姿态=平躺 → 判定为床上误触，抑制预览");
-                return false;
-            }
-            DiagLog.log("[gait] 硬件计步器从未出数，但姿态非平躺 → 降级纯加速度判走（不误杀走路）");
-            return true;
+            // 计步器在线但从未出数：同样退回严格判定，而不是「非平躺就放行」。
+            return accelOnlyConfirm();
         }
         int n = stepCountInWindow();
         if (n >= STEP_CONFIRM_MIN) return true;
@@ -684,6 +710,44 @@ public final class WalkPreviewService extends Service {
         DiagLog.log("[gait] 加速度像走但硬件计步 " + n + "/" + STEP_CONFIRM_MIN
                 + "（10s内）→ 疑似拿手机乱动，不显示");
         return false;
+    }
+
+    /**
+     * 【沙发/床上误触修复】计步器不可用时（无传感器 / 无 ACTIVITY_RECOGNITION /
+     * 被后台掐断 / 从未出数）的纯加速度严格确认。
+     *
+     * 三重门槛缺一不可：
+     *   ① 非平躺（LAY_FLAT 直接拦）；
+     *   ② 节律稳定（hasStableGait，步间隔一致，沙发乱晃通常不稳）；
+     *   ③ 累计步达标（≥ max(confirmSteps*2, ACCEL_ONLY_MIN_STEPS)）；
+     *   ④ 连续步流够久（≥ ACCEL_MIN_STREAK_MS，沙发是间歇挪动、走几秒就断）。
+     * 这样才能在「计步器彻底不可用」的真机上把「沙发/床上抖动」与「真走路」分开。
+     */
+    private boolean accelOnlyConfirm() {
+        if (gait.getAttitude() == PhoneAttitude.LAY_FLAT) {
+            DiagLog.log("[gait] ⛔ 计步器不可用且姿态=平躺 → 判床上/沙发误触，抑制预览");
+            return false;
+        }
+        if (!gait.hasStableGait()) {
+            DiagLog.log("[gait] ⛔ 计步器不可用且节律不稳 → 纯抖动，抑制预览");
+            return false;
+        }
+        int need = Math.max(gait.getConfirmSteps() * 2, ACCEL_ONLY_MIN_STEPS);
+        if (gait.confirmedStepCount() < need) {
+            DiagLog.log("[gait] 计步器不可用：纯加速度需累计 "
+                    + gait.confirmedStepCount() + "/" + need + " 步且节律稳定才放行");
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        long streak = (walkingStreakStartTs == 0L) ? 0L : (now - walkingStreakStartTs);
+        if (streak < ACCEL_MIN_STREAK_MS) {
+            DiagLog.log("[gait] 计步器不可用：连续步流 " + (streak / 1000) + "s < "
+                    + (ACCEL_MIN_STREAK_MS / 1000) + "s，暂不显示（防沙发间歇性挪动误触）");
+            return false;
+        }
+        DiagLog.log("[gait] 计步器不可用但连续走 " + (streak / 1000) + "s、节律稳定、累计 "
+                + gait.confirmedStepCount() + " 步 → 放行纯加速度判走");
+        return true;
     }
 
     /**

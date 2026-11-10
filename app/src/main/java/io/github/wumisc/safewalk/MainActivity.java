@@ -62,6 +62,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // App 进程日志出口：与 SystemUI 进程的 Hook 日志写同一套规则，
         // 优先 /storage/emulated/0/Android/Travel safely/，写不进自动降级
         DiagLog.init(getApplicationContext());
+        // 【配置防丢】数据被清 / 重装后，先从外部备份恢复行走模式等设置，
+        // 必须放在 initUI() 读配置之前，否则首页会先按默认值渲染一遍。
+        ConfigBackup.restoreIfNeeded(getApplicationContext());
         // 【HyperOS 版本适配 · 首页】进入首页打印一次环境快照（厂商/型号/SDK/prop/识别结论），
         // 现场排查「为什么识别成这个版本」时不用连 logcat。
         HyperOsCompat.logEnvironment();

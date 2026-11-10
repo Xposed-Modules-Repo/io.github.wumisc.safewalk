@@ -40,6 +40,13 @@ class AutoStartActivity : Activity() {
         } catch (_: Throwable) {
         }
 
+        // 【配置防丢】自启时主界面可能还没开过：先从外部备份恢复配置，
+        // 避免数据被清/重装后开机按默认值（行走模式=关）判断。
+        try {
+            ConfigBackup.restoreIfNeeded(applicationContext)
+        } catch (_: Throwable) {
+        }
+
         val fromUid = try {
             launchedFromUid
         } catch (_: Throwable) {

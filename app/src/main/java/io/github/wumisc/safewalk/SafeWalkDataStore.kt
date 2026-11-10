@@ -193,6 +193,8 @@ object SafeWalkConfig {
         } catch (t: Throwable) {
             DiagLog.log("❌ 配置导出失败: ${t.message}")
         }
+        // 【配置防丢】每次保存都镜像一份到外部目录，重装/清数据后可自动恢复
+        ConfigBackup.backup(ctx)
     }
 
     private fun exportConfigInner(ctx: Context) {
