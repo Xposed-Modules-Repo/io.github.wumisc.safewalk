@@ -83,6 +83,14 @@ object SafeWalkPrefKey {
     const val emerAddress = "emerAddress"
     const val emerContactName = "emerContactName"
     const val emerContactPhone = "emerContactPhone"
+    /**
+     * 上一次真正执行求助（发短信/拨号）的时间戳。
+     *
+     * 属于隐私相关状态，**不加入** ConfigProvider 白名单（不跨进程暴露）。
+     * 用途：一次事故可能因「撞击连续触发」「full-screen 通知被点开重建页面」
+     * 等原因多次走到 doSos()，必须去重，否则联系人会收到多条短信、多通电话。
+     */
+    const val emerLastSosTs = "emerLastSosTs"
 
     // ===== 车祸预警（急救卡，Pixel 风格） =====
     /**

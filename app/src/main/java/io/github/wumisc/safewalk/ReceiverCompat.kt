@@ -136,6 +136,39 @@ object ReceiverCompat {
     fun isTrustedCommand(receiver: BroadcastReceiver, token: String?): Boolean =
         isTrustedCommand(receiver, token, SafeWalkPrefKey.BROADCAST_TOKEN)
 
+    /**
+     * **严格版**鉴权：只给「会产生物理后果」的指令用（目前是撞击广播）。
+     *
+     * 与 [isTrustedCommand] 的唯一区别：`senderIsTrusted()` 明确返回 `false`
+     * （即 API 34+ 拿得到发送方身份，且不是系统/SystemUI/本应用）时**直接拒绝**，
+     * 不再因为令牌匹配就降级放行。
+     *
+     * 为什么必须严格：令牌是写死在代码里的字符串（`safewalk-bc-2.5`），
+     * 反编译 APK 就能拿到。宽松版在 HyperOS 应用段 uid 的场景下只能靠令牌兜底，
+     * 于是任意一个第三方应用反编译出令牌、发一条 CRASH_DETECTED，
+     * 就能让急救卡走完倒计时、真的给紧急联系人发短信并拨号。
+     * 手电/日志这类指令误触发只是烦人，撞击误触发是真花钱、真骚扰联系人，
+     * 所以这里单独收紧。
+     *
+     * `null`（API 33 及以下拿不到发送方身份）仍沿用纯令牌防护——
+     * 这些系统版本上 `sentFromUid` 根本不存在，没有更强的判据可用。
+     */
+    @JvmStatic
+    fun isStrictCommand(receiver: BroadcastReceiver, token: String?, expected: String?): Boolean {
+        if (expected == null || token != expected) {
+            android.util.Log.w("SafeWalk", "[SEC:REJECT] 严格通道令牌缺失/不匹配，丢弃")
+            return false
+        }
+        return when (senderIsTrusted(receiver)) {
+            true -> true
+            false -> {
+                android.util.Log.w("SafeWalk", "[SEC:REJECT] 严格通道发送方不可信，拒绝执行")
+                false
+            }
+            null -> true
+        }
+    }
+
     /** 同上，但允许指定别的令牌（例如「重启系统界面」那条通道有自己的令牌） */
     @JvmStatic
     fun isTrustedCommand(receiver: BroadcastReceiver, token: String?, expected: String?): Boolean {

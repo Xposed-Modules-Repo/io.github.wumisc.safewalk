@@ -44,6 +44,8 @@ public final class SmartReminderActivity extends Activity {
     private LocationListener locListener;
     private final HashMap<String, Integer> autoVotes = new HashMap<>();
     private String lastVotedMode = null;
+    /** 反编码是否还在后台跑：上一轮没结束就跳过新的定位回调，避免线程堆积 */
+    private volatile boolean locBusy = false;
     private static final int VOTE_WINDOW = 3;   // 连续 3 次同建议才落地（防抖）
     private static final int REQ_LOC = 3001;
     private SeekBar seekTorch;
@@ -352,8 +354,31 @@ public final class SmartReminderActivity extends Activity {
 
     /** 每次定位回调：地址→关键词→建议模式，连续 VOTE_WINDOW 次同建议才落地 */
     private void onAutoLocation(Location loc) {
-        LocationModeEngine.load(this);
-        String suggest = LocationModeEngine.judge(this, loc);
+        // 【本次修复】Geocoder.getFromLocation() 是**同步阻塞**调用：系统反编码
+        // 要走网络 / 本地地理数据库，离线或冷启动时能卡住几百毫秒甚至数秒。
+        // 原来它直接跑在定位回调里，而 locListener 注册时用的是
+        // Looper.getMainLooper() —— 等于在主线程做阻塞 IO，定位一刷新就掉帧，
+        // 网络差时会直接 ANR。这里改到后台线程，并做「上一轮未完成则跳过」。
+        if (loc == null || locBusy) return;
+        final Location snapshot = new Location(loc);
+        locBusy = true;
+        new Thread(() -> {
+            String suggest = null;
+            try {
+                LocationModeEngine.load(getApplicationContext());
+                suggest = LocationModeEngine.judge(getApplicationContext(), snapshot);
+            } catch (Throwable ignored) {
+            } finally {
+                locBusy = false;
+            }
+            final String s = suggest;
+            runOnUiThread(() -> applyLocationVote(s));
+        }, "loc-geocode").start();
+    }
+
+    /** 定位建议投票（主线程）：连续 VOTE_WINDOW 次同建议才真正切换 */
+    private void applyLocationVote(String suggest) {
+        if (isFinishing() || isDestroyed()) return;
         if (suggest == null) {
             // 拿不到地址或置信不足：维持现状，不打扰
             return;

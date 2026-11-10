@@ -83,4 +83,26 @@ public final class SafePrefs {
             return v == null ? def : String.valueOf(v);
         }
     }
+
+    /**
+     * 长整型读取（时间戳类）。同样带类型兜底：
+     * 历史版本若把它存成 int / String，直接 getLong 会抛 ClassCastException。
+     */
+    public static long getLong(SharedPreferences sp, String key, long def) {
+        if (sp == null) return def;
+        try {
+            return sp.getLong(key, def);
+        } catch (ClassCastException e) {
+            Object v = sp.getAll().get(key);
+            if (v instanceof Number) return ((Number) v).longValue();
+            if (v instanceof String) {
+                try {
+                    return Long.parseLong(((String) v).trim());
+                } catch (NumberFormatException ignored) {
+                    return def;
+                }
+            }
+            return def;
+        }
+    }
 }

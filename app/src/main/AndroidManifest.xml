@@ -148,11 +148,16 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.Safewalk.Transparent" />
 
+        <!-- launchMode=singleTask：撞击时 CrashAlertReceiver 会同时走「直接 startActivity」
+             与「full-screen intent」两条通道，standard 模式会创建两个实例，各自跑 60 秒
+             倒计时，倒计时结束各自 doSos() → 重复发短信、重复拨号。singleTask 保证
+             全系统只有一个急救卡实例，第二条通道复用同一次求助。 -->
         <activity
             android:name=".EmergencyAlertActivity"
             android:exported="false"
             android:label="急救卡"
             android:excludeFromRecents="true"
+            android:launchMode="singleTask"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:theme="@style/Theme.Safewalk" />

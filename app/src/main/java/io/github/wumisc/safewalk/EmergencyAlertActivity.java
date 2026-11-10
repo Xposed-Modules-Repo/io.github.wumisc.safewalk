@@ -137,15 +137,41 @@ public class EmergencyAlertActivity extends Activity {
 
     private void doSos() {
         SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+
+        // 【本次修复】重复求助去重：撞击检测可能连续触发、full-screen 通知被点开也可能
+        // 重建本页（进程被杀后）。没有去重时，一次事故会给联系人发好几条短信、拨好几通
+        // 电话——既骚扰对方，也可能产生通信费用。
+        long last = SafePrefs.getLong(sp, SafeWalkPrefKey.emerLastSosTs, 0L);
+        long now = System.currentTimeMillis();
+        if (last > 0L && now - last < SOS_DEDUP_MS) {
+            DiagLog.log("[sos] " + (now - last) / 1000 + "s 前已求助过，本次跳过（防重复短信/拨号）");
+            Toast.makeText(this, "刚刚已发送过求助，已跳过重复发送", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+        // 先落盘再执行：即使随后进程被杀，也不会重复求助
+        sp.edit().putLong(SafeWalkPrefKey.emerLastSosTs, now).commit();
+
         String phone = SafePrefs.getString(sp, SafeWalkPrefKey.emerContactPhone, "");
         String name = SafePrefs.getString(sp, SafeWalkPrefKey.emerName, "");
         String contactName = SafePrefs.getString(sp, SafeWalkPrefKey.emerContactName, "");
+
+        // 没设联系人时不要把页面关掉：用户需要看见「为什么没求助」并当场去填
+        if (phone == null || phone.trim().isEmpty()) {
+            DiagLog.log("[sos] 未设置紧急联系人电话，无法自动求助");
+            Toast.makeText(this, "未设置紧急联系人电话，请先到急救卡里填写", Toast.LENGTH_LONG).show();
+            tvCountdown.setText("未设置紧急联系人");
+            return;
+        }
 
         // 先发短信（含位置），再拨电话，避免拨号界面遮挡短信发送
         sendSosSms(phone, name, contactName);
         callContact(phone);
         finish();
     }
+
+    /** 同一次事故只在首轮求助；窗口内重复触发一律跳过 */
+    private static final long SOS_DEDUP_MS = 10 * 60 * 1000L;
 
     @SuppressLint("MissingPermission")
     private void sendSosSms(String phone, String name, String contactName) {
@@ -163,7 +189,17 @@ public class EmergencyAlertActivity extends Activity {
                 && checkSelfPermission(Manifest.permission.SEND_SMS)
                 == PackageManager.PERMISSION_GRANTED) {
             try {
-                SmsManager.getDefault().sendTextMessage(phone, null, msg, null, null);
+                // 【本次修复】长短信必须分片。求助短信含姓名/联系人/坐标，
+                // 中英文混排很容易超过单条 70 字的限制，用 sendTextMessage 发
+                // 会被运营商截断——最常见的结果就是「位置」那一段没了，
+                // 而位置恰恰是求助短信里最要紧的信息。
+                SmsManager sm = SmsManager.getDefault();
+                java.util.ArrayList<String> parts = sm.divideMessage(msg);
+                if (parts != null && parts.size() > 1) {
+                    sm.sendMultipartTextMessage(phone, null, parts, null, null);
+                } else {
+                    sm.sendTextMessage(phone, null, msg, null, null);
+                }
                 Toast.makeText(this, "已发送求助短信", Toast.LENGTH_LONG).show();
                 return;
             } catch (Throwable t) {
@@ -215,6 +251,16 @@ public class EmergencyAlertActivity extends Activity {
                     loc.getLatitude(), loc.getLongitude());
         } catch (Throwable t) {
             return "";
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // singleTask 复用实例时，如果上一轮撞击的倒计时还在跑，说明是同一次事故
+        // （或同一次事故的两条拉起通道先后到达），不能再叠一轮倒计时。
+        if (!resolved) {
+            DiagLog.log("[sos] 倒计时进行中再次收到撞击，忽略重复拉起");
         }
     }
 

@@ -31,8 +31,13 @@ public class CrashAlertReceiver extends BroadcastReceiver {
         // 双重校验：API 34+ 先看发送方 uid（必须是系统进程或本应用），再验令牌。
         // 这里必须拦住伪造广播——一条假的 CRASH_DETECTED 会让急救卡走完倒计时，
         // 真的给紧急联系人发短信、真的拨号，代价远不止「弹个卡片」。
-        if (!ReceiverCompat.isTrustedCommand(this,
-                i == null ? null : i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN))) {
+        //
+        // 【本次修复】改用 isStrictCommand：宽松版在「API34+ 且发送方身份确定不可信」
+        // 时只要令牌匹配仍会放行，而令牌是硬编码字符串、反编译即可获得——
+        // 等于任何第三方 App 都能伪造撞击、触发真实短信与拨号。
+        if (!ReceiverCompat.isStrictCommand(this,
+                i == null ? null : i.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN),
+                SafeWalkPrefKey.BROADCAST_TOKEN)) {
             Log.w("SafeWalk", "[crash] 撞击广播鉴权失败（发送方不可信或令牌不匹配），忽略");
             return;
         }
