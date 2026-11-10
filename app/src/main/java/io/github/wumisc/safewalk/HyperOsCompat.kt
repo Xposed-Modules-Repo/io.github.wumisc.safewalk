@@ -56,13 +56,31 @@ import java.util.Locale
  *
  * ## HyperOS 3 / HyperOS 4 的实际差异（本类各策略函数的落点）
  *
- * | 维度 | HyperOS 3 | HyperOS 4 |
+ * | 维度 | HyperOS 3 | HyperOS 4 及以后 |
  * | --- | --- | --- |
  * | 后台启动 FGS | 已收紧 camera/dataSync 类型的后台启动，但"启动瞬间有可见 Activity"豁免仍稳定可用 | 进一步收紧，BOOT_COMPLETED 之后也常直接抛 `ForegroundServiceStartNotAllowedException`；退到 `plain` 类型 + 电池白名单更稳 |
  * | 悬浮窗权限 | 授予后基本稳定 | 更频繁地回收 `ACTION_MANAGE_OVERLAY_PERMISSION`，每次使用前最好复核 |
  * | 闪光灯 / 相机互斥 | 预览与 torch 一般可共存 | Camera2 与手电抢占更严，需先释放预览再开灯，否则开灯失败或预览黑屏 |
  * | ROOT / 进程管理 | su 相对宽松 | KernelSU/APatch 策略更紧、后台进程回收更狠；杀 SystemUI 严禁 `pkill -f` 模糊匹配 |
  * | 保活开关 | 白名单较少被重置 | 电池优化白名单 / 自启动 / 后台弹出界面 / 任务锁定 更容易被系统升级或清理后回收 |
+ *
+ * ## 向前兼容：为什么这张表不会成为「每年改一次」的负担
+ *
+ * 上表描述的是**系统倾向**，不是**代码分支**。三个真正影响功能的策略
+ * （[foregroundServiceStrategy] / [torchOpenStrategy] / [overlayPermissionStrategy]）
+ * 全部返回与 ROM 版本无关的常量，由运行时结果决定走哪一档降级：
+ *
+ * - 系统不放行 → 降级，用户仍然能用；
+ * - 系统放行 → 直接用首选路径，根本不进降级分支；
+ * - 新版本改了限制 → 无需改代码，降级链自动适配。
+ *
+ * 版本识别的结论（[Os]）只影响**给用户看的文案**（[describe] / [supportNote] /
+ * [backgroundKeepAliveHint]）与 `[VER]` 日志，识别错了不会把任何功能阉掉。
+ * 这是刻意设计：版本号识别本质上不可靠（prop 会被裁剪、hidden API 会被拦），
+ * 绝不能让它握有功能开关的生杀权。
+ *
+ * 枚举保持三档（HOS3 / HOS4 / OTHER）不复膨胀：`major >= 4` 的统一归入 HOS4
+ * （见 [MAJOR_MAX]），所以 HyperOS 5 / 6 出现时不需要新增枚举、不需要改测试。
  *
  * ## 适配优先级
  *
@@ -143,14 +161,29 @@ object HyperOsCompat {
     /** manufacturer/brand/product 命中任一关键字即认为小米系。 */
     private val VENDOR_TOKENS = arrayOf("xiaomi", "redmi", "poco", "miui")
 
-    /** 最高可信：`HyperOS 3` / `HyperOS 4` / `HyperOS3`。`(?!\d)` 防止把 `V35` 误读成 3。 */
-    private val RE_HYPEROS = Regex("HyperOS\\s*([34])(?![0-9])", RegexOption.IGNORE_CASE)
+    /**
+     * HyperOS 大版本号的识别上限。
+     *
+     * 【为什么是 6 而不是 4】枚举 [Os] 只有 HOS3 / HOS4 / OTHER 三档，但**系统版本会一直往前跑**：
+     * HyperOS 5 / 6 迟早会出现（compileSdk 已到 37）。旧正则写死 `[34]`，遇到 `HyperOS 5.0`
+     * 匹配不到任何版本号，只能掉进 [sdkFallback] 靠 SDK_INT 猜 —— 猜得出结果，但日志里
+     * 会写成「未从 prop 提取到 3/4」，排查时看的人会以为 prop 读坏了。
+     *
+     * 放宽到 `[3-6]` 后：`major >= 4` 一律归入 [Os.HOS4] 分支（策略同构，见 [foregroundServiceStrategy]），
+     * 版本号本身仍能在日志里如实打印。上限取 6 是刻意的 —— 再往上是八字没一撇的版本，
+     * 而 `[3-9]` 会把 `V9`（MIUI 9）这类老 prop 误读成新版本。
+     */
+    private const val MAJOR_MAX = 6
 
-    /** 次级可信：`OS3.0`、`V4`、以及前面带分隔符/行首的 `OS/V` + 3/4。 */
-    private val RE_OSV = Regex("(?:^|[^A-Za-z0-9])(?:OS|V)\\s*([34])(?![0-9])", RegexOption.IGNORE_CASE)
+    /** 最高可信：`HyperOS 3` ~ `HyperOS 6`。`(?!\d)` 防止把 `V35` 误读成 3。 */
+    private val RE_HYPEROS = Regex("HyperOS\\s*([3-$MAJOR_MAX])(?![0-9])", RegexOption.IGNORE_CASE)
+
+    /** 次级可信：`OS3.0`、`V4`、以及前面带分隔符/行首的 `OS/V` + 3~6。 */
+    private val RE_OSV =
+        Regex("(?:^|[^A-Za-z0-9])(?:OS|V)\\s*([3-$MAJOR_MAX])(?![0-9])", RegexOption.IGNORE_CASE)
 
     /** 再次级：prop 直接就是 `3.0.1` / `4.0` 这类纯版本号。 */
-    private val RE_LEADING = Regex("^([34])\\.")
+    private val RE_LEADING = Regex("^([3-$MAJOR_MAX])\\.")
 
     /** 方案 A 的结果缓存；null 表示尚未识别或已被 [reset] 清空。 */
     @Volatile
@@ -269,6 +302,24 @@ object HyperOsCompat {
     }
 
     /**
+     * 从任意一组字符串里提取 HyperOS 大版本号（3 ~ [MAJOR_MAX]），提不到返回 **-1**。
+     *
+     * 公开出来有两个用途，都不是"给业务代码判断版本"：
+     * 1. **单测**：正则行为（`V816` 不能被读成 3、`HyperOS 5.0` 要读成 5）在没有真机、
+     *    甚至没有 Android 运行时的 JVM 单测里也能锁死，避免以后手滑改正则把识别搞坏；
+     * 2. **现场排查**：可以把 prop 原文单独喂进来跑一遍，区分「根本没读到」和
+     *    「读到了但解析不出来」—— 这两种情况在日志里长得一样，但修法完全不同。
+     *
+     * 不要用它替代 [detect]：这里不做厂商判定、不做 SDK 兜底，只回答"这串文字里有没有版本号"。
+     */
+    @JvmStatic
+    fun majorFrom(vararg values: String): Int {
+        val pool = ArrayList<Pair<String, String>>(values.size)
+        values.forEachIndexed { i, v -> if (v.isNotEmpty()) pool.add("arg$i" to v) }
+        return extractMajor(pool).first ?: -1
+    }
+
+    /**
      * 判断给定模式是否为"手动强制"（方案 B）。
      *
      * 仅 [MODE_HOS3] / [MODE_HOS4] 返回 true；[MODE_AUTO]、null、未知值均为 false。
@@ -335,7 +386,7 @@ object HyperOsCompat {
     fun rootCmdStrategy(os: Os): String {
         val cmd = "su -c 'kill -9 $(pidof com.android.systemui)'"
         return when (os) {
-            Os.HOS4 -> "$cmd｜HOS4 su 授权与后台进程回收更严：优先走 Hook 自尽（无需 root）；若必须 root 只用精确 pid，严禁 pkill -f"
+            Os.HOS4 -> "$cmd｜HOS4 及更新版本 su 授权与后台进程回收更严：优先走 Hook 自尽（无需 root）；若必须 root 只用精确 pid，严禁 pkill -f"
             Os.HOS3 -> "$cmd｜HOS3 可用 killall com.android.systemui 作次选；仍严禁 pkill -f 按命令行模糊匹配"
             Os.OTHER -> "$cmd｜无 ROM 额外限制，仍建议精确 pid 而非 pkill -f"
         }
@@ -355,7 +406,7 @@ object HyperOsCompat {
                 "③ 安全中心 → 权限 → 后台弹出界面/悬浮窗 → 允许；" +
                 "④ 最近任务里长按本应用卡片 → 锁定（加锁），避免一键清理被杀。"
         return when (os) {
-            Os.HOS4 -> "$base 【HyperOS 4】这些开关被系统回收得更频繁，每次系统升级或大版本更新后请重新逐项复核。"
+            Os.HOS4 -> "$base 【HyperOS 4 及更新版本】这些开关被系统回收得更频繁，每次系统升级或大版本更新后请重新逐项复核。"
             Os.HOS3 -> "$base 【HyperOS 3】若夜间手电或后台预览偶发不触发，优先复查①与②。"
             Os.OTHER -> "$base 【非 HyperOS/未识别】按系统原生设置项完成即可。"
         }
@@ -428,7 +479,8 @@ object HyperOsCompat {
     fun describe(os: Os, mode: String?): String {
         val name = when (os) {
             Os.HOS3 -> "HyperOS 3"
-            Os.HOS4 -> "HyperOS 4"
+            // HOS4 是「比 3 更严」这一类的代表名字，HyperOS 5/6 也归到这里
+            Os.HOS4 -> "HyperOS 4 及更新版本"
             Os.OTHER -> "非 HyperOS / 未识别"
         }
         return "适配目标=$name｜前台服务 $FGS_CHAIN｜显示前复核悬浮窗权限｜手电随小窗"
@@ -440,11 +492,14 @@ object HyperOsCompat {
      * 刻意不写「完美支持」：本应用不针对某个 HyperOS 版本做硬判断，而是所有版本共用
      * 一条「先按标准路径做，被系统拒绝就自动降级」的链路，所以 HOS3 / HOS4 / 后续版本
      * 的行为是一致的、可预期的；真遇到系统拦截时日志里会写清是哪一档被拒。
+     *
+     * HOS4 分支的文案写「及更新版本」，因为 HyperOS 5/6 也会落到这个分支（见 [MAJOR_MAX]）；
+     * 写死「HyperOS 4」等于给未来的用户一个看起来过期的结论。
      */
     @JvmStatic
     fun supportNote(os: Os): String = when (os) {
         Os.HOS3 -> "HyperOS 3 走标准路径：camera 前台服务 + 常显小窗 + 悬浮窗。"
-        Os.HOS4 -> "HyperOS 4 的相机前台服务更容易被拒，会按 camera → specialUse 自动降级。"
+        Os.HOS4 -> "HyperOS 4 及更新版本的相机前台服务更容易被拒，会按 camera → specialUse 自动降级。"
         Os.OTHER -> "非 HyperOS：走标准 Android 路径，无厂商额外限制。"
     }
 
@@ -571,13 +626,18 @@ object HyperOsCompat {
         if (release.isNotEmpty()) pool.add("Build.VERSION.RELEASE" to release)
         val (major, majorSource) = extractMajor(pool)
 
-        // ③ 定案：非小米系直接 OTHER；小米系优先用 prop 提取到的 3/4，没命中才用 SDK 兜底
+        // ③ 定案：非小米系直接 OTHER；小米系优先用 prop 提取到的版本号，没命中才用 SDK 兜底
+        //
+        // 【为什么 major>=4 都归 HOS4】适配策略只有「HOS3 / 新版」两种形态（见
+        // foregroundServiceStrategy 的说明：两种 ROM 走同一条降级链，区别只在系统会不会触发降级）。
+        // 将来 HyperOS 5/6 出现时，把它归进 HOS4 分支是最准确的选择 —— 它一定属于"比 HOS3 更严"的那一类，
+        // 而不是退化成 OTHER 走最保守策略。
         val os: Os
         val usedFallback: Boolean
         if (!vendorHit) {
             os = Os.OTHER
             usedFallback = false
-        } else if (major == 4) {
+        } else if (major != null && major >= 4) {
             os = Os.HOS4
             usedFallback = false
         } else if (major == 3) {
@@ -591,7 +651,7 @@ object HyperOsCompat {
     }
 
     /**
-     * 从候选字符串池里提取 HyperOS 大版本 3 / 4。
+     * 从候选字符串池里提取 HyperOS 大版本（3 ~ [MAJOR_MAX]）。
      * 按「HyperOS 显式 > OS/V 前缀 > 纯版本号开头」的优先级整池扫描，先命中先返回，
      * 返回 (版本号或 null, 命中的来源说明)。
      */
@@ -600,10 +660,10 @@ object HyperOsCompat {
             for ((src, value) in pool) {
                 val m = re.find(value) ?: continue
                 val g = m.groupValues[1].toIntOrNull() ?: continue
-                if (g == 3 || g == 4) return g to "$src 命中「${m.value.trim()}」"
+                if (g in 3..MAJOR_MAX) return g to "$src 命中「${m.value.trim()}」"
             }
         }
-        return null to "所有 prop / Build 字段均未出现 HyperOS 3/4 版本号"
+        return null to "所有 prop / Build 字段均未出现 HyperOS 3~$MAJOR_MAX 版本号"
     }
 
     /**
@@ -613,9 +673,13 @@ object HyperOsCompat {
      * 这里只用于 prop 全拿不到（hidden API 被拦 / ROM 裁剪）时给一个保守代际估计。
      * 用裸整数 36/35 而非 Build.VERSION_CODES 常量名，避免依赖某个 compileSdk 才有的符号。
      * 低版本返回 OTHER 是刻意的：宁可走保守策略，也不要把 MIUI/普通 Android 误判成 HOS3/4。
+     *
+     * 这里用 `>=` 而不是 `==`：Android 16 之后的 SDK 37/38（HyperOS 5/6 基座）继续落在
+     * HOS4 分支，与 [classify] 里 `major >= 4` 的归并规则保持一致。写成 `==` 就会让
+     * 每一代新 Android 都掉回 OTHER，等于每年都要改一次代码。
      */
     private fun sdkFallback(sdk: Int): Os = when {
-        sdk >= 36 -> Os.HOS4   // Android 16 ≈ HyperOS 4 代际
+        sdk >= 36 -> Os.HOS4   // Android 16 及以后 ≈ HyperOS 4 及更新版本
         sdk >= 35 -> Os.HOS3   // Android 15 ≈ HyperOS 3 代际
         else -> Os.OTHER
     }
@@ -626,9 +690,14 @@ object HyperOsCompat {
         DiagLog.log("$mk 厂商判定=${if (v.vendorHit) "小米系（${v.vendorSource}）" else "非小米系（${v.vendorSource}）→ OTHER"}")
         DiagLog.log("$mk 大版本线索=${v.major ?: "未命中"}（来源=${v.majorSource}）")
         if (v.usedFallback) {
-            DiagLog.log("$mk 未从 prop 提取到 3/4，改用 SDK_INT=${v.sdk} 兜底：>=36→HOS4，>=35→HOS3，否则 OTHER；兜底仅为近似，prop 优先")
+            DiagLog.log("$mk 未从 prop 提取到 3~$MAJOR_MAX 版本号，改用 SDK_INT=${v.sdk} 兜底：>=36→HOS4，>=35→HOS3，否则 OTHER；兜底仅为近似，prop 优先")
         }
-        DiagLog.log("$mk 识别结论=${v.os}")
+        val merged = if (v.major != null && v.major > 4) {
+            "（HyperOS ${v.major} 按「>=4 归入同一分支」的规则并到 HOS4，策略同构，无需新增枚举）"
+        } else {
+            ""
+        }
+        DiagLog.log("$mk 识别结论=${v.os}$merged")
     }
 
     /**
