@@ -111,8 +111,13 @@ public final class WalkPreviewService extends Service {
      * 真人走路是连续不断的步流（步间隔通常 <1s），沙发挪动是间歇的（几秒就断），
      * 用「连续步流时长」把它们分开。
      */
-    private static final int ACCEL_ONLY_MIN_STEPS = 12;
-    private static final long ACCEL_MIN_STREAK_MS = 8_000L;
+    private static final int ACCEL_ONLY_MIN_STEPS = 15;
+    /**
+     * 连续步流最短时长。真机日志 13:08:07→13:08:15 只隔 8 秒就放行了一次，
+     * 说明 8s 太短——沙发上连续挪动 8 秒并不难。15 秒 ≈ 真人 18~20 步，
+     * 而沙发挪动很难维持 15 秒不间断的步流。
+     */
+    private static final long ACCEL_MIN_STREAK_MS = 15_000L;
     /** 连续步流允许的最大间隙：超过它即视为「走断了」，连续计时清零 */
     private static final long STREAK_GAP_MS = 3_000L;
     /** 启动以来计步器累计产生的步数（自本次注册起）。从未出数 = 该设备计步器不可信，停用确认 */
@@ -540,12 +545,20 @@ public final class WalkPreviewService extends Service {
                     walkingStreakStartTs = 0L;
                 }
 
-                // 被闸门拦下时留痕，真机自测一眼能看出「为什么没激活」
+                // 被闸门拦下时留痕，真机自测一眼能看出「为什么没激活」。
+                //
+                // 【修复 · 日志洪泛 + 文案与判据不符】
+                // 旧条件只要求 confirmedStepCount() > 0 就打，于是 20 分钟刷了
+                // 319 条、每 2 秒一条；文案还写死「步数达标」，可日志里大量
+                // 「累计=2/5」「累计=1/5」根本没达标 —— 自测时极易被误导成
+                // 「明明没走也在拦」，实际只是正常累积过程。
+                // 现在只在「确实攒够门槛却被闸门拦下」这个真异常时刻留痕，
+                // 节流 5 秒，正常累积过程不再输出。
                 if (!gaitWalking && !credible && !stepTick
-                        && gait.confirmedStepCount() > 0
-                        && now - lastGuardDiagTs > 2000L) {
+                        && gait.confirmedStepCount() >= gait.getConfirmSteps()
+                        && now - lastGuardDiagTs > 5000L) {
                     lastGuardDiagTs = now;
-                    DiagLog.log("[GUARD] ⛔ 步数达标但姿态/节律不可信，抑制激活 | 累计="
+                    DiagLog.log("[GUARD] ⛔ 累计步已达门槛但姿态/节律不可信，抑制激活 | 累计="
                             + gait.confirmedStepCount() + "/" + gait.getConfirmSteps()
                             + " 姿态=" + attitude + " 节律稳定=" + stable
                             + " 硬件计步(10s)=" + hwSteps
@@ -574,8 +587,10 @@ public final class WalkPreviewService extends Service {
                     }
                 }
 
-                // 节流诊断：每 2 秒打一次步数累计，走没走、卡在哪一眼可见
-                if (now - lastGaitDiagTs > 2000L) {
+                // 节流诊断：每 10 秒打一次步数累计，走没走、卡在哪一眼可见。
+                // （原为 2 秒一次，20 分钟刷了 504 行，日志被噪声淹没，真出问题时
+                //   反而找不到有用信息；关键状态变化由 [ACTIVE]/[GUARD] 负责留痕。）
+                if (now - lastGaitDiagTs > 10_000L) {
                     lastGaitDiagTs = now;
                     DiagLog.log("[STEP] 计步回调 | 累计合格步 " + gait.confirmedStepCount()
                             + "/" + gait.getConfirmSteps() + " 本帧合格步=" + stepTick
@@ -681,13 +696,22 @@ public final class WalkPreviewService extends Service {
         return stepEventQueue.size();
     }
 
+    /** 当前连续步流已持续的毫秒数；未起步返回 0 */
+    private long streakMs() {
+        return (walkingStreakStartTs == 0L)
+                ? 0L : (System.currentTimeMillis() - walkingStreakStartTs);
+    }
+
     /**
      * 硬件计步确认（自适应，既不误杀走路、也不放过床上/沙发误触）：
      * 1) 无计步器 / 传感器从未回调 → **不再无条件放行**，走纯加速度严格判定
      *    [accelOnlyConfirm]（旧版 `return true` 是沙发误触的第二道闸失效点）。
      * 2) 计步器在线但从未出数（ACTIVITY_RECOGNITION 未授予或被后台掐断）→ 同上严格判定。
-     * 3) 计步器正常出数 → 保留确认：10 秒内 ≥2 步放行；计步不足但持续判走
-     *    （累计步达门槛两倍）放行；否则拦（疑似拿手机乱动）。
+     * 3) 计步器在线且出过数、但最近 10 秒 0 步 → 直接拦。TYPE_STEP_COUNTER 是
+     *    硬件物理计数，真迈步必然 +1；10 秒 0 步就说明没在走路，此时若还按
+     *    「纯加速度累计达标」放行，等于给严格校验开后门（真机 13:08:15 现场）。
+     * 4) 计步器正常出数 → 10 秒内 ≥2 步直接放行（硬件背书最可靠）；
+     *    0 < 步数 < 2 时保留兜底，但必须同时满足「节律稳定 + 连续步流够久」。
      */
     private boolean hardwareStepConfirm() {
         // 【沙发误触修复】计步器不可用时绝不无条件放行：旧版这里直接 return true，
@@ -700,15 +724,35 @@ public final class WalkPreviewService extends Service {
         }
         int n = stepCountInWindow();
         if (n >= STEP_CONFIRM_MIN) return true;
-        // 计步不足但持续判走：累计步远超门槛 → 放行
-        if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2) {
+
+        // 【沙发误触修复 v2 · 真机日志 13:08:15 / 13:08:52 / 13:09:56】
+        // 计步器在线、历史上出过数，但最近 10 秒一步未出 —— 这是「没在走路」的
+        // 硬证据（TYPE_STEP_COUNTER 是硬件物理计数，真迈一步必然 +1）。
+        //
+        // 旧版此时仍允许「累计合格步 ≥ 门槛×2」放行，而 confirmedStepCount() 是
+        // 纯加速度自己数出来的，于是沙发上晃手机只要攒够 10 个加速度峰就必然弹窗：
+        // 日志里 13:08:07 / 13:08:10 / 13:08:13 连续三次被拦，13:08:15 一到 10 步
+        // 立刻「放行显示」，此后每 40 秒弹一次小窗（13:08:52、13:09:5x 循环）。
+        // 这条兜底等于给严格校验开了后门，必须堵掉。
+        if (n == 0) {
+            DiagLog.log("[gait] ⛔ 硬件计步器 10 秒 0 步（真走路不可能不出数）"
+                    + " → 判未行走，抑制激活 | 纯加速度累计="
+                    + gait.confirmedStepCount());
+            return false;
+        }
+
+        // 0 < n < 门槛：计步器刚起步或轻微漏计。兜底保留，但必须同时满足
+        // 「节律稳定」+「连续步流够久」，不能让纯加速度计数单独决定放行。
+        long streak = streakMs();
+        if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2
+                && gait.hasStableGait() && streak >= ACCEL_MIN_STREAK_MS) {
             DiagLog.log("[gait] 计步 " + n + "<" + STEP_CONFIRM_MIN
                     + " 但持续判走（累计 " + gait.confirmedStepCount()
-                    + " 步），放行显示");
+                    + " 步 / 连续 " + (streak / 1000) + "s），放行显示");
             return true;
         }
         DiagLog.log("[gait] 加速度像走但硬件计步 " + n + "/" + STEP_CONFIRM_MIN
-                + "（10s内）→ 疑似拿手机乱动，不显示");
+                + "（10s内）/连续 " + (streak / 1000) + "s → 疑似拿手机乱动，不显示");
         return false;
     }
 
@@ -738,8 +782,7 @@ public final class WalkPreviewService extends Service {
                     + gait.confirmedStepCount() + "/" + need + " 步且节律稳定才放行");
             return false;
         }
-        long now = System.currentTimeMillis();
-        long streak = (walkingStreakStartTs == 0L) ? 0L : (now - walkingStreakStartTs);
+        long streak = streakMs();
         if (streak < ACCEL_MIN_STREAK_MS) {
             DiagLog.log("[gait] 计步器不可用：连续步流 " + (streak / 1000) + "s < "
                     + (ACCEL_MIN_STREAK_MS / 1000) + "s，暂不显示（防沙发间歇性挪动误触）");
