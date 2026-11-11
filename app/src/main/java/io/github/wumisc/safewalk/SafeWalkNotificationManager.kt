@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 
 /**
@@ -29,6 +30,10 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         const val ID_OVERLAY = 1007
         /** 前台服务被降级（camera 被 ROM 拒绝，退到 specialUse） */
         const val ID_FGS = 1008
+        /** 「行走模式」通知渠道被用户/ROM 关掉：服务仍在，但常驻通知不再显示 */
+        const val ID_CHANNEL = 1009
+        /** 系统回收进程后由保活机制自动恢复 */
+        const val ID_REVIVED = 1010
 
         /** 本模块包名，用于构造跨进程 PendingIntent */
         private const val APP_PKG = "io.github.wumisc.safewalk"
@@ -214,6 +219,56 @@ class SafeWalkNotificationManager(private val ctx: Context) {
                         "点此进入应用 → 权限与无障碍 → 重新打开「悬浮窗」。\n" +
                         "HyperOS 在系统升级、一键清理后容易回收该权限，属于系统行为。"
             )
+        )
+    }
+
+    /**
+     * 「行走模式」常驻通知的渠道被关掉。
+     *
+     * 【为什么单独做一条】前台服务通知走的是 `safewalk_walk` 渠道。用户（或 ROM
+     * 的一键清理）把渠道 importance 设成 NONE 后，**服务还在跑，通知却一条都不显示**，
+     * 于是「看通知判断死活」的用户会以为行走模式停了。此时再用同一个渠道发提示
+     * 等于没发，必须换本类这个 IMPORTANCE_HIGH 的提醒渠道说明清楚，并直接把
+     * 「应用通知设置」作为点击落点，省得用户自己去设置里翻。
+     */
+    fun walkChannelDisabled() {
+        if (!checkCooldown(ID_CHANNEL)) return
+        val pi = PendingIntent.getActivity(
+            ctx, 7,
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        notify(
+            ID_CHANNEL,
+            baseBuilder(
+                "行走模式的常驻通知被关闭",
+                "服务其实还在运行，但系统不再显示「行走模式运行中」这条通知。\n\n" +
+                        "如果你习惯靠它判断有没有在跑，点此重新打开通知渠道。"
+            ).setContentIntent(pi)
+                .setTimeoutAfter(600_000)
+        )
+    }
+
+    /**
+     * 系统回收进程后，看门狗 / 静态兜底已把预览服务重新拉起。
+     *
+     * 用户明确反馈过「这个通知消失，就证明行走模式停止运行了」，所以恢复之后
+     * 得给一个确定的解释：通知重新出现不是错觉，中间确实断过一次。
+     * 节流由调用方 [KeepAlivePolicy.shouldNotifyRevive] 与本类的冷却共同把关，
+     * 避免 ROM 反复回收时变成骚扰。
+     */
+    fun serviceRevived() {
+        if (!checkCooldown(ID_REVIVED)) return
+        notify(
+            ID_REVIVED,
+            baseBuilder(
+                "行走模式已自动恢复",
+                "系统刚才回收了预览进程，已自动重新拉起；常驻通知重新出现即表示恢复成功。\n\n" +
+                        "若频繁出现，请把本应用加入电池优化白名单与自启动允许列表。"
+            ).setTimeoutAfter(300_000)
         )
     }
 

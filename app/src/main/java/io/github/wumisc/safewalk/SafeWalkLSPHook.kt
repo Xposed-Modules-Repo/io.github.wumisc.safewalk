@@ -12,6 +12,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import de.robv.android.xposed.IXposedHookLoadPackage
 
@@ -151,18 +152,43 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             Thread(r, "SafeWalk-config").apply { isDaemon = true }
         }
 
-    // ========== 行走模式「开机自启」==========
+    // ========== 预览服务看门狗（保活） ==========
     /**
-     * 本 SystemUI 进程内是否已经主动拉起过 AutoStartActivity。
-     *
-     * WalkPreviewService 是 camera 类型前台服务，Android 14+ 禁止从后台直接启动
-     * （CAMERA 是 while-in-use 权限），Android 15 又禁止 BOOT_COMPLETED 启动 camera FGS。
-     * 唯一稳定豁免是「启动瞬间本应用有可见 Activity」，所以由 Hook 拉起一个透明页
-     * 代启服务。这里保证每个进程只拉一次，避免 tick 每 2 秒闪一下透明窗。
+     * App 侧每 30 秒发一次心跳，这里记录「上次收到」的单调时间戳。
+     * 0 表示本 SystemUI 进程从未收到（刚开机，或心跳通道不通）。
      */
-    private var autoStartLaunched = false
-    /** 上次尝试拉起的时间戳：失败后按 60 秒冷却重试 */
+    private var lastHeartbeatAt = 0L
+    /** Hook init 完成时刻（elapsedRealtime）：之前的宽限期不复活 */
+    private var hookReadyAt = 0L
+    /** 上次成功拉起透明页的时刻（elapsedRealtime），0 = 从未 */
+    private var lastReviveAt = 0L
+    /** 本 SystemUI 进程已发起的复活次数（含开机首拉） */
+    private var reviveCount = 0
+    /** 上次尝试拉起的时刻：失败后按 60 秒冷却重试（elapsedRealtime） */
     private var lastAutoStartTry = 0L
+    /** 心跳日志节流（wall clock 即可，仅用于打印） */
+    private var lastHeartbeatLogTs = 0L
+
+    /**
+     * App → SystemUI 的心跳接收器。
+     *
+     * 注册时挂了 signature 级 CONTROL 权限，第三方广播在分发阶段就被丢掉；
+     * 令牌是第二道校验。本接收器只更新一个时间戳，不做任何耗时操作 ——
+     * 它跑在 SystemUI 主线程上，每 30 秒一次，绝不能碰 I/O。
+     */
+    private val heartbeatReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, intent: Intent?) {
+            if (intent?.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
+                != SafeWalkPrefKey.BROADCAST_TOKEN
+            ) return
+            lastHeartbeatAt = SystemClock.elapsedRealtime()
+            val wall = System.currentTimeMillis()
+            if (wall - lastHeartbeatLogTs > 120_000L) {
+                lastHeartbeatLogTs = wall
+                diag("[keep] 收到预览服务心跳（本进程已复活 $reviveCount 次）")
+            }
+        }
+    }
 
     // ========== 计步诊断状态（「走了半天没反应」时必须能从日志看出卡在哪） ==========
     /** 收到的步数事件总数（系统计步器 + 兜底合计） */
@@ -715,6 +741,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             previewStateReceiver,
             IntentFilter(WalkPreviewService.ACTION_PREVIEW_STATE)
         )
+
+        // 预览服务心跳：看门狗据此判断 App 进程是否已被系统回收
+        registerOnce(
+            "heartbeat",
+            heartbeatReceiver,
+            IntentFilter(KeepAlivePolicy.ACTION_HEARTBEAT)
+        )
     }
 
     private fun registerOnce(name: String, receiver: BroadcastReceiver, filter: IntentFilter) {
@@ -732,6 +765,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private fun startTick() {
         if (tickStarted) return
         tickStarted = true
+        hookReadyAt = SystemClock.elapsedRealtime()
         // 定时轮询（对齐2.0最好版：开启时2秒，关闭时5秒）
         Handler(Looper.getMainLooper()).postDelayed(tickRunnable, 2_000L)
     }
@@ -1457,30 +1491,35 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 的 true 信号；具体显不显示由 App 依据它自己可靠的 walking 决定。
         // 让路（总开关关 / 相机前台 / 手电占摄像头）仍由上面的分支发 false 收起。
 
-        // 配置允许显示 → 先确保预览服务活着。这样开机/重启 SystemUI 之后，
-        // 用户不必再打开 App 手动拨一次「行走模式」开关。
+        // 配置允许显示 → 看门狗确认预览服务还活着（心跳超时就自动拉回来）。
+        // 开机/重启 SystemUI 后不必再手动拨开关，进程被 ROM 回收也能自愈。
         maybeAutoStartPreview()
         sendOverlayCmd(true)
     }
 
     /**
-     * 确保「行走模式」开机后无需手动拨开关即可就绪。
+     * 看门狗：确保「配置期望开」时预览服务真的活着。
      *
-     * 链路：Hook(SystemUI，系统进程) --startActivity--> AutoStartActivity(透明)
-     *       --startForegroundService--> WalkPreviewService。
-     * 透明页存在的那一瞬，本应用处于可见状态，camera 类型 FGS 的启动才合法
-     * （Android 14+ while-in-use 限制 / Android 15 BOOT_COMPLETED 限制都拦不住
-     *  "有可见 Activity" 这条豁免）。透明页自己 400ms 后 finish，用户基本无感。
+     * 旧实现用 `autoStartLaunched` 保证每个 SystemUI 进程只拉一次，只解决了
+     * 「开机免手动拨开关」。但 App 进程一旦被 ROM 回收，Hook 之后就再也不管了 ——
+     * 用户看到的就是「行走模式运行中」那条常驻通知消失，而且不会自己回来。
      *
-     * 只在「亮屏 + 已解锁」时尝试：锁屏时 startActivity 会被拦，透明窗也可能
-     * 压在锁屏上。每个进程最多成功一次；失败按 60 秒冷却重试。
+     * 现在 App 侧每 30 秒发一次心跳，本进程记录接收时刻；配置期望开而心跳
+     * 超过 90 秒没来，就重新拉起透明页代启服务（同一条可见 Activity 豁免）。
+     * 判定、冷却与「心跳通道不通」的限速全在 [KeepAlivePolicy]，纯逻辑、有单测。
      */
     private fun maybeAutoStartPreview() {
-        if (autoStartLaunched) return
         val c = ctx ?: return
-        val now = System.currentTimeMillis()
-        if (now - lastAutoStartTry < 60_000L) return
+        val now = SystemClock.elapsedRealtime()
+        val desired = KeepAlivePolicy.desired(
+            masterEnabled(), pref(SafeWalkPrefKey.enableRearCamera, false)
+        )
+        if (!KeepAlivePolicy.shouldRevive(
+                desired, lastHeartbeatAt, now, hookReadyAt, lastReviveAt, reviveCount
+            )
+        ) return
 
+        // 亮屏 + 已解锁才尝试：锁屏时 startActivity 会被拦，透明窗也可能压在锁屏上
         try {
             val pm = c.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
             if (pm?.isInteractive != true) return
@@ -1490,7 +1529,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             return
         }
 
+        // 失败重试冷却：startActivity 抛异常时别每 2 秒刷一次日志。
+        // 初值 0 不设限，保证开机首拉不被这条挡住。
+        if (lastAutoStartTry != 0L && now - lastAutoStartTry < KeepAlivePolicy.REVIVE_COOLDOWN_MS) {
+            return
+        }
         lastAutoStartTry = now
+
         try {
             val i = Intent().apply {
                 setClassName(APP_PKG, "$APP_PKG.AutoStartActivity")
@@ -1498,13 +1543,21 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 // 带上令牌，兼容给 SystemUI 分配了应用段 uid 的 ROM
                 putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN)
+                // 只有「曾经收到过心跳、后来失联」才是真正的被杀后恢复；
+                // 开机首拉（lastHeartbeatAt==0）不算，避免每次开机都弹恢复通知。
+                if (lastHeartbeatAt != 0L) {
+                    putExtra(KeepAlivePolicy.EXTRA_FROM_REVIVE, true)
+                    putExtra(KeepAlivePolicy.EXTRA_REVIVE_SOURCE, "watchdog")
+                }
             }
             c.startActivity(i)
-            autoStartLaunched = true
-            diag("[walk] 已拉起透明自启页，代启预览服务（开机免手动开关）")
+            lastReviveAt = now
+            reviveCount++
+            val gap = if (lastHeartbeatAt == 0L) "从未收到心跳"
+            else "${(now - lastHeartbeatAt) / 1000}s 未收到心跳"
+            diag("[keep] 看门狗判定预览服务失联（$gap）→ 拉起透明页恢复，本进程第 $reviveCount 次")
         } catch (t: Throwable) {
-            // 不置位，60 秒后重试（例如解锁动画期间 startActivity 被拦）
-            diag("[walk] 拉起自启页失败，稍后重试: $t")
+            diag("[keep] 拉起自启页失败，稍后重试: $t")
         }
     }
 

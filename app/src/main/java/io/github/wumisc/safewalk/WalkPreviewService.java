@@ -1,6 +1,8 @@
 package io.github.wumisc.safewalk;
 
+import android.app.AlarmManager;
 import android.app.Notification;
+import android.app.PendingIntent;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
@@ -62,6 +64,8 @@ public final class WalkPreviewService extends Service {
 
     private static final String CHANNEL_WALK = "safewalk_walk";
     private static final int NOTIF_ID = 3001;
+    /** 本进程内「通知渠道被关闭」只提示一次，避免每次 goForeground 都弹 */
+    private boolean channelDisabledNotified = false;
 
     private RearCameraOverlay overlay;
     private SharedPreferences sp;
@@ -268,8 +272,17 @@ public final class WalkPreviewService extends Service {
     }
 
     public static void start(Context ctx) {
+        start(ctx, false);
+    }
+
+    /**
+     * @param fromRevive 是否由保活机制在系统回收进程后自动拉起。
+     *                   仅用于发一条一次性「已自动恢复」回执，不改变启动方式。
+     */
+    public static void start(Context ctx, boolean fromRevive) {
         try {
             Intent i = new Intent(ctx, WalkPreviewService.class);
+            if (fromRevive) i.putExtra(KeepAlivePolicy.EXTRA_FROM_REVIVE, true);
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i);
             else ctx.startService(i);
         } catch (Throwable t) {
@@ -302,6 +315,9 @@ public final class WalkPreviewService extends Service {
         // 判定「到达某类场所」后再发（见 PlaceArrivalMonitor）。
         // 服务是常驻的，挂在这里最稳；start 内部幂等，多入口重复调用无害。
         PlaceArrivalMonitor.start(getApplicationContext());
+        // 心跳先于一切：让 SystemUI 里的看门狗知道「本进程活着」，
+        // 否则它会在 90 秒后误判失联并再拉一次服务。
+        startHeartbeat();
         sm = (SensorManager) getSystemService(SENSOR_SERVICE);
         // 静置巡检常驻（每秒一次，仅自动模式且有步时才有动作）
         gaitHandler.postDelayed(gaitTick, 1000L);
@@ -402,8 +418,17 @@ public final class WalkPreviewService extends Service {
         // 服务起来了：磁贴副标题里的「服务未运行」提示要立刻消失
         WalkTileService.refresh(this);
 
+        // 系统回收后自动恢复：给一条一次性回执，解释「通知为什么消失又回来了」
+        if (intent != null && intent.getBooleanExtra(KeepAlivePolicy.EXTRA_FROM_REVIVE, false)) {
+            notifyRevivedIfNeeded();
+        }
+
         String action = intent == null ? null : intent.getAction();
         if (ACTION_STOP.equals(action)) {
+            // 用户主动关闭：停心跳、撤掉待执行的自检。否则看门狗会看到
+            // 「配置没变但心跳停了」把服务又拉回来 —— 变成关不掉的功能。
+            stopHeartbeat();
+            cancelReviveCheck();
             overlay.hide();
             reportPreviewState();
             stopForeground(STOP_FOREGROUND_REMOVE);
@@ -1050,6 +1075,113 @@ public final class WalkPreviewService extends Service {
         notifyPreviewState(showing);
     }
 
+    // ========== 保活：心跳 + 被杀后自动恢复 ==========
+    //
+    // 心跳只发广播、不落盘、不常驻唤醒。Hook（SystemUI 进程）本来就每 2 秒巡检，
+    // 连续 90 秒收不到心跳就判定本进程已被回收，拉起透明 AutoStartActivity
+    // 合法重启 camera 前台服务。完整判定与边界见 KeepAlivePolicy。
+    private boolean heartbeatStarted = false;
+
+    private final Runnable heartbeatTick = new Runnable() {
+        @Override
+        public void run() {
+            sendHeartbeat();
+            main.postDelayed(this, KeepAlivePolicy.HEARTBEAT_INTERVAL_MS);
+        }
+    };
+
+    private void startHeartbeat() {
+        if (heartbeatStarted) return;
+        heartbeatStarted = true;
+        sendHeartbeat();   // 起来立刻报一次，让看门狗尽快从「失联」恢复
+        main.postDelayed(heartbeatTick, KeepAlivePolicy.HEARTBEAT_INTERVAL_MS);
+    }
+
+    private void stopHeartbeat() {
+        heartbeatStarted = false;
+        main.removeCallbacks(heartbeatTick);
+    }
+
+    private void sendHeartbeat() {
+        // 与 notifyPreviewState() 同一条 SystemUI 通道；补一个小米变体包名，
+        // 兼容把 SystemUI 放到 com.miui.systemui 的 ROM。两条都发不会重复计数
+        // （Hook 只更新一个时间戳）。接收器挂 signature 级权限，第三方发不进来。
+        String[] targets = {"com.android.systemui", "com.miui.systemui"};
+        for (String pkg : targets) {
+            try {
+                Intent i = new Intent(KeepAlivePolicy.ACTION_HEARTBEAT);
+                i.setPackage(pkg);
+                i.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
+                        SafeWalkPrefKey.BROADCAST_TOKEN);
+                sendBroadcast(i);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
+     * 用户从最近任务划掉 App。AOSP 上 stopWithTask=false 的服务会继续跑并收到
+     * 本回调，但国产 ROM 常直接把整个进程杀掉。这里不无条件重启，而是排一个
+     * 1.5 秒后的自检广播：服务真不在了才由 KeepAliveReceiver 拉起，避免重复
+     * 启动让前台通知闪一下。
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        try {
+            boolean desired = KeepAlivePolicy.desired(
+                    SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true),
+                    SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false));
+            if (!desired) {
+                cancelReviveCheck();
+            } else {
+                AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+                if (am != null) {
+                    Intent i = new Intent(this, KeepAliveReceiver.class)
+                            .setAction(KeepAlivePolicy.ACTION_REVIVE)
+                            .putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
+                                    SafeWalkPrefKey.BROADCAST_TOKEN)
+                            .putExtra(KeepAlivePolicy.EXTRA_REVIVE_SOURCE, "task_removed");
+                    PendingIntent pi = PendingIntent.getBroadcast(this, 77, i,
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                    am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            SystemClock.elapsedRealtime()
+                                    + KeepAlivePolicy.TASK_REMOVED_CHECK_DELAY_MS, pi);
+                    DiagLog.log("[keep] 最近任务被移除 → 已排 1.5s 后自检预览服务");
+                }
+            }
+        } catch (Throwable t) {
+            DiagLog.log("[keep] 排自检失败: " + t);
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
+    /** 用户主动关掉行走模式：撤掉待执行的自检，别让它把服务又拉回来。 */
+    private void cancelReviveCheck() {
+        try {
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (am == null) return;
+            Intent i = new Intent(this, KeepAliveReceiver.class)
+                    .setAction(KeepAlivePolicy.ACTION_REVIVE);
+            PendingIntent pi = PendingIntent.getBroadcast(this, 77, i,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            am.cancel(pi);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 自动恢复后一次性回执：让「通知重新出现」这件事有个明确解释。 */
+    private void notifyRevivedIfNeeded() {
+        try {
+            long now = System.currentTimeMillis();
+            long last = sp.getLong(SafeWalkPrefKey.lastReviveNoticeTs, 0L);
+            if (!KeepAlivePolicy.shouldNotifyRevive(last, now)) return;
+            sp.edit().putLong(SafeWalkPrefKey.lastReviveNoticeTs, now).apply();
+            new SafeWalkNotificationManager(this).serviceRevived();
+            DiagLog.log("[keep] 行走模式已自动恢复（系统曾回收预览进程）");
+        } catch (Throwable ignored) {
+        }
+    }
+
     /**
      * 提起前台。
      *
@@ -1068,14 +1200,35 @@ public final class WalkPreviewService extends Service {
     private void goForeground() {
         NotificationChannel ch = new NotificationChannel(
                 CHANNEL_WALK, "行走模式", NotificationManager.IMPORTANCE_LOW);
-        ch.setDescription("行走模式开启期间保持后台运行，收起通知不影响使用");
+        ch.setDescription("行走模式开启期间保持后台运行；关闭本渠道会导致常驻通知不显示");
         ch.setShowBadge(false);
         nmBase().createNotificationChannel(ch);
 
+        // 【通知消失 ≠ 服务停止】用户（或 ROM 的清理）把渠道设成 IMPORTANCE_NONE 时，
+        // 前台服务通知一条都不显示，但服务其实还在跑。createNotificationChannel
+        // 不会覆盖用户改过的等级，所以这里读回来判一次：被关掉就换一个 HIGH 渠道
+        // 明确说明，别让用户只能靠「通知在不在」猜服务死活。
+        NotificationChannel current = nmBase().getNotificationChannel(CHANNEL_WALK);
+        if (current != null && current.getImportance() == NotificationManager.IMPORTANCE_NONE
+                && !channelDisabledNotified) {
+            channelDisabledNotified = true;
+            try {
+                new SafeWalkNotificationManager(this).walkChannelDisabled();
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // 原来这条通知没设 contentIntent，点了没反应；用户想确认「到底还在不在跑」
+        // 时最容易顺手去划它。现在点一下直接回主界面看状态。
+        PendingIntent openPi = PendingIntent.getActivity(this, 0,
+                new Intent(this, MainActivity.class)
+                        .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification n = new Notification.Builder(this, CHANNEL_WALK)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("行走模式运行中")
-                .setContentText("身后路况持续显示中")
+                .setContentText("身后路况持续显示中 · 点击查看")
+                .setContentIntent(openPi)
                 .setOngoing(true)
                 .build();
 
@@ -1175,6 +1328,10 @@ public final class WalkPreviewService extends Service {
             screenReceiver = null;
         }
         stopGait();
+        stopHeartbeat();
+        // 进程可能还活着而服务已销毁：不清掉弱引用，isAlive() 会短暂误报，
+        // 让划任务自检以为服务还在、放弃恢复。
+        INSTANCE = null;
         PlaceArrivalMonitor.stop();
         gaitHandler.removeCallbacks(gaitTick);
         if (overlay != null) overlay.hide();

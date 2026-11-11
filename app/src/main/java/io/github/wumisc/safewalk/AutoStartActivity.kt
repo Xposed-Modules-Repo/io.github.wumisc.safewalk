@@ -67,9 +67,30 @@ class AutoStartActivity : Activity() {
             return
         }
 
+        // 【防误启】Hook 的配置快照有 60 秒缓存：用户刚在 App 里关掉行走模式，
+        // 看门狗可能还拿着「开」的旧值把本页拉起来。这里以 App 自己的 SP 为准
+        // 再判一次，避免服务被拉起来空转、前台通知明明挂着却没有画面。
+        val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
+        val desired = KeepAlivePolicy.desired(
+            SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true),
+            SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
+        )
+        if (!desired) {
+            DiagLog.log("[walk] AutoStart：配置已关闭行走模式，拒绝代启（防止看门狗缓存滞后误启）")
+            finish()
+            return
+        }
+
+        // 只有「曾被系统杀掉后由看门狗/静态兜底拉起」才带这个标记，
+        // 开机首次自启不带 —— 否则每次开机都弹一条「已自动恢复」。
+        val fromRevive = try {
+            intent?.getBooleanExtra(KeepAlivePolicy.EXTRA_FROM_REVIVE, false) ?: false
+        } catch (_: Throwable) {
+            false
+        }
         try {
-            WalkPreviewService.start(this)
-            DiagLog.log("[walk] AutoStart：已请求启动预览服务（fromUid=$fromUid）")
+            WalkPreviewService.start(this, fromRevive)
+            DiagLog.log("[walk] AutoStart：已请求启动预览服务（fromUid=$fromUid, fromRevive=$fromRevive）")
         } catch (t: Throwable) {
             DiagLog.log("[walk] AutoStart 启动服务失败: ${t.message}")
         }

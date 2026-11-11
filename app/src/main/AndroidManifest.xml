@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 开机 / 解锁后自动恢复预览服务（见 KeepAliveReceiver） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!--
         控制指令广播的签名级权限。
@@ -356,6 +358,23 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="io.github.wumisc.safewalk.LOG_DUMP" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            保活兜底：开机 / 覆盖安装 / 解锁 / 划掉任务后的自检恢复。
+            详见 KeepAliveReceiver 顶部注释。exported 必须为 true 才能收系统广播；
+            自定义 ACTION_REVIVE 在代码里用令牌校验，挡住第三方伪造的拉起请求。
+        -->
+        <receiver
+            android:name=".KeepAliveReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+                <action android:name="io.github.wumisc.safewalk.PREVIEW_REVIVE" />
             </intent-filter>
         </receiver>
 

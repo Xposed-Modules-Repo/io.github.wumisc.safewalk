@@ -12,6 +12,15 @@ object SafeWalkPrefKey {
     // 总开关
     const val masterEnable = "masterEnable"
 
+    /**
+     * 上一次弹出「行走模式已自动恢复」通知的时刻（App 内部状态）。
+     *
+     * 不加入 [ConfigProvider.WHITELIST]：Hook 不需要知道，多一个跨进程状态
+     * 就多一处「两边不一致」的可能。仅用于 [KeepAlivePolicy.shouldNotifyRevive]
+     * 的节流，避免系统反复回收时每隔几分钟就打扰一次。
+     */
+    const val lastReviveNoticeTs = "lastReviveNoticeTs"
+
     // 5个功能开关
     const val enableBatteryWarning = "enableBatteryWarning"    // 电量预警
     const val enableIdReminder = "enableIdReminder"          // 证件提醒
