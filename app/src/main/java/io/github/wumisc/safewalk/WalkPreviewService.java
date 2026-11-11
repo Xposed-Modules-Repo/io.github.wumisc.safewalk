@@ -88,6 +88,12 @@ public final class WalkPreviewService extends Service {
     private long lastStopTs = 0L;
     /** 收起后冷却时长：冷却内需更强的持续判走才放行，打断「显示→收起→秒开」 */
     private static final long STOP_COOLDOWN_MS = 5000L;
+    /**
+     * 本服务会话的起始时刻。服务被保活重新拉起 / START_STICKY 重建时刷新，
+     * 交给 [StaticStopPolicy] 区分「上一会话残留的 lastStepTs」和本会话的步，
+     * 避免刚复活 8 秒就被判静置超时收掉预览。
+     */
+    private long sessionStartTs = 0L;
 
     // ========== 防误触：硬件计步器确认 ==========
     // 加速度计判「走」只是波形像走。拿在手里乱动、刷屏、放桌上颠，波形都像走，
@@ -119,9 +125,6 @@ public final class WalkPreviewService extends Service {
     private final java.util.ArrayDeque<Long> accelStepTs = new java.util.ArrayDeque<>();
     /** 上一帧看到的采集层合格步数，用于识别「本帧新增了一步」 */
     private int lastAccelCountSeen = 0;
-    /** 纯加速度诊断日志节流：上次打印时间 / 上次原因 */
-    private long lastAccelDiagTs = 0L;
-    private String lastAccelDiagReason = "";
     /** 本段监听是否已说明过「为什么走纯加速度」（每段只说一次） */
     private boolean accelFallbackLogged = false;
     /**
@@ -149,9 +152,13 @@ public final class WalkPreviewService extends Service {
             long now = System.currentTimeMillis();
             long stopMs = Math.max(5, Math.min(30,
                     SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, 10))) * 1000L;
+            // 会话基线：服务被保活复活 / START_STICKY 重建时，上一会话残留的
+            // lastStepTs 会让这里在刚拉起几秒就判「静置超时」把预览收掉
+            // （真机 19:06:49 复活 → 19:06:57 收起，只隔 8 秒）。
+            // 判定交给 StaticStopPolicy（纯逻辑、有单测），旧时间戳作废 + 30s 宽限。
             if (gaitListener != null
                     && SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
-                    && lastStepTs != 0L && now - lastStepTs > stopMs) {
+                    && StaticStopPolicy.shouldStop(lastStepTs, sessionStartTs, now, stopMs)) {
                 gaitWalking = false;
                 // 清零 lastStepTs：否则「超过 10s 无步」这个条件会一直成立，
                 // 每秒 tick 都重复打一条「判定停下」日志刷屏。下次真走会重新置位。
@@ -319,6 +326,9 @@ public final class WalkPreviewService extends Service {
         // 否则它会在 90 秒后误判失联并再拉一次服务。
         startHeartbeat();
         sm = (SensorManager) getSystemService(SENSOR_SERVICE);
+        // 会话基线：服务实例创建即为一个新会话。StaticStopPolicy 用它作废
+        // 上一会话残留的步时间戳，避免复活后立刻判「静置超时」收起预览。
+        sessionStartTs = System.currentTimeMillis();
         // 静置巡检常驻（每秒一次，仅自动模式且有步时才有动作）
         gaitHandler.postDelayed(gaitTick, 1000L);
         overlay = new RearCameraOverlay(this,
@@ -424,6 +434,16 @@ public final class WalkPreviewService extends Service {
         }
 
         String action = intent == null ? null : intent.getAction();
+        // 裸启动（AutoStart 复活 / START_STICKY 重建 / 用户重新打开预览）视为新会话：
+        // 刷新基线，让上一会话残留的 lastStepTs 立刻作废。
+        // 注意：带 action 的 SHOW/HIDE/STOP 指令**不刷新** —— WalkMode 里拖静置
+        // 秒数滑杆会高频 send(ACTION_SHOW)，若每次都续期 30s 宽限，预览将永不收起。
+        if (action == null) {
+            sessionStartTs = System.currentTimeMillis();
+            // 新会话让关键诊断第一条立刻可见，不必等上一会话的节流窗口过期
+            DiagLog.resetThrottle("gait.hw");
+            DiagLog.resetThrottle("gait.accel");
+        }
         if (ACTION_STOP.equals(action)) {
             // 用户主动关闭：停心跳、撤掉待执行的自检。否则看门狗会看到
             // 「配置没变但心跳停了」把服务又拉回来 —— 变成关不掉的功能。
@@ -595,24 +615,19 @@ public final class WalkPreviewService extends Service {
         return hit;
     }
 
-    /** 启动应用进程内的加速度计步态监听（自动模式用）。 */
-    /** 上一次 [gait] 节流诊断的时间戳，避免每帧刷屏 */
-    private long lastGaitDiagTs = 0L;
-    /** 上一次 [ACTIVE] 激活判定节流诊断的时间戳（达标但被拦截时每 2s 一条） */
-    private long lastActiveDiagTs = 0L;
-    /** 上一次「收起冷却」诊断的时间戳（冷却期内本方法按帧调用） */
-    private long lastCooldownDiagTs = 0L;
     /**
      * 上一次判定时的累计合格步，用于识别「刚刚跨过门槛」这个瞬间。
      *
      * 真机日志（13:11:40~13:19:10，7.5 分钟）里 [GUARD] 打了 139 条——
      * 沙发场景累计步在 1~8 之间反复波动，每跨过一次 5 就打一次，5 秒节流
      * 也压不住。改为只在「从 <门槛 跳到 >=门槛」那一帧留痕，一轮一条。
+     *
+     * 诊断日志的时间戳节流已全部迁到 [DiagLog.logThrottled]（按 key 隔离，
+     * 判定在 [DiagThrottle]），这里不再散落一堆 lastXxxDiagTs 字段。
      */
     private int lastGuardCountSnapshot = 0;
-    /** 上一次 [GUARD] 姿态/节律闸门拦截诊断的时间戳（独立节流，不与 ACTIVE 抢） */
-    private long lastGuardDiagTs = 0L;
 
+    /** 启动应用进程内的加速度计步态监听（自动模式用）。 */
     private void startGait() {
         if (gaitListener != null) return; // 已在监听
         if (sm == null) return;
@@ -628,12 +643,16 @@ public final class WalkPreviewService extends Service {
         lastStepTs = 0L;
         walkingStreakStartTs = 0L;
         lastGuardCountSnapshot = 0;
-        lastGaitDiagTs = 0L;
         accelStepTs.clear();
         lastAccelCountSeen = 0;
-        lastAccelDiagReason = "";
-        lastAccelDiagTs = 0L;
         accelFallbackLogged = false;
+        // 新的一段监听：清掉节流状态，第一条诊断立刻可见
+        DiagLog.resetThrottle("gait.hw");
+        DiagLog.resetThrottle("gait.accel");
+        DiagLog.resetThrottle("gait.active");
+        DiagLog.resetThrottle("gait.guard");
+        DiagLog.resetThrottle("gait.step");
+        DiagLog.resetThrottle("gait.cooldown");
         registerStepCounter();
         gaitListener = new SensorEventListener() {
             @Override
@@ -718,14 +737,14 @@ public final class WalkPreviewService extends Service {
                 int guardNeed = gait.getConfirmSteps();
                 if (!gaitWalking && !credible && !stepTick
                         && guardCnt >= guardNeed
-                        && lastGuardCountSnapshot < guardNeed   // 本帧才刚跨过门槛
-                        && now - lastGuardDiagTs > 3000L) {
-                    lastGuardDiagTs = now;
-                    DiagLog.log("[GUARD] ⛔ 累计步已达门槛但姿态/节律不可信，抑制激活 | 累计="
-                            + guardCnt + "/" + guardNeed
-                            + " 姿态=" + attitude + " 节律稳定=" + stable
-                            + " 硬件计步(10s)=" + hwSteps
-                            + " | 防床上/沙发平放抖动误触");
+                        && lastGuardCountSnapshot < guardNeed) {   // 本帧才刚跨过门槛
+                    DiagLog.logThrottled("gait.guard", "att=" + attitude + ",stable=" + stable,
+                            "[GUARD] ⛔ 累计步已达门槛但姿态/节律不可信，抑制激活 | 累计="
+                                    + guardCnt + "/" + guardNeed
+                                    + " 姿态=" + attitude + " 节律稳定=" + stable
+                                    + " 硬件计步(10s)=" + hwSteps
+                                    + " | 防床上/沙发平放抖动误触",
+                            3_000L, 3_000L);
                 }
                 lastGuardCountSnapshot = guardCnt;
 
@@ -742,28 +761,28 @@ public final class WalkPreviewService extends Service {
                                 + gait.getConfirmSteps() + " 姿态=" + attitude
                                 + " 硬件确认=过 冷却=过 → 显示预览");
                         evaluateShow();
-                    } else if (now - lastActiveDiagTs > 2000L) {
-                        lastActiveDiagTs = now;
-                        DiagLog.log("[ACTIVE] ⏸ 达标但被拦截：硬件计步确认=" + (hw ? "过" : "拦")
-                                + " 收起冷却=" + (cool ? "过" : "拦")
-                                + " 累计=" + gait.confirmedStepCount() + "/"
-                                + gait.getConfirmSteps());
+                    } else {
+                        DiagLog.logThrottled("gait.active", "hw=" + hw + ",cool=" + cool,
+                                "[ACTIVE] ⏸ 达标但被拦截：硬件计步确认=" + (hw ? "过" : "拦")
+                                        + " 收起冷却=" + (cool ? "过" : "拦")
+                                        + " 累计=" + gait.confirmedStepCount() + "/"
+                                        + gait.getConfirmSteps(),
+                                2_000L, 2_000L);
                     }
                 }
 
                 // 节流诊断：每 10 秒打一次步数累计，走没走、卡在哪一眼可见。
                 // （原为 2 秒一次，20 分钟刷了 504 行，日志被噪声淹没，真出问题时
                 //   反而找不到有用信息；关键状态变化由 [ACTIVE]/[GUARD] 负责留痕。）
-                if (now - lastGaitDiagTs > 10_000L) {
-                    lastGaitDiagTs = now;
-                    // 「本帧合格步」几乎恒为 false（一个合格步只占一帧，日志大概率落在
-                    // 普通帧上），旧文案会让人误以为一步都没走成。改成最近 10 秒的出步数。
-                    DiagLog.log("[STEP] 计步回调 | 连续合格步 " + gait.confirmedStepCount()
-                            + "/" + gait.getConfirmSteps()
-                            + " 最近10s出步=" + accelStepsInWindow(10_000L)
-                            + " | " + gait.debugInfo()
-                            + " | walking=" + gaitWalking);
-                }
+                // 「本帧合格步」几乎恒为 false（一个合格步只占一帧，日志大概率落在
+                // 普通帧上），旧文案会让人误以为一步都没走成。改成最近 10 秒的出步数。
+                DiagLog.logThrottled("gait.step", "tick",
+                        "[STEP] 计步回调 | 连续合格步 " + gait.confirmedStepCount()
+                                + "/" + gait.getConfirmSteps()
+                                + " 最近10s出步=" + accelStepsInWindow(10_000L)
+                                + " | " + gait.debugInfo()
+                                + " | walking=" + gaitWalking,
+                        10_000L, 10_000L);
             }
             @Override
             public void onAccuracyChanged(Sensor s, int accuracy) {}
@@ -905,9 +924,16 @@ public final class WalkPreviewService extends Service {
         // 立刻「放行显示」，此后每 40 秒弹一次小窗（13:08:52、13:09:5x 循环）。
         // 这条兜底等于给严格校验开了后门，必须堵掉。
         if (n == 0) {
-            DiagLog.log("[gait] ⛔ 硬件计步器 10 秒 0 步（真走路不可能不出数）"
-                    + " → 判未行走，抑制激活 | 纯加速度累计="
-                    + gait.confirmedStepCount());
+            // 【2026-11-11 洪泛修复】此处原来直接 DiagLog.log，而本方法在
+            // onSensorChanged 里按帧调用（SENSOR_DELAY_UI，每秒几十帧）；窗口满格后
+            // (stepTick || countReached) 近乎恒真，真机 19:11:38 一秒刷出 80+ 条，
+            // 把 512KB 文件和 400 行环形缓冲全部冲掉，现场日志就此断尾。
+            // 判定与 return **一字不改**，只把日志换成按原因节流的统一出口。
+            DiagLog.logThrottled("gait.hw", "zero",
+                    "[gait] ⛔ 硬件计步器 10 秒 0 步（真走路不可能不出数）"
+                            + " → 判未行走，抑制激活 | 纯加速度累计="
+                            + gait.confirmedStepCount(),
+                    2_000L, 10_000L);
             return false;
         }
 
@@ -916,13 +942,18 @@ public final class WalkPreviewService extends Service {
         long streak = streakMs();
         if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2
                 && gait.hasStableGait() && streak >= ACCEL_MIN_STREAK_MS) {
-            DiagLog.log("[gait] 计步 " + n + "<" + STEP_CONFIRM_MIN
-                    + " 但持续判走（累计 " + gait.confirmedStepCount()
-                    + " 步 / 连续 " + (streak / 1000) + "s），放行显示");
+            // 状态跳变（放行是一次性决定），但同样按帧可达，仍走节流出口
+            DiagLog.logThrottled("gait.hw", "pass",
+                    "[gait] 计步 " + n + "<" + STEP_CONFIRM_MIN
+                            + " 但持续判走（累计 " + gait.confirmedStepCount()
+                            + " 步 / 连续 " + (streak / 1000) + "s），放行显示",
+                    2_000L, 10_000L);
             return true;
         }
-        DiagLog.log("[gait] 加速度像走但硬件计步 " + n + "/" + STEP_CONFIRM_MIN
-                + "（10s内）/连续 " + (streak / 1000) + "s → 疑似拿手机乱动，不显示");
+        DiagLog.logThrottled("gait.hw", "low-" + n,
+                "[gait] 加速度像走但硬件计步 " + n + "/" + STEP_CONFIRM_MIN
+                        + "（10s内）/连续 " + (streak / 1000) + "s → 疑似拿手机乱动，不显示",
+                2_000L, 10_000L);
         return false;
     }
 
@@ -972,17 +1003,15 @@ public final class WalkPreviewService extends Service {
      * 2 秒），原因不变则 10 秒一条。
      */
     private void logAccelVerdict(WalkConfirmPolicy.Verdict v) {
-        long now = System.currentTimeMillis();
-        boolean changed = !v.reason.equals(lastAccelDiagReason);
-        long interval = changed ? 2_000L : 10_000L;
-        if (now - lastAccelDiagTs < interval) return;
-        lastAccelDiagTs = now;
-        lastAccelDiagReason = v.reason;
-        DiagLog.log("[gait] " + (v.pass ? "✅ 纯加速度判走放行" : "⛔ 纯加速度暂不放行")
-                + " | 原因=" + v.reason
-                + " 连续步=" + v.steps + "/" + accelPolicy.requiredSteps()
-                + " 跨度=" + v.spanMs + "ms 最大间隔=" + v.maxGapMs + "ms 均隔=" + v.avgIntervalMs + "ms"
-                + " | 本机无硬件计步器，靠步流形态判走（间歇抖动过不了）");
+        // 节流判定统一交给 DiagLog/DiagThrottle：原因变化时 2s 可重发，
+        // 原因不变时 10s 一条。业务类不再自己持有 lastXxxDiagTs 时间戳。
+        DiagLog.logThrottled("gait.accel", v.reason,
+                "[gait] " + (v.pass ? "✅ 纯加速度判走放行" : "⛔ 纯加速度暂不放行")
+                        + " | 原因=" + v.reason
+                        + " 连续步=" + v.steps + "/" + accelPolicy.requiredSteps()
+                        + " 跨度=" + v.spanMs + "ms 最大间隔=" + v.maxGapMs + "ms 均隔=" + v.avgIntervalMs + "ms"
+                        + " | 本机无硬件计步器，靠步流形态判走（间歇抖动过不了）",
+                2_000L, 10_000L);
     }
 
     /** 记录一个合格步的时间戳；队列只留最近一段步流，断步由调用方清空 */
@@ -1034,20 +1063,17 @@ public final class WalkPreviewService extends Service {
         long now = System.currentTimeMillis();
         if (lastStopTs == 0L || now - lastStopTs >= STOP_COOLDOWN_MS) return true;
         // 本方法在判定帧上会被高频调用，日志必须节流，否则冷却期内同样会刷屏
-        boolean diag = now - lastCooldownDiagTs > 5_000L;
         if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2) {
-            if (diag) {
-                lastCooldownDiagTs = now;
-                DiagLog.log("[gait] 判定停下冷却内持续判走（累计 "
-                        + gait.confirmedStepCount() + " 步），放行显示");
-            }
+            DiagLog.logThrottled("gait.cooldown", "pass",
+                    "[gait] 判定停下冷却内持续判走（累计 "
+                            + gait.confirmedStepCount() + " 步），放行显示",
+                    5_000L, 5_000L);
             return true;
         }
-        if (diag) {
-            lastCooldownDiagTs = now;
-            DiagLog.log("[gait] 判定停下冷却期内（累计 " + gait.confirmedStepCount()
-                    + " 步），暂不显示，等待持续判走");
-        }
+        DiagLog.logThrottled("gait.cooldown", "wait",
+                "[gait] 判定停下冷却期内（累计 " + gait.confirmedStepCount()
+                        + " 步），暂不显示，等待持续判走",
+                5_000L, 5_000L);
         return false;
     }
 

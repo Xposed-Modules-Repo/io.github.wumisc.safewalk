@@ -79,6 +79,20 @@ object DiagLog {
     private val ringLock = Any()
 
     /**
+     * 按 key 隔离的节流状态表。
+     *
+     * 4.4.0 之前节流字段散落在各业务类（lastGaitDiagTs / lastActiveDiagTs /
+     * lastGuardDiagTs / lastAccelDiagTs / lastStepProbeTs …），新增日志点只要
+     * 忘写节流就会在传感器回调里刷屏。现在统一由 [logThrottled] 收口，
+     * 判定逻辑在 [DiagThrottle]（纯逻辑、可单测）。
+     *
+     * DiagLog 是进程内单例：App 进程与 SystemUI 进程各持一份，天然隔离，
+     * 不需要跨进程锁；这里只防同一进程内多回调线程并发访问。
+     */
+    private val throttleStates = java.util.HashMap<String, DiagThrottle.State>()
+    private val throttleLock = Any()
+
+    /**
      * 初始化日志目录。可重复调用，只有第一次真正探测。
      *
      * 不依赖调用方是 Activity 还是 Service —— 两个入口都会调到；
@@ -208,6 +222,43 @@ object DiagLog {
     }
 
     /**
+     * 带节流的诊断日志：**高频回调里的重复原因必须用这个**。
+     *
+     * @param key        节流通道标识，不同通道互不干扰（如 "gait.hw"、"probe"）
+     * @param reason     本条原因标识；原因变化时按 [changedMs] 更快放行，
+     *                   原因不变时按 [stableMs] 放行
+     * @param msg        真正要写的正文
+     *
+     * 状态跳变类日志（[ACTIVE] ✅ 激活、[walk] 收起、[FGS] 提起）信息量高、
+     * 不会连发，仍走 [log]；只有「每帧都可能重复」的拦截/诊断才走这里。
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun logThrottled(
+        key: String,
+        reason: String,
+        msg: String,
+        changedMs: Long = 2_000L,
+        stableMs: Long = 10_000L
+    ) {
+        if (!enabled) return
+        val now = System.currentTimeMillis()
+        val emit = synchronized(throttleLock) {
+            val st = throttleStates[key] ?: DiagThrottle.State().also { throttleStates[key] = it }
+            val ok = DiagThrottle.shouldEmit(st, reason, now, changedMs, stableMs)
+            if (ok) DiagThrottle.commit(st, reason, now)
+            ok
+        }
+        if (emit) log(msg)
+    }
+
+    /** 会话重启时清掉某通道的节流状态，让新会话第一条诊断能立刻打出来。 */
+    @JvmStatic
+    fun resetThrottle(key: String) {
+        synchronized(throttleLock) { throttleStates.remove(key) }
+    }
+
+    /**
      * 原样追加一段文本（用于 Hook 回传的日志，正文自带上游时间戳）。
      */
     @JvmStatic
@@ -226,11 +277,16 @@ object DiagLog {
 
     private fun appendLine(line: String) {
         val f = logFile ?: return
-        try {
-            if (f.length() > MAX_BYTES) f.delete()
-            FileOutputStream(f, true).use { it.write((line + "\n").toByteArray()) }
-        } catch (t: Throwable) {
-            noteWriteFailure(f, t)
+        // 和 writeRaw 用同一把锁：传感器回调、巡检 tick、日志回传可能来自不同
+        // 线程，不加锁会出现「截断检查 / delete / append」交错，写出半行或
+        // 刚删完又被另一线程 append 到旧 fd 的乱序内容。
+        synchronized(ringLock) {
+            try {
+                if (f.length() > MAX_BYTES) f.delete()
+                FileOutputStream(f, true).use { it.write((line + "\n").toByteArray()) }
+            } catch (t: Throwable) {
+                noteWriteFailure(f, t)
+            }
         }
     }
 

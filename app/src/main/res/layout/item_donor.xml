@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 单个捐赠者：左圆形头像（默认首字母徽标，可换真实头像）+ 右名字 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <FrameLayout
+        android:layout_width="40dp"
+        android:layout_height="40dp">
+
+        <TextView
+            android:id="@+id/tv_avatar_letter"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_avatar_circle"
+            android:gravity="center"
+            android:textColor="@color/on_accent"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/iv_avatar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_avatar_circle"
+            android:clipToOutline="true"
+            android:contentDescription="捐赠者头像"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/tv_donor_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp" />
+
+</LinearLayout>

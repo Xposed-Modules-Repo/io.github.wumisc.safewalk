@@ -191,8 +191,16 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
     // ========== 计步诊断状态（「走了半天没反应」时必须能从日志看出卡在哪） ==========
-    /** 收到的步数事件总数（系统计步器 + 兜底合计） */
+    /** 收到的合格步数事件总数（系统计步器 + 兜底合计，去重后） */
     private var stepEventCount = 0
+    /**
+     * 传感器**原始回调**总数（不管有没有凑成合格步）。
+     *
+     * 4.4.0 的零步数探针只盯 [stepEventCount]，把「静止 / 持握看日志但传感器
+     * 每帧都在回调」误报成「传感器静默失效」，还引导用户去步态自检。
+     * 分开计数后，[StepProbePolicy] 才能区分「没在走路」和「传感器真坏了」。
+     */
+    private var rawSensorCallbackCount = 0L
     /** 系统计步器是否注册成功 */
     private var stepSensorRegistered = false
     /** 加速度计兜底是否启用 */
@@ -203,8 +211,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var lastSummaryTs = 0L
     /** 上次尝试拉起兜底计步的时间 */
     private var lastFallbackTryTs = 0L
-    /** 上次「零步数」探针的时间 */
-    private var lastStepProbeTs = 0L
+    /** 本启动会话是否已打过探针结论（每个会话只报一次，不再 45s 复刷） */
+    private var stepProbeReported = false
 
     // 加速度计计步的运行时状态（算法本身在 GaitDetector 里，这里只持有实例）
     private var fbListener: SensorEventListener? = null
@@ -773,6 +781,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     // ========== 传感器回调 ==========
     override fun onSensorChanged(e: SensorEvent?) {
         if (e?.sensor?.type == Sensor.TYPE_STEP_DETECTOR) {
+            rawSensorCallbackCount++
             // 不再「系统出数就关兜底」：两条链路并行，重复由 recordStep 的 300ms 去重挡掉。
             // 反过来关兜底会让「系统计步器偶尔给一个事件后彻底沉默」的设备重新变成瞎子。
             recordStep(System.currentTimeMillis())
@@ -814,6 +823,10 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      */
     private fun registerStepDetector() {
         initTs = System.currentTimeMillis()
+        // 新启动会话：原始回调计数与探针结论一并重置，
+        // 让本次会话的 45s 探针能正常判一次（SystemUI 重启后 initTs 也会重来）。
+        rawSensorCallbackCount = 0L
+        stepProbeReported = false
         val sensor = try {
             sm?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
         } catch (t: Throwable) {
@@ -873,6 +886,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             override fun onSensorChanged(e: SensorEvent?) {
                 val v = e?.values ?: return
                 if (v.size < 3) return
+                // 原始回调先计数：这是「传感器到底有没有供货」的唯一证据。
+                // 合格步（feedAcc 返回 true）只是它的子集，静止时可以是 0。
+                rawSensorCallbackCount++
                 val now = System.currentTimeMillis()
                 if (detector.feedAcc(v[0], v[1], v[2], now)) recordStep(now)
             }
@@ -979,16 +995,41 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                 startAccFallback("兜底未运行，自动恢复")
             }
 
-            // 步数探针：系统计步器「注册成功但一步都不报」是这台设备最常见的一种
-            // 静默失效（SystemUI 没有 ACTIVITY_RECOGNITION 时注册不抛异常，只是永远没回调）。
-            // 不主动探一次，日志里只有「计步器已注册」，然后用户走半天一个字都没有。
-            if (stepEventCount == 0 && initTs != 0L && now - initTs > STEP_PROBE_WINDOW_MS
-                && now - lastStepProbeTs > STEP_PROBE_WINDOW_MS
-            ) {
-                lastStepProbeTs = now
-                diag("❌ 启动 ${(now - initTs) / 1000}s 仍未收到任何步数事件"
-                        + " | 系统计步器注册=$stepSensorRegistered 加速度计兜底=$fallbackActive"
-                        + " | 先到「功能实验区 → 步态自检」确认传感器本身有没有数据")
+            // 步数探针：只用来发现「传感器注册成功却连一次原始回调都没有」的
+            // 静默失效。判定交给 [StepProbePolicy]（纯逻辑、有单测）。
+            //
+            // 4.4.0 的旧探针只看「合格步数 == 0」，于是用户静止、拿在手里翻日志、
+            // 传感器明明每帧都在回调，也会被报成「❌ 仍未收到任何步数事件 …
+            // 确认传感器本身有没有数据」，且每 45 秒复刷一次（真机 19:07:33「46s」、
+            // 19:08:19「92s」）。现在按原始回调数分级，且每个启动会话只报一次。
+            val probe = StepProbePolicy.evaluate(
+                masterOn = true,                 // 外层已判过 !masterEnabled() 直接 return
+                initTs = initTs,
+                now = now,
+                windowMs = STEP_PROBE_WINDOW_MS,
+                rawCallbacks = rawSensorCallbackCount,
+                qualifiedSteps = stepEventCount,
+                reported = stepProbeReported
+            )
+            when (probe) {
+                StepProbePolicy.Verdict.SENSOR_ALIVE_NO_STEP -> {
+                    stepProbeReported = true
+                    diag("ℹ️ 启动 ${(now - initTs) / 1000}s 尚无合格步，但传感器已回调 "
+                            + "$rawSensorCallbackCount 次（静止 / 持握属正常）"
+                            + " | 系统计步器注册=$stepSensorRegistered 加速度计兜底=$fallbackActive"
+                            + " | 计步链路正常，无需处理")
+                }
+                StepProbePolicy.Verdict.SENSOR_SILENT -> {
+                    stepProbeReported = true
+                    diag("❌ 启动 ${(now - initTs) / 1000}s 传感器 0 次回调，疑似静默失效"
+                            + " | 系统计步器注册=$stepSensorRegistered 加速度计兜底=$fallbackActive"
+                            + " | 请到「功能实验区 → 步态自检」确认传感器本身有没有数据")
+                }
+                StepProbePolicy.Verdict.OK -> {
+                    // 已有合格步，链路正常，标记已判定，之后不再重复探
+                    stepProbeReported = true
+                }
+                StepProbePolicy.Verdict.NOT_READY -> Unit
             }
 
             // 每 2 分钟一条状态摘要：走没走、卡在哪一环，看日志一眼能定位

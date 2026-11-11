@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 捐赠者头像的圆形底：无真实头像时用首字母徽标，有图时作为圆形裁切轮廓 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/primary" />
+</shape>
