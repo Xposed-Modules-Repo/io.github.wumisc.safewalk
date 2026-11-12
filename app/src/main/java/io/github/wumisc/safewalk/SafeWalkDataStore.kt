@@ -92,6 +92,10 @@ object SafeWalkPrefKey {
     const val emerAddress = "emerAddress"
     const val emerContactName = "emerContactName"
     const val emerContactPhone = "emerContactPhone"
+    /** 过敏史：救援人员最需要知道「对什么药过敏」 */
+    const val emerAllergy = "emerAllergy"
+    /** 慢性病 / 长期用药 */
+    const val emerCondition = "emerCondition"
     /**
      * 上一次真正执行求助（发短信/拨号）的时间戳。
      *
@@ -112,6 +116,12 @@ object SafeWalkPrefKey {
      * 值越小越不敏感，误报越少；值越大越敏感，轻微碰撞也会触发。
      */
     const val crashSensitivity = "crashSensitivity"
+
+    /**
+     * 低头提醒（参考 Pixel 数字健康 Heads Up）：走路时长时间低头看手机就提醒抬头。
+     * 默认关，用户主动开启才生效。App 进程（WalkPreviewService）自行读取。
+     */
+    const val enableHeadDownRemind = "enableHeadDownRemind"
 
     // ==================================================================================
     // 【本次全量迭代新增】BUG 修复 / 新增功能 / HyperOS3-4 双版本适配 三类开关

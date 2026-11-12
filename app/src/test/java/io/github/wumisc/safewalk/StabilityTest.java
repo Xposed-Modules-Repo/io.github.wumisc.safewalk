@@ -49,7 +49,7 @@ public class StabilityTest {
             SmartReminderActivity.class,
             WalkModeActivity.class,
             EmergencyCardActivity.class,
-            TipsActivity.class,
+            ThanksActivity.class,
             AcknowledgementsActivity.class,
             DonateQrActivity.class,
             LabActivity.class

@@ -167,6 +167,26 @@ public final class WalkPreviewService extends Service {
                 DiagLog.log("[walk] 静置超时，判定停下 → 收起预览");
                 evaluateShow();
             }
+
+            // 低头提醒：仅在「已确认行走（gaitWalking）+ 亮屏 + 屏幕朝上偏水平」
+            // 同时成立、且持续 8 秒时才提醒，3 分钟冷却。判定全部在 HeadDownPolicy，
+            // 这里只负责取数与发通知，不碰任何步态 / 防误触判据。
+            try {
+                boolean headDownOn = SafePrefs.getBool(sp, SafeWalkPrefKey.enableHeadDownRemind, false);
+                boolean screenOn = true;
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                // isInteractive=false 即息屏；拿不到时按亮屏处理（宁可漏拦，不误拦）
+                if (pm != null) screenOn = pm.isInteractive();
+                float tilt = gait == null ? -1f : gait.tiltDegrees();
+                if (HeadDownPolicy.evaluate(headDownOn, gaitWalking, screenOn, tilt, now, headDownState)) {
+                    new SafeWalkNotificationManager(WalkPreviewService.this).headDownRemind();
+                    DiagLog.log("[head-down] 行走中持续低头 → 已提醒抬头 | tilt="
+                            + Math.round(tilt) + "°");
+                }
+            } catch (Throwable t) {
+                DiagLog.logThrottled("head.down", "err", "[head-down] 评估异常: " + t.getMessage());
+            }
             gaitHandler.postDelayed(this, 1000L);
         }
     };
@@ -175,6 +195,9 @@ public final class WalkPreviewService extends Service {
      * 期间 evaluateShow 不再主动显示，等 Hook 发 ACTION_HOOK_SHOW 恢复。
      */
     private boolean hookHidden = false;
+
+    /** 低头提醒的计时 / 冷却状态（纯逻辑策略，见 HeadDownPolicy） */
+    private final HeadDownPolicy.State headDownState = new HeadDownPolicy.State();
 
     /** 悬浮窗权限被回收的累计次数：只在日志里做「是不是反复发生」的判断依据。 */
     private int overlayLostCount = 0;

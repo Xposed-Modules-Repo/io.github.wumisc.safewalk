@@ -35,6 +35,9 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         /** 系统回收进程后由保活机制自动恢复 */
         const val ID_REVIVED = 1010
 
+        /** 低头提醒（行走时长时间看手机） */
+        const val ID_HEAD_DOWN = 1011
+
         /** 本模块包名，用于构造跨进程 PendingIntent */
         private const val APP_PKG = "io.github.wumisc.safewalk"
         /** SystemUI 包名：手电广播必须显式投递，否则隐式广播收不到 */
@@ -149,6 +152,15 @@ class SafeWalkNotificationManager(private val ctx: Context) {
     fun sitRemind() {
         if (!checkCooldown(ID_SIT)) return
         notify(ID_SIT, baseBuilder("SafeWalk 久坐提醒", "已坐了2小时了，该起来运动运动了。"))
+    }
+
+    /**
+     * 低头提醒：走路时长时间看手机，提醒抬头看路。
+     * 文案不指责、不说教，只给一个动作。
+     */
+    fun headDownRemind() {
+        if (!checkCooldown(ID_HEAD_DOWN)) return
+        notify(ID_HEAD_DOWN, baseBuilder("SafeWalk 抬头提醒", "已经低头走了一会儿了，抬头看看前面的路。"))
     }
 
     /**

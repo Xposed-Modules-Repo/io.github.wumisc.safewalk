@@ -82,6 +82,25 @@
                 android:hint="紧急联系人电话"
                 android:inputType="phone"
                 android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+            <!-- 医疗急救最关键的两项：救援人员最需要知道「对什么药过敏」「在吃什么药」 -->
+            <EditText
+                android:id="@+id/et_allergy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="过敏史（如：青霉素过敏）"
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+            <EditText
+                android:id="@+id/et_condition"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="慢性病 / 长期用药（如：高血压、二甲双胍）"
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:background="@null"/>
         </LinearLayout>
 
         <Button
@@ -92,6 +111,42 @@
             android:backgroundTint="@color/primary"
             android:text="保存急救卡"
             android:textColor="@color/on_accent"/>
+
+        <!-- 锁屏可见性：把话说清楚，并给一条真能落地的路径 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="锁屏时别人看不到这张卡"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:lineSpacingExtra="4dp"
+                android:text="手机没电、损坏或锁屏时，App 里的卡片是打不开的。建议把下面这段信息复制一份，填进系统「紧急信息 / 医疗急救信息」，那样锁屏也能被救援人员看到。"
+                android:textColor="@color/text_hint"
+                android:textSize="13sp"/>
+
+            <Button
+                android:id="@+id/btn_copy_emergency"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:backgroundTint="@color/card_bg"
+                android:text="复制急救信息"
+                android:textColor="@color/primary"/>
+        </LinearLayout>
 
         <!-- 车祸预警（Pixel 风格急救卡） -->
         <LinearLayout
@@ -176,6 +231,15 @@
                     android:paddingVertical="6dp"
                     android:text="高"/>
             </LinearLayout>
+
+            <!-- 权限逐项状态：避免「以为在监测，其实没授权」 -->
+            <TextView
+                android:id="@+id/tv_perm_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="@color/text_hint"
+                android:textSize="12sp"/>
 
             <TextView
                 android:id="@+id/tv_crash_hint"

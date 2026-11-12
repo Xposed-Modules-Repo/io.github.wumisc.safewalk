@@ -403,22 +403,6 @@
                     <View style="@style/RowDivider" />
 
                     <LinearLayout
-                        android:id="@+id/btn_tips"
-                        style="@style/RowStyle">
-
-                        <TextView
-                            style="@style/RowTitle"
-                            android:layout_width="0dp"
-                            android:layout_weight="1"
-                            android:text="出门踩坑指南" />
-
-                        <TextView
-                            style="@style/RowChevron" />
-                    </LinearLayout>
-
-                    <View style="@style/RowDivider" />
-
-                    <LinearLayout
                         android:id="@+id/btn_github"
                         style="@style/RowStyle">
 
@@ -451,14 +435,14 @@
                     <View style="@style/RowDivider" />
 
                     <LinearLayout
-                        android:id="@+id/btn_donate"
+                        android:id="@+id/btn_thanks"
                         style="@style/RowStyle">
 
                         <TextView
                             style="@style/RowTitle"
                             android:layout_width="0dp"
                             android:layout_weight="1"
-                            android:text="支持捐赠" />
+                            android:text="感谢名单" />
 
                         <TextView
                             style="@style/RowChevron" />
@@ -467,14 +451,14 @@
                     <View style="@style/RowDivider" />
 
                     <LinearLayout
-                        android:id="@+id/btn_save_wallpaper"
+                        android:id="@+id/btn_donate"
                         style="@style/RowStyle">
 
                         <TextView
                             style="@style/RowTitle"
                             android:layout_width="0dp"
                             android:layout_weight="1"
-                            android:text="保存壁纸" />
+                            android:text="支持捐赠" />
 
                         <TextView
                             style="@style/RowChevron" />

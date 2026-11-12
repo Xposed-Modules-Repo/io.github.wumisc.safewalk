@@ -47,7 +47,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:lineSpacingExtra="4dp"
-            android:text="5 项提醒 · 已开启 0 项"
+            android:text="6 项提醒 · 已开启 0 项"
             android:textColor="@color/text_hint"
             android:textSize="13sp" />
 
@@ -162,6 +162,34 @@
 
                 <androidx.appcompat.widget.SwitchCompat
                     android:id="@+id/sw_sit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/card_head_down"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="低头提醒" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="走路时一直盯着手机，提醒你抬头看路（参考 Pixel 数字健康）" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_head_down"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content" />
             </LinearLayout>

@@ -2,6 +2,7 @@ package io.github.wumisc.safewalk
 
 import io.github.wumisc.safewalk.torch.GaitStateCallback
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -158,6 +159,21 @@ class GaitDetector {
         private set
 
     fun getAttitude(): PhoneAttitude = currentAttitude
+
+    /**
+     * 屏幕法线与水平面的夹角：0° ≈ 屏幕朝上平放，90° ≈ 手机竖直。
+     *
+     * 用途：低头提醒。走路时低头看手机，屏幕朝上偏前，这个角度会明显变小；
+     * 正常握持在身侧时接近竖直。重力尚未收敛（模长 < 8）返回 -1，调用方应忽略。
+     *
+     * 只读派生值，不改动任何既有步态判定逻辑。
+     */
+    fun tiltDegrees(): Float {
+        val gMag = sqrt(gravityX * gravityX + gravityY * gravityY + gravityZ * gravityZ)
+        if (gMag < 8f) return -1f
+        val cos = (abs(gravityZ) / gMag).coerceIn(0f, 1f)
+        return Math.toDegrees(acos(cos.toDouble())).toFloat()
+    }
 
     // ========== 静置状态回调（手电筒静置提醒用） ==========
     private var gaitStateCallback: GaitStateCallback? = null

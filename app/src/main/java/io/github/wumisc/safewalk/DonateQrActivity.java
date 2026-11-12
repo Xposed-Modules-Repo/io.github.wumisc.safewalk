@@ -122,7 +122,7 @@ public class DonateQrActivity extends Activity {
     }
 
     /**
-     * 存到相册。和「保存壁纸」同一套 MediaStore 流程：
+     * 存到相册。和「保存图片到相册」同一套 MediaStore 流程：
      * 先插 pending 记录 → 写完再置 0，避免相册扫到半截图。
      */
     private void saveToGallery(int resId, String fileName) {

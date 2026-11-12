@@ -328,9 +328,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             String ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             ((TextView) findViewById(R.id.tv_about_subtitle)).setText("安全出行 · LSPosed 模块 v" + ver);
         } catch (Throwable ignored) {}
-        // 出门踩坑指南
-        findViewById(R.id.btn_tips).setOnClickListener(v ->
-                startActivity(new Intent(this, TipsActivity.class)));
         // 权限与无障碍：引导页只弹一次，之后用户想补授权（尤其「始终允许定位」「无障碍」）
         // 就再也找不到入口了 —— 这里常驻一个入口，随时可以重新走一遍逐项引导。
         findViewById(R.id.btn_permissions).setOnClickListener(v -> {
@@ -345,13 +342,15 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk"));
             startActivity(intent);
         });
-        // 致敬名单
+        // 致敬名单（开源项目）
         findViewById(R.id.btn_credits).setOnClickListener(v ->
                 startActivity(new Intent(this, AcknowledgementsActivity.class)));
+        // 感谢名单（参与测试 / 反馈的用户，头像 + 名字）
+        findViewById(R.id.btn_thanks).setOnClickListener(v ->
+                startActivity(new Intent(this, ThanksActivity.class)));
         // 支持捐赠（直接打开二维码页面）
         findViewById(R.id.btn_donate).setOnClickListener(v ->
                 startActivity(new Intent(this, DonateQrActivity.class)));
-        findViewById(R.id.btn_save_wallpaper).setOnClickListener(v -> saveWallpaper());
         findViewById(R.id.btn_lab).setOnLongClickListener(v -> {
             startActivity(new Intent(this, LabActivity.class));
             return true;
@@ -610,48 +609,5 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 高亮必须在这里同步：滑动切页（dispatchTouchEvent）不经过 Compose 的
         // onTabSelected，只写界面显隐的话导航栏会一直停在上一个 tab 上。
         MainNav.select(toSettings ? 0 : 1);
-    }
-
-    // ========== 保存壁纸 ==========
-
-    private void saveWallpaper() {
-        android.net.Uri uri = null;
-        try {
-            android.graphics.Bitmap bmp =
-                    android.graphics.BitmapFactory.decodeResource(getResources(), R.drawable.bg_about_wallpaper);
-            if (bmp == null) throw new IllegalStateException("壁纸解码失败");
-
-            android.content.ContentValues cv = new android.content.ContentValues();
-            cv.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "SafeWalk_chuchuan.jpg");
-            cv.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-            cv.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "DCIM/SafeWalk");
-            // Android 10+ 必须先标记 pending，写完再置 0；
-            // 否则相册可能在文件还没写完时就扫到一张半截图
-            cv.put(android.provider.MediaStore.Images.Media.IS_PENDING, 1);
-
-            uri = getContentResolver().insert(
-                    android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
-            if (uri == null) throw new java.io.IOException("相册拒绝了写入请求");
-
-            try (java.io.OutputStream os = getContentResolver().openOutputStream(uri)) {
-                // openOutputStream 在某些 ROM 上会返回 null，之前直接 os.close() 就 NPE 了
-                if (os == null) throw new java.io.IOException("无法打开输出流");
-                if (!bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, os)) {
-                    throw new java.io.IOException("图片编码失败");
-                }
-            }
-
-            android.content.ContentValues done = new android.content.ContentValues();
-            done.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
-            getContentResolver().update(uri, done, null, null);
-
-            Toast.makeText(this, "已保存到 DCIM/SafeWalk/", Toast.LENGTH_LONG).show();
-        } catch (Throwable t) {
-            // 写失败要删掉占位记录，否则相册里会留下一条打不开的空条目
-            if (uri != null) {
-                try { getContentResolver().delete(uri, null, null); } catch (Throwable ignored) {}
-            }
-            Toast.makeText(this, "保存失败: " + t.getMessage(), Toast.LENGTH_LONG).show();
-        }
     }
 }

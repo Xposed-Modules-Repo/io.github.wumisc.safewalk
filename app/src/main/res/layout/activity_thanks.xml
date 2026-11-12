@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true"
+    android:padding="16dp"
+    android:paddingTop="40dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:id="@+id/btn_back"
+            style="@style/BackLink"
+            android:text="‹ 返回" />
+
+        <TextView
+            style="@style/PageTitle"
+            android:layout_marginTop="12dp"
+            android:text="感谢名单" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="他们帮忙测试、反馈问题，让这个模块更稳、更少坑。"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
+
+        <TextView
+            style="@style/SectionLabel"
+            android:text="参与测试与反馈" />
+
+        <LinearLayout
+            android:id="@+id/container_thanks"
+            style="@style/CardStyle"
+            android:layout_marginTop="0dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:text="名单按反馈时间排列，会持续更新"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+</ScrollView>

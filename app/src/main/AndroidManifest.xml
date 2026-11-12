@@ -235,14 +235,14 @@
             android:label="致敬名单" />
 
         <activity
+            android:name=".ThanksActivity"
+            android:exported="false"
+            android:label="感谢名单" />
+
+        <activity
             android:name=".DonateQrActivity"
             android:exported="false"
             android:label="捐赠二维码" />
-
-        <activity
-            android:name=".TipsActivity"
-            android:exported="false"
-            android:label="出门踩坑指南" />
 
         <!--
             手电曾短暂地只走「Hook → SystemUI 进程 setTorchMode」一条路，
