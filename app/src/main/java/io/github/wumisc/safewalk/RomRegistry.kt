@@ -62,6 +62,7 @@ object RomRegistry {
 
     /** 华为系统管家，EMUI / HarmonyOS 4 及更早的自启动页都在这个包里。 */
     private const val HUAWEI_SM = "com.huawei.systemmanager"
+    private const val MEIZU_SAFE = "com.meizu.safe"
 
     /** 所有 ROM 都能用的应用详情页，作为最终兜底。 */
     private const val FALLBACK_DETAILS = "android.settings.APPLICATION_DETAILS_SETTINGS"
@@ -256,6 +257,37 @@ object RomRegistry {
         note = "「应用启动管理」默认全自动，必须改成手动管理才不会被清；HarmonyOS NEXT 不装 APK"
     )
 
+    private val FLYME = RomProfile(
+        id = RomId.FLYME,
+        pages = listOf(
+            // Flyme 10 起，自启动并入「手机管家 → 权限管理 → 后台管理」，
+            // 入口仍是这个 SHOW_APPSEC；老 Flyme 6/7 的路径也一样
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$MEIZU_SAFE/com.meizu.safe.security.SHOW_APPSEC",
+                "手机管家 → 权限管理 → 后台管理"
+            ),
+            // SmartBG 是更早的「后台应用管理」页，部分机型/版本上 SHOW_APPSEC 已被裁掉
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$MEIZU_SAFE/com.meizu.safe.permission.SmartBGActivity",
+                "手机管家 → 应用管理 → 后台管理（旧版）"
+            ),
+            PageTarget.action(
+                TargetKind.AUTOSTART, FALLBACK_DETAILS, "应用详情 → 自启动（兜底）"
+            ),
+            PageTarget.action(
+                TargetKind.BATTERY, ACTION_BATTERY, "电池 → 不受限制"
+            ),
+            // Flyme 没有「后台弹出界面」独立开关，悬浮窗权限在应用详情里
+            PageTarget.action(
+                TargetKind.BACKGROUND_POPUP, FALLBACK_DETAILS, "应用详情 → 权限 → 悬浮窗"
+            )
+        ),
+        cameraPkgs = setOf("com.meizu.camera"),
+        note = "Flyme 的后台冻结比 MIUI 更激进，且「后台管理」默认按智能策略放行，必须手动改成允许"
+    )
+
     private val AOSP = RomProfile(
         id = RomId.AOSP,
         pages = listOf(
@@ -275,6 +307,7 @@ object RomRegistry {
         RomId.COLOROS to COLOROS,
         RomId.ORIGINOS to ORIGINOS,
         RomId.HARMONYOS to HARMONYOS,
+        RomId.FLYME to FLYME,
         RomId.AOSP to AOSP
     )
 

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    无障碍调试面板的服务配置。
+
+    与 a11y_service_config.xml 的关键差异：
+
+    · canRetrieveWindowContent="true" —— 面板必须能读整棵节点树，这是它的全部意义；
+    · accessibilityEventTypes="typeAllMask" —— 调试要看全类型事件（点击、焦点、滚动、
+      通知、内容变化），只订阅一种会漏掉真正的问题；
+    · flagReportViewIds —— 不加这个，viewIdResourceName 恒为 null，
+      「这个按钮有没有 id」这条最常用的排查线索就没了；
+    · flagIncludeNotImportantViews —— 默认只报「重要」节点，很多第三方 App 把
+      可点击元素标成 unimportant，不打开就看不到，等于对着空白面板排查。
+
+    隐私边界：该服务只在本应用内、且用户主动打开面板时才处理事件（见
+    A11yInspectorService.collecting），不写文件、不联网。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/a11y_inspector_desc"
+    android:notificationTimeout="100"
+    android:settingsActivity="io.github.wumisc.safewalk.A11yInspectorActivity" />

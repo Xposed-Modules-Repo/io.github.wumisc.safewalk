@@ -274,6 +274,34 @@
         </service>
 
         <!--
+            无障碍调试面板（开发者工具，4.8.0 新增）。
+
+            【为什么是独立服务】它需要 canRetrieveWindowContent=true（读整棵节点树），
+            而主服务刻意关着这个能力。混在一个服务里会让「只想让相机避让」的用户
+            被迫授予读屏权限。分开之后，系统里是两条独立授权记录，用户开哪个是哪个。
+
+            【默认不工作】服务被系统连上不等于在采集：真正的开关是
+            A11yInspectorService.collecting，只有调试面板在前台时才置 true。
+        -->
+        <service
+            android:name=".A11yInspectorService"
+            android:exported="true"
+            android:label="@string/a11y_inspector_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/a11y_inspector_config" />
+        </service>
+
+        <activity
+            android:name=".A11yInspectorActivity"
+            android:exported="false"
+            android:label="无障碍调试面板" />
+
+        <!--
             行走模式预览服务（App 进程）：持有相机 + 悬浮窗。
             行走模式开关开着期间常驻（camera 前台服务），收到 Hook 的
             「走起来/停下来」广播后显示/收起预览，手动预览也直接指挥它。

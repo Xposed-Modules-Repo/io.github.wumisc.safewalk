@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true"
+    android:padding="16dp"
+    android:paddingTop="40dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:id="@+id/btn_back"
+            style="@style/BackLink"
+            android:text="‹ 返回" />
+
+        <TextView
+            style="@style/PageTitle"
+            android:layout_marginTop="12dp"
+            android:text="无障碍调试面板" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="看当前界面的控件树、文本、contentDescription 与焦点事件。数据只留在内存，退出即清空。"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
+
+        <!-- 状态 -->
+        <LinearLayout
+            style="@style/CardStyle"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/tv_service_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="服务状态：检查中…"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/tv_event_count"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="已采集 0 条事件"
+                android:textColor="@color/text_hint"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 操作 -->
+        <LinearLayout
+            style="@style/CardStyle"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/btn_open_service"
+                style="@style/RowStyle">
+
+                <TextView
+                    style="@style/RowTitle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="开启无障碍服务" />
+
+                <TextView
+                    style="@style/RowChevron" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/btn_dump"
+                style="@style/RowStyle">
+
+                <TextView
+                    style="@style/RowTitle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="抓取当前节点树" />
+
+                <TextView
+                    style="@style/RowChevron" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/btn_copy_tree"
+                style="@style/RowStyle">
+
+                <TextView
+                    style="@style/RowTitle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="复制节点树" />
+
+                <TextView
+                    style="@style/RowChevron" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/btn_copy_events"
+                style="@style/RowStyle">
+
+                <TextView
+                    style="@style/RowTitle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="复制事件列表" />
+
+                <TextView
+                    style="@style/RowChevron" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/btn_clear"
+                style="@style/RowStyle">
+
+                <TextView
+                    style="@style/RowTitle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="清空事件" />
+
+                <TextView
+                    style="@style/RowChevron" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 节点树 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="节点树 · 最近一次抓取" />
+
+        <TextView
+            android:id="@+id/tv_tree"
+            style="@style/CardStyle"
+            android:layout_marginTop="0dp"
+            android:fontFamily="monospace"
+            android:lineSpacingExtra="2dp"
+            android:padding="12dp"
+            android:text="（还没抓取，点上面的「抓取当前节点树」）"
+            android:textColor="@color/text_body"
+            android:textIsSelectable="true"
+            android:textSize="11sp" />
+
+        <!-- 事件流 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="事件流 · 最新在上，最多 60 条" />
+
+        <LinearLayout
+            android:id="@+id/container_events"
+            style="@style/CardStyle"
+            android:layout_marginTop="0dp"
+            android:orientation="vertical"
+            android:padding="12dp" />
+
+    </LinearLayout>
+
+</ScrollView>

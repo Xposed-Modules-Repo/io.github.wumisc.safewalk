@@ -281,6 +281,12 @@
                         android:textColor="@color/text_primary"
                         android:textSize="12.5sp" />
 
+                    <!--
+                        六个厂商 + 原生 + 自动 = 8 个芯片。
+                        360dp 宽的机器一行放 8 个，每个只剩约 36dp，「OPPO」都挤不下，
+                        所以改两行四列：每行 4 个 × weight=1，宽度自动均分，
+                        大屏小屏都不会溢出，也不用再靠 autoSize 缩到 7sp 勉强塞进去。
+                    -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -309,11 +315,17 @@
                             style="@style/RomChip"
                             android:layout_marginStart="5dp"
                             android:text="OPPO" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:orientation="horizontal">
 
                         <TextView
                             android:id="@+id/chip_rom_originos"
                             style="@style/RomChip"
-                            android:layout_marginStart="5dp"
                             android:text="vivo" />
 
                         <TextView
@@ -321,6 +333,12 @@
                             style="@style/RomChip"
                             android:layout_marginStart="5dp"
                             android:text="华为" />
+
+                        <TextView
+                            android:id="@+id/chip_rom_flyme"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="魅族" />
 
                         <TextView
                             android:id="@+id/chip_rom_aosp"

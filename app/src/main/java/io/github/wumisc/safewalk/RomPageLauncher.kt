@@ -71,7 +71,12 @@ object RomPageLauncher {
             return i
         }
         val spec = t.componentSpec()!!.split('/')
-        return Intent().setComponent(ComponentName(spec[0], spec[1]))
+        val i = Intent().setComponent(ComponentName(spec[0], spec[1]))
+        // 少数厂商页会读这个 extra 直接定位到本应用（Flyme 的 SHOW_APPSEC、部分
+        // EMUI 版本的后台管理页）。不认它的页面会安静忽略——多一个未被读取的
+        // extra 不会让任何 Activity 崩溃，所以可以全局加，不必给每个档案单独配。
+        i.putExtra("packageName", ctx.packageName)
+        return i
     }
 
     /** 该 Intent 在本机能否解析到具体页面。 */

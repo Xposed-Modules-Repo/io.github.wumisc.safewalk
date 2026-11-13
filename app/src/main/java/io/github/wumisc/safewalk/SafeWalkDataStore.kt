@@ -123,6 +123,16 @@ object SafeWalkPrefKey {
      */
     const val enableHeadDownRemind = "enableHeadDownRemind"
 
+    /**
+     * 行走语音播报（4.8.0）：视力障碍用户专用，走路时用 TTS 轻播来电与即时消息。
+     *
+     * 默认关。**只在 App 进程读**（[SafeWalkA11yService] 与 [WalkVoiceAnnouncer]），
+     * SystemUI 侧的 Hook 完全不关心这个开关，所以**不需要**加入
+     * [ConfigProvider.WHITELIST]——白名单只解决「Hook 进程跨进程读不到」的问题，
+     * 往里塞用不上的键只会让那份清单变长、变难维护。
+     */
+    const val enableWalkVoice = "enableWalkVoice"
+
     // ==================================================================================
     // 【本次全量迭代新增】BUG 修复 / 新增功能 / HyperOS3-4 双版本适配 三类开关
     // 全部为纯开关或显示参数，不含隐私字段，因此都必须同步加入

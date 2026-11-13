@@ -40,6 +40,9 @@ object RomDetector {
         // 两者都属于 COLOROS，顺序不影响结果，但先命中先返回能少扫几个关键字
         RomId.COLOROS to arrayOf("oppo", "oneplus", "realme", "oplus", "coloros"),
         RomId.ORIGINOS to arrayOf("vivo", "iqoo", "originos", "bbk"),
+        // 魅族放在华为之前：meizu / flyme / mblu 与 huawei 不存在交叉授权，
+        // 顺序对结果无影响，只是保持「华为始终垫底」这条不变量（见下条注释）
+        RomId.FLYME to arrayOf("meizu", "flyme", "mblu"),
         // 华为放最后：荣耀老机型 manufacturer 也是 HUAWEI、brand 是 HONOR，
         // MAGICOS 排在前面优先命中，正好落在「MagicUI 时期」那份档案里
         RomId.HARMONYOS to arrayOf("huawei", "harmony", "emui")
@@ -48,7 +51,7 @@ object RomDetector {
     /**
      * 明确属于「原生阵营」的关键字。
      *
-     * 与 [TOKENS] 的区别：[TOKENS] 命中五家厂商，[AOSP_TOKENS] 命中「本来就是原生」。
+     * 与 [TOKENS] 的区别：[TOKENS] 命中六家厂商，[AOSP_TOKENS] 命中「本来就是原生」。
      * 两者都不命中 → **认不出来**，见 [isUnrecognized]。
      */
     private val AOSP_TOKENS = arrayOf(
@@ -84,7 +87,7 @@ object RomDetector {
      * ——他手机上是 One UI，不是原生 Android。
      *
      * 所以分成三种语义：
-     * - 命中 [TOKENS] → 五家之一；
+     * - 命中 [TOKENS] → 六家之一；
      * - 命中 [AOSP_TOKENS] → 真是原生；
      * - 都不命中 → 未收录，UI 上写「未识别（按原生处理）」，让用户知道可以手动指定。
      */

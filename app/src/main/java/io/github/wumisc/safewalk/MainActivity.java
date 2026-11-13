@@ -61,6 +61,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             RomId.COLOROS.name(),
             RomId.ORIGINOS.name(),
             RomId.HARMONYOS.name(),
+            RomId.FLYME.name(),
             RomId.AOSP.name()
     };
     /** 当前生效的生态（自动识别或用户手选的结果），用于刷新高亮与文案。 */
@@ -293,7 +294,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 首页 / 智能提醒页 / 行走模式页的每个开关都是改完立即 commit + exportConfig，
         // 不再需要用户额外点一次保存。
 
-        // 【系统 UI 适配 · 首页入口】七个芯片：自动 + 五家厂商 + 原生。
+        // 【系统 UI 适配 · 首页入口】八个芯片：自动 + 六家厂商 + 原生，两行四列。
         // 控件顺序、ROM_CHIP_KEYS 顺序、布局里的 XML 顺序三者必须一致，
         // 否则高亮会落在邻居身上（数组越界有 length 兜着，串位却不会报错）。
         tvRomCaption = findViewById(R.id.tv_rom_caption);
@@ -304,6 +305,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                 findViewById(R.id.chip_rom_coloros),
                 findViewById(R.id.chip_rom_originos),
                 findViewById(R.id.chip_rom_harmonyos),
+                findViewById(R.id.chip_rom_flyme),
                 findViewById(R.id.chip_rom_aosp)
         };
         for (int i = 0; i < ROM_CHIP_KEYS.length && i < romChips.length; i++) {

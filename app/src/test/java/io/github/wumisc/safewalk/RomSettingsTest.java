@@ -214,11 +214,17 @@ public class RomSettingsTest {
         /*
          * 短名必须是 displayName 的前缀：两者描述的是同一家，不能各说各话
          * （例如 displayName 写「HarmonyOS / EMUI」、短名写「鸿蒙」，用户就得多想一步）。
-         * AOSP 是唯一例外：「AOSP / 类原生」里没有「原生」二字在前面。
+         *
+         * 例外是「displayName 用英文、芯片用中文」的两家：AOSP 与 FLYME。
+         * 首页芯片两行四列，中文短名在视觉上比英文更整齐（「原生」「魅族」
+         * 与「小米」「荣耀」同宽），而 displayName 要出现在「本机 UI：X」这句
+         * 注明里，用 Flyme 比用「魅族」更准确（那是 UI 名，不是厂商名）。
          */
+        java.util.Set<RomId> chineseChip = java.util.EnumSet.of(RomId.AOSP, RomId.FLYME);
         for (RomId id : RomId.values()) {
-            if (id == RomId.AOSP) {
-                assertEquals("原生", id.getShortName());
+            if (chineseChip.contains(id)) {
+                assertEquals("中文短名与预期不符：" + id,
+                        id == RomId.AOSP ? "原生" : "魅族", id.getShortName());
             } else {
                 assertTrue(id + " 的短名应是 displayName 的前缀：" + id.getShortName()
                                 + " vs " + id.getDisplayName(),
@@ -228,10 +234,10 @@ public class RomSettingsTest {
     }
 
     @Test
-    public void thereAreExactlyFiveVendorsPlusStock() {
-        // 选择器是「自动 + 五厂商 + 原生」七格；多一个少一个都会让那一行错位
-        assertEquals(6, RomId.values().length);
+    public void thereAreExactlySixVendorsPlusStock() {
+        // 选择器是「自动 + 六厂商 + 原生」八格（4.8.0 起两行四列）；多一个少一个都会让布局错位
+        assertEquals(7, RomId.values().length);
         long vendors = Arrays.stream(RomId.values()).filter(id -> id != RomId.AOSP).count();
-        assertEquals("除原生外必须正好五家厂商", 5, vendors);
+        assertEquals("除原生外必须正好六家厂商", 6, vendors);
     }
 }

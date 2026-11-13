@@ -48,7 +48,7 @@ public class RomDetectorTest {
 
     @Test
     public void otherVendorsAreUnrecognized() {
-        // 这三家都真实存在、都不在本项目的五家适配范围内 —— 也是「不能被写成原生」的典型
+        // 这三家都真实存在、都不在本项目的六家适配范围内 —— 也是「不能被写成原生」的典型
         assertTrue(RomDetector.isUnrecognized("samsung", "samsung", "SM-S9180"));
         assertTrue(RomDetector.isUnrecognized("motorola", "moto", "eagle"));
         assertTrue(RomDetector.isUnrecognized("Sony", "sony", "XQ-DQ72"));
@@ -71,7 +71,7 @@ public class RomDetectorTest {
 
     @Test
     public void recognizedVendorIsNeverUnrecognized() {
-        // 反向锁死：命中五家关键字就绝不可能是「未识别」，防止以后加关键字时写岔
+        // 反向锁死：命中六家关键字就绝不可能是「未识别」，防止以后加关键字时写岔
         String[][] cases = {
                 {"Xiaomi", "POCO", "poco"},
                 {"HONOR", "HONOR", "magicos"},

@@ -197,6 +197,34 @@
             <View style="@style/RowDivider" />
 
             <LinearLayout
+                android:id="@+id/card_walk_voice"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="行走语音播报" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="给视力障碍用户：走路时用语音轻播来电与重要消息，不弹窗遮挡。需开启无障碍服务" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_walk_voice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
                 android:id="@+id/card_night_torch"
                 style="@style/RowStyle">
 

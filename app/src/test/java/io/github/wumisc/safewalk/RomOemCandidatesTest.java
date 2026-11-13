@@ -106,7 +106,7 @@ public class RomOemCandidatesTest {
 
     @Test
     public void cameraUnionCoversEveryEcosystem() {
-        // 并集要覆盖五家各自的相机包；漏一家就是「那家用户开相机时小窗不收起」
+        // 并集要覆盖六家各自的相机包；漏一家就是「那家用户开相机时小窗不收起」
         String[][] expected = {
                 {"HYPEROS", "com.miui.camera"},
                 {"MAGICOS", "com.hihonor.camera"},

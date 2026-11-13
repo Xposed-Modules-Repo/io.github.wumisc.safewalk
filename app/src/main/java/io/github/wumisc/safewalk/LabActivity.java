@@ -210,6 +210,21 @@ public class LabActivity extends Activity implements SensorEventListener {
                 {"查看 diag.log 末尾", (Runnable) this::showLogTail},
         });
 
+        // 无障碍：主服务只读前台包名，调试面板单独授权、单独开关（4.8.0）
+        actionGroup(root, "无障碍", new Object[][]{
+                {"打开无障碍调试面板", (Runnable) () ->
+                        startActivity(new Intent(this, A11yInspectorActivity.class))},
+                {"无障碍服务状态", (Runnable) () -> {
+                    boolean main = SafeWalkA11yService.isEnabled(this);
+                    boolean insp = A11yInspectorService.isEnabled(this);
+                    String msg = "前台避让：" + (main ? "已开启" : "未开启")
+                            + "\n调试面板：" + (insp ? "已开启" : "未开启")
+                            + "（连接=" + A11yInspectorService.isConnected() + "）";
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                    log("[a11y] " + msg.replace('\n', ' '));
+                }},
+        });
+
         // —— 调试日志 ——
         root.addView(sectionLabel("调试日志"));
         tvLog = new TextView(this);

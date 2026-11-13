@@ -9,6 +9,8 @@
     <!-- 无障碍服务：既让系统「无障碍」列表里出现本应用（条目内可用「设置」打开 App），
          也承担「前台是相机类应用时收起角落小窗」的避让职责（不依赖 Xposed）。 -->
     <string name="a11y_service_label">安全出行 · 前台避让</string>
+    <string name="a11y_inspector_label">安全出行 · 无障碍调试面板</string>
+    <string name="a11y_inspector_desc">仅调试用，普通使用不需要开启。开启后可查看当前界面的控件树、文本、contentDescription 与焦点事件，用于排查读屏与无障碍相关问题。数据只留在本机内存，关闭面板即清空，不写文件、不联网。</string>
     <string name="a11y_service_desc">可选。开启后本应用只读取当前前台应用的包名，在打开相机 / 录像 / 视频通话类应用时自动收起角落小窗，避免遮挡取景或与相机抢占摄像头；不读取任何屏幕文字，不联网上传。</string>
     <!-- 控制中心磁贴：下拉通知栏 / 控制中心一键开关「自动跟随步行」 -->
     <string name="tile_walk_label">自动跟随</string>
