@@ -124,6 +124,23 @@ object SafeWalkPrefKey {
     const val enableHeadDownRemind = "enableHeadDownRemind"
 
     /**
+     * 久走提醒（5.0.0）：连续出行累计走满 45 分钟，提醒找地方坐一下、喝口水。
+     *
+     * 与 [enableSitHealthRemind] 是一对相反方向的提醒：那个管「坐太久」，这个管「走太久」。
+     * 默认关。**只在 App 进程读**（[WalkPreviewService] 的巡检 tick），
+     * 不进 [ConfigProvider.WHITELIST]——Hook 侧不关心，塞进去只会让跨进程清单变长。
+     */
+    const val enableLongWalkRemind = "enableLongWalkRemind"
+
+    /**
+     * 夜间独行提醒（5.0.0）：夜间时段内累计步行 10 分钟，提醒留意周边。
+     *
+     * 默认关。与夜间手电共用同一组时段（[nightTorchStartHour] / [nightTorchEndHour]），
+     * 用户改时段时两条提醒一起跟着变，不用再配一次。同样只在 App 进程读。
+     */
+    const val enableNightSoloRemind = "enableNightSoloRemind"
+
+    /**
      * 行走语音播报（4.8.0）：视力障碍用户专用，走路时用 TTS 轻播来电与即时消息。
      *
      * 默认关。**只在 App 进程读**（[SafeWalkA11yService] 与 [WalkVoiceAnnouncer]），
@@ -178,6 +195,140 @@ object SafeWalkPrefKey {
      * JSON 配置里会丢掉这一项。
      */
     const val previewContrastLevel = "previewContrastLevel"
+
+    // ==================================================================================
+    // 【4.9.0 预览小窗自定义】
+    //
+    // 起因：早期版本 HUD 里那句「路况预览中 · 增强对比度」是调试遗留物，它告诉用户
+    // 的事情用户本来就知道（我正在看预览），却不带任何可用信息，还平白占一块画面。
+    // 「增强对比度」这个开关更是只为美化这句废话而存在 —— 没有文字时它毫无作用。
+    //
+    // 这一组 key 把「文字」和「对比度」彻底解耦：
+    //  · 文字默认**关**，新用户不会再看到那句提示；
+    //  · 想留的人可以自己开、自己改内容、自己调字号；
+    //  · 对比度只在有文字时才生效，UI 上联动置灰。
+    //
+    // 尺寸与边距也给出来，因为固定 150×260dp 在 6.7 寸屏上偏小、在小屏上偏大，
+    // 而「挡住哪儿」是用户比开发者更清楚的事。
+    // ==================================================================================
+
+    /**
+     * 状态文字开关，默认 **false**。
+     *
+     * 关闭时 HUD 层直接 GONE，画面上不会出现任何文字。开启后才读
+     * [previewHudText] / [previewHudTextSize]。
+     */
+    const val previewHudEnabled = "previewHudEnabled"
+
+    /**
+     * 状态文字内容，默认空串（空 = 用 [PREVIEW_HUD_TEXT_DEFAULT]）。
+     *
+     * 去掉了原来「· 增强对比度」后缀：那是实现细节，不是用户需要知道的信息。
+     */
+    const val previewHudText = "previewHudText"
+
+    /** 状态文字字号（sp），11~20，默认 13。 */
+    const val previewHudTextSize = "previewHudTextSize"
+
+    /**
+     * 角落小窗宽度（dp），100~200，默认 150。
+     *
+     * 高度不单独给：沿用历史比例 150:260（≈1:1.733），保证无论怎么拖，
+     * 画面都不会被拉成奇怪的长条。改比例需要同时动相机裁剪，不在本版范围。
+     */
+    const val previewSmallWidthDp = "previewSmallWidthDp"
+
+    /** 角落小窗距屏幕边缘的边距（dp），0~40，默认 12。 */
+    const val previewSmallMarginDp = "previewSmallMarginDp"
+
+    /**
+     * 【5.0.0】取景范围 0~100，默认 0。
+     *
+     * 0 = 完整画面；100 = 只保留画面下半部分并等比放大 2 倍。
+     * 数值越大路面占比越高、能看清更近的障碍，代价是横向视野变窄。
+     */
+    const val previewFramingPct = "previewFramingPct"
+
+    /** 【5.0.0】小窗描边宽度（dp），0~4，默认 0（不描边）。 */
+    const val previewBorderDp = "previewBorderDp"
+
+    /** 【5.0.0】低光增强：预览请求下发正向曝光补偿。默认关。 */
+    const val previewLowLight = "previewLowLight"
+
+    // ==================================================================================
+    // 【5.1.0 智能方案 + 画面增强】
+    //
+    // 用户两条反馈，把上一版的两个「看着有、其实没用」的坑点破了：
+    //
+    // ① 「一键方案」只有白天/夜间/极简三个按钮，选完就固定死。可人是在变的环境里
+    //    走路的 —— 傍晚出门、天黑回家，一天里要手动切两次。这一组 key 让方案能
+    //    **自己判断该用哪一套**：系统深色模式开着就是夜间；没开深色模式的用户，
+    //    按他自己设的夜间时段判断。判断逻辑在 [PresetResolve]，纯函数、可单测。
+    //
+    // ② 上一版的「增强对比度」只给 HUD 文字加描边和衬底 —— 那是**文字**变清楚，
+    //    不是**画面**变清楚。用户原话：「我要的是小窗预览增强对比度，这样才能更
+    //    看得清」。这一组 key 才是真正的画面处理：对比度、暗部提亮、饱和度，
+    //    由 [RearCameraOverlay] 在画面层做像素级处理（AGSL 运行时着色器）。
+    // ==================================================================================
+
+    /**
+     * 【5.1.0】一键方案是否跟随环境自动切换。默认 **false**（保持用户手动选的方案）。
+     *
+     * 开启后，白天/夜间由 [PresetResolve] 在每次显示预览前实时判定，
+     * 不再使用用户上次手动点的那一套。
+     */
+    const val presetAuto = "presetAuto"
+
+    /**
+     * 【5.1.0】画面增强总开关。默认 **false**。
+     *
+     * 与 [enablePreviewContrast]（文字描边）是两件完全不同的事，互不影响：
+     *  · [enablePreviewContrast] → 文字加黑边黑底，让**字**从画面里跳出来；
+     *  · [previewScreenEnhance]  → 动**画面像素**，让路面、台阶、障碍的明暗差拉开。
+     */
+    const val previewScreenEnhance = "previewScreenEnhance"
+
+    /**
+     * 【5.1.0】画面对比度强度 0~100，默认 45（约 +45% 的 S 曲线增益）。
+     *
+     * 0 = 原始画面；100 = 强对比（暗的更暗、亮的更亮，代价是高光可能过曝）。
+     * 中间值走平滑 S 曲线而不是线性缩放，避免「一开就变成黑白照片」。
+     */
+    const val previewScreenContrast = "previewScreenContrast"
+
+    /**
+     * 【5.1.0】暗部提亮 0~100，默认 40。
+     *
+     * 只抬阴影不压高光：树荫、楼道口、下穿隧道这类「一片黑」的地方，靠它把台阶
+     * 和路沿的轮廓提出来。对比度拉高会让暗部更黑，两者配合才既清楚又不发灰。
+     */
+    const val previewScreenShadowLift = "previewScreenShadowLift"
+
+    /**
+     * 【5.1.0】饱和度 0~100，默认 50（= 不变）。
+     *
+     * 0 = 完全灰度；50 = 原始；100 = 双倍饱和。夜间噪点重时把饱和度降低，
+     * 画面会更「干净」，红绿色盲用户也可以靠它把颜色差异转成明暗差异。
+     */
+    const val previewScreenSaturation = "previewScreenSaturation"
+
+    /**
+     * 【5.3.0】画面方向：`auto`（默认）/ `fixed`（固定竖屏）/ `flip`（翻转 180°）。
+     *
+     * 相机传感器是横装的，屏幕可以竖、横、倒。以前完全没有旋转逻辑，
+     * 竖屏靠窗口比例勉强凑合，一横过来画面就侧躺。
+     *
+     * 默认 `auto`：按传感器方向与屏幕旋转自动转正。留两个手动档不是「多此一举」——
+     * 少数 ROM 的 SENSOR_ORIENTATION 标定是反的（尤其拆修过的机器），
+     * 自动算出 180° 反而倒着，用户能用 `flip` 一键改回来，不用等新版本。
+     *
+     * 取值一律经 [PreviewOrientationPolicy.normalizeMode] 归一，写错的值按 auto 处理：
+     * 配置文件是用户可编辑的，一个拼错的字符串不该让画面卡住不转。
+     */
+    const val previewRotationMode = "previewRotationMode"
+
+    /** [previewHudText] 为空时的兜底文案。短、中性、不解释实现。 */
+    const val PREVIEW_HUD_TEXT_DEFAULT = "路况预览"
 
     /**
      * 【已废弃 · 4.3】HyperOS 版本适配模式串。

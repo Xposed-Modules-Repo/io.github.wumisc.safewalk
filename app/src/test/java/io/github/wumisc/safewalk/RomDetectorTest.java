@@ -48,12 +48,14 @@ public class RomDetectorTest {
 
     @Test
     public void otherVendorsAreUnrecognized() {
-        // 这三家都真实存在、都不在本项目的六家适配范围内 —— 也是「不能被写成原生」的典型
-        assertTrue(RomDetector.isUnrecognized("samsung", "samsung", "SM-S9180"));
+        // 这两家都真实存在、都不在本项目的适配范围内 —— 也是「不能被写成原生」的典型
         assertTrue(RomDetector.isUnrecognized("motorola", "moto", "eagle"));
         assertTrue(RomDetector.isUnrecognized("Sony", "sony", "XQ-DQ72"));
         // 一加归 ColorOS，必须被认出来
         assertFalse(RomDetector.isUnrecognized("OnePlus", "OnePlus", "CPH2581"));
+        // 【5.2.0】三星已单独建档（One UI），不能再算「未识别」——
+        // 否则 S24 Ultra 用户看到的仍是「本机 UI：原生」这句明确错误的话
+        assertFalse(RomDetector.isUnrecognized("samsung", "samsung", "SM-S9180"));
     }
 
     @Test
@@ -65,19 +67,27 @@ public class RomDetectorTest {
     @Test
     public void unrecognizedImpliesAospFallback() {
         // 「没认出来」必须落在 AOSP 档案上，否则 UI 会显示「未识别」却用着别家的表
-        assertEquals(RomId.AOSP, RomDetector.detect("samsung", "samsung", "SM-S9180"));
+        assertEquals(RomId.AOSP, RomDetector.detect("motorola", "moto", "eagle"));
+        assertEquals(RomId.AOSP, RomDetector.detect("Sony", "sony", "XQ-DQ72"));
         assertEquals(RomId.AOSP, RomDetector.detect(null, null, null));
     }
 
     @Test
+    public void samsungNoLongerFallsBackToAosp() {
+        // 5.2.0 的反向锁：三星必须命中 ONEUI 而不是兜底到 AOSP
+        assertEquals(RomId.ONEUI, RomDetector.detect("samsung", "samsung", "SM-S9180"));
+    }
+
+    @Test
     public void recognizedVendorIsNeverUnrecognized() {
-        // 反向锁死：命中六家关键字就绝不可能是「未识别」，防止以后加关键字时写岔
+        // 反向锁死：命中任一厂商关键字就绝不可能是「未识别」，防止以后加关键字时写岔
         String[][] cases = {
                 {"Xiaomi", "POCO", "poco"},
                 {"HONOR", "HONOR", "magicos"},
                 {"realme", "realme", "RMX"},
                 {"vivo", "vivo", "originos"},
-                {"HUAWEI", "HUAWEI", "emui"}
+                {"HUAWEI", "HUAWEI", "emui"},
+                {"SAMSUNG", "samsung", "e3q"}
         };
         for (String[] c : cases) {
             assertFalse("不该判成未识别：" + String.join("/", c),

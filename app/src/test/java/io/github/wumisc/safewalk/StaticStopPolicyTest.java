@@ -95,4 +95,73 @@ public class StaticStopPolicyTest {
         assertTrue("超过自定义宽限后可收起空窗",
                 StaticStopPolicy.shouldStop(50_000L, 100_000L, 105_001L, STOP, 5_000L));
     }
+
+    // ---------- 5.1.0 显示驻留：小窗不能「闪一下就消失」 ----------
+
+    /**
+     * 真机日志里的循环：14:46:29 弹出 → 14:46:41 收起，正好 12 秒。
+     * 用户看到的是「在手里经常跳预览小窗」。误判本身已由 WalkConfirmPolicy
+     * 收紧解决，这一层保证万一还是判错，画面也稳定存在一段时间。
+     */
+    @Test
+    public void justShownNeverStopsWithinMinShow() {
+        long session = 100_000L;
+        long shownAt = 200_000L;
+        // 显示 1 秒后就没步了，但驻留期（12s）内不能收
+        assertFalse("刚显示 1 秒不能收",
+                StaticStopPolicy.shouldStop(199_000L, session, shownAt + 1_000L, 200L,
+                        GRACE, shownAt));
+        assertFalse("第 11.9 秒仍然不能收",
+                StaticStopPolicy.shouldStop(199_000L, session, shownAt + 11_900L, 200L,
+                        GRACE, shownAt));
+    }
+
+    @Test
+    public void stopsAfterMinShowElapsed() {
+        long session = 100_000L;
+        long shownAt = 200_000L;
+        // 驻留期一过、仍然没步 → 正常收起，不会把「真的停下来了」永久挂住
+        assertTrue("驻留结束后该收就收",
+                StaticStopPolicy.shouldStop(199_000L, session,
+                        shownAt + StaticStopPolicy.DEFAULT_MIN_SHOW_MS + 1, 200L,
+                        GRACE, shownAt));
+    }
+
+    /** 手动常显 / 非本会话显示时 showStartedTs=0，驻留逻辑不参与，行为与旧版一致 */
+    @Test
+    public void manualShowIgnoresDwell() {
+        long session = 100_000L;
+        long now = session + GRACE + 20_000L;
+        assertTrue(StaticStopPolicy.shouldStop(now - 1_000L, session, now, 500L, GRACE, 0L));
+    }
+
+    // ---------- 5.2.0 没在走就别判停：日志空转修复 ----------
+
+    /**
+     * 真机日志（2026-11-14 14:17~14:35，Redmi / HyperOS 4）里 18 分钟出现 19 次
+     * 「[walk] 静置超时，判定停下 → 收起预览」，而同期 `[ACTIVE] ✅ 激活行走模式`
+     * **一次都没有** —— 根本没有预览可收，判决却在每秒执行。
+     *
+     * 条件全满足（有残留步时间戳、会话早过宽限期、静置够久），只把 walking 置 false，
+     * 必须一律判 false。
+     */
+    @Test
+    public void notWalkingNeverStops() {
+        long session = 100_000L;
+        long now = session + GRACE + 60_000L;
+        long lastStep = now - 30_000L;   // 早就超 stopMs
+        assertFalse("没在走时不该判停",
+                StaticStopPolicy.shouldStop(lastStep, session, now, STOP, GRACE, 0L,
+                        StaticStopPolicy.DEFAULT_MIN_SHOW_MS, false));
+    }
+
+    /** walking=true 时原行为不变，不能被新参数顺手改坏 */
+    @Test
+    public void walkingKeepsNormalStop() {
+        long session = 100_000L;
+        long now = session + GRACE + 60_000L;
+        long lastStep = now - STOP - 1;
+        assertTrue(StaticStopPolicy.shouldStop(lastStep, session, now, STOP, GRACE, 0L,
+                StaticStopPolicy.DEFAULT_MIN_SHOW_MS, true));
+    }
 }

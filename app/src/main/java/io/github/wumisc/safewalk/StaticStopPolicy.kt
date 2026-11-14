@@ -31,6 +31,16 @@ object StaticStopPolicy {
     /** 会话启动宽限：复活后至少给这么久，避免刚拉起就收 */
     const val SESSION_GRACE_MS = 30_000L
 
+    /**
+     * 【5.1.0】显示驻留：小窗显示后至少这么久不判停。
+     *
+     * 真机日志（13:57~16:25）里小窗反复「弹出 → 十几秒后收起 → 再弹出」，
+     * 用户感受是「在手里经常跳」。误判已经由 [WalkConfirmPolicy] 收紧解决，
+     * 这一层是兜底：万一还是判错了，让他看到的是一个稳定存在 12 秒的画面，
+     * 而不是闪一下就没、以为软件坏了。
+     */
+    const val DEFAULT_MIN_SHOW_MS = 12_000L
+
     @JvmStatic
     @JvmOverloads
     fun shouldStop(
@@ -38,12 +48,33 @@ object StaticStopPolicy {
         sessionStartTs: Long,
         now: Long,
         stopMs: Long,
-        graceMs: Long = SESSION_GRACE_MS
+        graceMs: Long = SESSION_GRACE_MS,
+        /** 本次预览开始显示的时刻；0 = 不是本会话自动显示的（常显/手动） */
+        showStartedTs: Long = 0L,
+        minShowMs: Long = DEFAULT_MIN_SHOW_MS,
+        /**
+         * 【5.2.0】当前是否已判定为「正在行走」（服务里的 gaitWalking）。
+         *
+         * 为 false 时**永远不判停**：没在走就谈不上「停下」，更谈不上「收起预览」。
+         *
+         * 修的是日志里的空转：真机日志（2026-11-14，Redmi / HyperOS 4）18 分钟内
+         * 「[walk] 静置超时，判定停下 → 收起预览」出现 19 次，而这段时间
+         * `[ACTIVE] ✅ 激活行走模式` 一次都没有 —— 也就是说**根本没有预览可收**，
+         * 却每秒判一次、每次写一行日志。用户看着像「软件在反复开关小窗」，
+         * 实际只是一条毫无意义的判定在空转，还把 512KB 日志文件冲掉一半。
+         */
+        walking: Boolean = true
     ): Boolean {
+        // 没在走：没有「停下」这回事，直接不判停
+        if (!walking) return false
         // 从未有过合格步：不判停（与旧行为一致，避免每秒刷一条收起日志）
         if (lastStepTs == 0L) return false
         // 时钟回拨：一律不判停
         if (now < lastStepTs || (sessionStartTs > 0L && now < sessionStartTs)) return false
+        // 刚显示出来的画面不给收：这是「闪一下就消失」的唯一来源
+        if (showStartedTs > 0L && now >= showStartedTs && now - showStartedTs < minShowMs) {
+            return false
+        }
 
         if (sessionStartTs > 0L && lastStepTs < sessionStartTs) {
             // 旧会话残留时间戳：作废。本会话还没走起来，给宽限；

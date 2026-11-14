@@ -107,6 +107,7 @@ public class FlymeAdaptationTest {
         for (RomId id : RomId.values()) {
             assertNotNull(id + " 缺档案", RomRegistry.profile(id));
         }
-        assertEquals(7, RomId.values().length);
+        // 5.2.0 加了三星期一家，7 → 8
+        assertEquals(8, RomId.values().length);
     }
 }

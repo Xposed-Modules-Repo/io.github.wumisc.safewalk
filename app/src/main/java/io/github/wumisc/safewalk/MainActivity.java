@@ -53,10 +53,17 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
      *
      * 抽成常量而不是在绑定与刷新两处各写一遍：两处漏改一处，就会变成
      * 「点了华为、高亮小米」这种不报错但明显不对的状态。
+     *
+     * 【5.2.0】加三星后共 9 个芯片，布局从「两行四列」改成「三行三列」。
+     * 顺序按页面从上到下、从左到右排列，与 layout 里的摆放严格一致：
+     *   自动 / 小米 / 三星
+     *   荣耀 / OPPO / vivo
+     *   华为 / 魅族 / 原生
      */
     private static final String[] ROM_CHIP_KEYS = {
             RomSettings.OVERRIDE_AUTO,
             RomId.HYPEROS.name(),
+            RomId.ONEUI.name(),
             RomId.MAGICOS.name(),
             RomId.COLOROS.name(),
             RomId.ORIGINOS.name(),
@@ -301,6 +308,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         romChips = new TextView[]{
                 findViewById(R.id.chip_rom_auto),
                 findViewById(R.id.chip_rom_hyperos),
+                findViewById(R.id.chip_rom_oneui),
                 findViewById(R.id.chip_rom_magicos),
                 findViewById(R.id.chip_rom_coloros),
                 findViewById(R.id.chip_rom_originos),
@@ -344,6 +352,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk"));
             startActivity(intent);
         });
+        // 功能建议：写一句想法，直接跳 GitHub 新建 issue（带机型与版本，省掉来回问）
+        findViewById(R.id.btn_feedback).setOnClickListener(v ->
+                startActivity(new Intent(this, FeedbackActivity.class)));
         // 致敬名单（开源项目）
         findViewById(R.id.btn_credits).setOnClickListener(v ->
                 startActivity(new Intent(this, AcknowledgementsActivity.class)));

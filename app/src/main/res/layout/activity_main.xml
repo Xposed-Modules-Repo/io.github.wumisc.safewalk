@@ -282,10 +282,14 @@
                         android:textSize="12.5sp" />
 
                     <!--
-                        六个厂商 + 原生 + 自动 = 8 个芯片。
-                        360dp 宽的机器一行放 8 个，每个只剩约 36dp，「OPPO」都挤不下，
-                        所以改两行四列：每行 4 个 × weight=1，宽度自动均分，
+                        七家厂商 + 原生 + 自动 = 9 个芯片（5.2.0 补了三星）。
+                        360dp 宽的机器一行放 9 个，每个只剩约 32dp，「OPPO」都挤不下，
+                        所以排三行三列：每行 3 个 × weight=1，宽度自动均分，
                         大屏小屏都不会溢出，也不用再靠 autoSize 缩到 7sp 勉强塞进去。
+                        顺序（与 MainActivity.ROM_CHIP_KEYS 严格一致）：
+                          自动 / 小米 / 三星
+                          荣耀 / OPPO / vivo
+                          华为 / 魅族 / 原生
                     -->
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -305,16 +309,10 @@
                             android:text="小米" />
 
                         <TextView
-                            android:id="@+id/chip_rom_magicos"
+                            android:id="@+id/chip_rom_oneui"
                             style="@style/RomChip"
                             android:layout_marginStart="5dp"
-                            android:text="荣耀" />
-
-                        <TextView
-                            android:id="@+id/chip_rom_coloros"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="OPPO" />
+                            android:text="三星" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -324,14 +322,32 @@
                         android:orientation="horizontal">
 
                         <TextView
+                            android:id="@+id/chip_rom_magicos"
+                            style="@style/RomChip"
+                            android:text="荣耀" />
+
+                        <TextView
+                            android:id="@+id/chip_rom_coloros"
+                            style="@style/RomChip"
+                            android:layout_marginStart="5dp"
+                            android:text="OPPO" />
+
+                        <TextView
                             android:id="@+id/chip_rom_originos"
                             style="@style/RomChip"
+                            android:layout_marginStart="5dp"
                             android:text="vivo" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:orientation="horizontal">
 
                         <TextView
                             android:id="@+id/chip_rom_harmonyos"
                             style="@style/RomChip"
-                            android:layout_marginStart="5dp"
                             android:text="华为" />
 
                         <TextView
@@ -429,6 +445,24 @@
                             android:layout_width="0dp"
                             android:layout_weight="1"
                             android:text="项目地址" />
+
+                        <TextView
+                            style="@style/RowChevron" />
+                    </LinearLayout>
+
+                    <View style="@style/RowDivider" />
+
+                    <!-- 4.9.0 功能建议：把「想加什么」直接变成一条可提交的 issue，
+                         不要求用户自己组织措辞，也不要求他会用 GitHub 网页。 -->
+                    <LinearLayout
+                        android:id="@+id/btn_feedback"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="功能建议" />
 
                         <TextView
                             style="@style/RowChevron" />

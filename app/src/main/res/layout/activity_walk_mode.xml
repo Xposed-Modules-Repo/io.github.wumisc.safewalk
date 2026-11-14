@@ -315,7 +315,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="增强对比度"
+                            android:text="文字描边"
                             android:textColor="@color/text_primary"
                             android:textSize="15sp" />
 
@@ -323,7 +323,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="文字加描边/阴影/深色衬底，画面透明度照旧，兼顾看路况与看字"
+                            android:text="只给画面上那行字加描边和衬底，不影响透明度。想让路面本身变清楚，去「小窗自定义 → 画面增强」"
                             android:textColor="@color/text_hint"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -331,7 +331,8 @@
                     <androidx.appcompat.widget.SwitchCompat
                         android:id="@+id/sw_preview_contrast"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp" />
                 </LinearLayout>
 
                 <!-- 【对比度强度进度条】与开关卡片平级：点进度条不会误触发开关 toggle。
@@ -380,12 +381,71 @@
 
         </LinearLayout>
 
+        <!-- 小窗自定义（三级页）：尺寸、边距、画面文字。
+             与上面的「显示参数」分工明确 —— 这里放的是不常动的精细项，
+             上面放的是每次走起来都可能想调一次的透明度/对比度。 -->
+        <LinearLayout style="@style/CardStyle" android:layout_marginTop="12dp">
+
+            <LinearLayout
+                android:id="@+id/card_preview_style"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="小窗自定义" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="取景范围、描边、画面增强、尺寸边距、画面上的文字；含智能跟随的白天/夜间一键方案" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textColor="@color/text_hint"
+                    android:textSize="18sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+
         <!-- 步态参数 -->
         <TextView
             style="@style/SectionLabel"
             android:text="步态判定" />
 
         <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:id="@+id/card_gait_diagnosis"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="14dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tv_gait_diagnosis"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:text=""
+                    android:textColor="@color/seal_red"
+                    android:textSize="13sp" />
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginLeft="0dp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"

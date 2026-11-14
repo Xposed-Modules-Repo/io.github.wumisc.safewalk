@@ -2,13 +2,29 @@
 
 > 海阔天空，勇敢去走。
 
-纯本地、无服务器的**出行感知** LSPosed 模块。不依赖 GMS，不联网，不上传任何数据；
+纯本地、无服务器的**出行感知**工具。不依赖 GMS，不联网，不上传任何数据；
 用手机自带加速度计判断「你是不是真的在走路」，再决定要不要提醒你。
 
-- 运行环境：**HyperOS / Android 13+**（minSdk 33，targetSdk 35）
-- 作用域：**只需勾选「系统界面（SystemUI）」**，不需要系统框架
+- 运行环境：**Android 13+**（minSdk 33，targetSdk 35），已适配 HyperOS / MagicOS / ColorOS / OriginOS / HarmonyOS / Flyme / 原生
+- 增强方式：**LSPosed 模块**（作用域只需勾选「系统界面（SystemUI）」，不需要系统框架）；
+  无障碍相关能力可独立使用，不依赖 root
 - 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**3.0**（2026-11-08）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
+- 当前版本：**5.3.0**（2026-11-14）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
+
+## 📥 安装与更新
+
+| 方式 | 说明 |
+|---|---|
+| 直接下载 | 点上面的「下载 APK」，手动安装；每次更新需重新下载 |
+| **Obtainium**（推荐） | 装一个 Obtainium，点下面链接添加，之后每次发版自动提示更新 |
+
+```
+obtainium://add/https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk
+```
+
+> 本应用**没有上架任何应用商店**，商店里搜不到是正常的，并非下架。
+> 原因见 [docs/distribution.md](docs/distribution.md)：这类需要无障碍与后台常驻的工具，
+> 在国内商店属于高风险类目，提交也大概率被拒。
 
 ---
 
@@ -19,10 +35,13 @@
 | 🔋 电量预警 | 电量 ≤15% 且步行中 | 提醒充电，1h 冷却 |
 | 🪪 证件提醒 | 确认持续步行 | 证件贴身放好，每日 1 次 |
 | 🪑 久坐提醒 | 停止走动满 2h | 起身活动，每日 1 次 |
+| 🚶‍♂️ 久走提醒 | 累计走满 45min | 找地方坐五分钟、喝口水（等红灯不重新计时） |
+| 🌙 夜间独行 | 夜间累计步行 10min | 走有灯的一侧，把行程告诉家人 |
 | 🔦 夜间提醒 | 22:00~06:00 步行中 | 通知带「手电筒」按钮，一键开灯 |
 | 🤝 社交礼仪 | 确认持续步行 | 按求职/约会/聚会/旅游给 3 条提示 |
-| 🚶 行走模式 | 开始步行 | 后置摄像头把身后路况叠在屏上 |
+| 🚶 行走模式 | 开始步行 | 后置摄像头把身后路况叠在屏上，**尺寸/位置/文字可自定义** |
 | 🚑 车祸预警 | 检测到剧烈撞击 | 全屏急救卡 + 60s 倒计时，无响应自动求助 |
+| 💬 功能建议 | 关于 → 功能建议 | 写一句想法，带上机型版本直接提交到 GitHub |
 
 > 所有功能共用**同一个总开关**。关闭时二级菜单里的开关保留设置但不生效。
 

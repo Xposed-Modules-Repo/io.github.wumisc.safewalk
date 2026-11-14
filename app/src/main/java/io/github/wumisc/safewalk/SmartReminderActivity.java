@@ -35,11 +35,22 @@ public final class SmartReminderActivity extends Activity {
     private SwitchCompat swBattery, swIdcard, swSit, swNightTorch, swSocial;
     /** 低头提醒（Pixel 数字健康 Heads Up）：走路 + 亮屏 + 屏幕朝上持续 8s 才提醒 */
     private SwitchCompat swHeadDown;
+    /** 久走提醒（5.0.0）：累计走满 45 分钟提醒歇脚，与「久坐」是相反方向的一对 */
+    private SwitchCompat swLongWalk;
+    /** 夜间独行提醒（5.0.0）：夜间时段内走满 10 分钟提醒留意周边 */
+    private SwitchCompat swNightSolo;
     /** 行走语音播报（4.8.0，视力障碍）：开的时候要顺带更新无障碍服务的订阅事件类型。 */
     private SwitchCompat swWalkVoice;
     private SwitchCompat swAutoMode;
     /** 【BUG 修复】夜间手电·步态联动开关：时间区间 + walking 同步点灯、停止自动灭灯 */
     private SwitchCompat swNightTorchGait;
+    /**
+     * 全部提醒开关，顺序即页面顺序。
+     *
+     * 汇总文案里的「N 项」由它长度算出，不再写死数字——上一版加了两项，
+     * 若继续手写「7 项」，页面会长期在骗人。自动识别开关不算提醒项，不在此列。
+     */
+    private SwitchCompat[] reminderSwitches;
     private TextView heroSummary, tvTorchMinutes, tvNightTime, tvAutoModeStatus;
     private View rowModeChips;
 
@@ -93,6 +104,8 @@ public final class SmartReminderActivity extends Activity {
         swIdcard = findViewById(R.id.sw_idcard);
         swSit = findViewById(R.id.sw_sit);
         swHeadDown = findViewById(R.id.sw_head_down);
+        swLongWalk = findViewById(R.id.sw_long_walk);
+        swNightSolo = findViewById(R.id.sw_night_solo);
         swWalkVoice = findViewById(R.id.sw_walk_voice);
         swNightTorch = findViewById(R.id.sw_night_torch);
         swNightTorchGait = findViewById(R.id.sw_night_torch_gait);
@@ -117,6 +130,8 @@ public final class SmartReminderActivity extends Activity {
         findViewById(R.id.card_idcard).setOnClickListener(v -> swIdcard.toggle());
         findViewById(R.id.card_sit).setOnClickListener(v -> swSit.toggle());
         findViewById(R.id.card_head_down).setOnClickListener(v -> swHeadDown.toggle());
+        findViewById(R.id.card_long_walk).setOnClickListener(v -> swLongWalk.toggle());
+        findViewById(R.id.card_night_solo).setOnClickListener(v -> swNightSolo.toggle());
         findViewById(R.id.card_walk_voice).setOnClickListener(v -> swWalkVoice.toggle());
         findViewById(R.id.card_night_torch).setOnClickListener(v -> swNightTorch.toggle());
         findViewById(R.id.card_night_torch_gait).setOnClickListener(v -> swNightTorchGait.toggle());
@@ -124,6 +139,11 @@ public final class SmartReminderActivity extends Activity {
         findViewById(R.id.row_night_time).setOnClickListener(v -> pickNightTime());
         findViewById(R.id.btn_all_on).setOnClickListener(v -> setAll(true));
         findViewById(R.id.btn_all_off).setOnClickListener(v -> setAll(false));
+
+        reminderSwitches = new SwitchCompat[]{
+                swBattery, swIdcard, swSit, swHeadDown, swLongWalk,
+                swNightSolo, swWalkVoice, swNightTorch, swSocial
+        };
 
         for (int i = 0; i < MODES.length; i++) {
             final String mode = MODES[i];
@@ -137,6 +157,8 @@ public final class SmartReminderActivity extends Activity {
         swIdcard.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableIdReminder, true));
         swSit.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableSitHealthRemind, true));
         swHeadDown.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableHeadDownRemind, false));
+        swLongWalk.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableLongWalkRemind, false));
+        swNightSolo.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightSoloRemind, false));
         swWalkVoice.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableWalkVoice, false));
         swNightTorch.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorch, true));
         // 小窗联动（单夜间手电开关）默认关：用户主动打开才接管
@@ -160,6 +182,8 @@ public final class SmartReminderActivity extends Activity {
         swIdcard.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableIdReminder, c));
         swSit.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableSitHealthRemind, c));
         swHeadDown.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableHeadDownRemind, c));
+        swLongWalk.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableLongWalkRemind, c));
+        swNightSolo.setOnCheckedChangeListener((v, c) -> saveSwitch(SafeWalkPrefKey.enableNightSoloRemind, c));
         swWalkVoice.setOnCheckedChangeListener((v, c) -> {
             saveSwitch(SafeWalkPrefKey.enableWalkVoice, c);
             // 开关一变，正在运行的无障碍服务要立刻改订阅：
@@ -217,6 +241,8 @@ public final class SmartReminderActivity extends Activity {
         swIdcard.setChecked(on);
         swSit.setChecked(on);
         swHeadDown.setChecked(on);
+        swLongWalk.setChecked(on);
+        swNightSolo.setChecked(on);
         swWalkVoice.setChecked(on);
         swNightTorch.setChecked(on);
         swNightTorchGait.setChecked(on);
@@ -228,6 +254,8 @@ public final class SmartReminderActivity extends Activity {
                 .putBoolean(SafeWalkPrefKey.enableIdReminder, on)
                 .putBoolean(SafeWalkPrefKey.enableSitHealthRemind, on)
                 .putBoolean(SafeWalkPrefKey.enableHeadDownRemind, on)
+                .putBoolean(SafeWalkPrefKey.enableLongWalkRemind, on)
+                .putBoolean(SafeWalkPrefKey.enableNightSoloRemind, on)
                 .putBoolean(SafeWalkPrefKey.enableNightTorch, on)
                 .putBoolean(SafeWalkPrefKey.enableNightTorchGait, on)
                 .putBoolean(SafeWalkPrefKey.enableSocialTipCard, on)
@@ -251,27 +279,26 @@ public final class SmartReminderActivity extends Activity {
     // ========== 刷新显示 ==========
 
     private void updateSummary() {
+        int total = reminderSwitches == null ? 0 : reminderSwitches.length;
         int on = 0;
-        if (swBattery.isChecked()) on++;
-        if (swIdcard.isChecked()) on++;
-        if (swSit.isChecked()) on++;
-        if (swHeadDown.isChecked()) on++;
-        if (swWalkVoice.isChecked()) on++;
-        if (swNightTorch.isChecked()) on++;
-        if (swSocial.isChecked()) on++;
+        if (reminderSwitches != null) {
+            for (SwitchCompat sw : reminderSwitches) {
+                if (sw.isChecked()) on++;
+            }
+        }
 
-        // 总开关关掉时，这里写「6 项全部开启」是在骗人：
-        // 六项确实都勾着，但一条都不会弹。先说清楚为什么不生效。
+        // 总开关关掉时，这里写「N 项全部开启」是在骗人：
+        // 每一项确实都勾着，但一条都不会弹。先说清楚为什么不生效。
         boolean master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true);
         String text;
         if (!master) {
             text = "总开关已关闭 · 以下提醒暂不生效";
-        } else if (on == 7) {
-            text = "7 项提醒 · 全部开启";
+        } else if (on == total) {
+            text = total + " 项提醒 · 全部开启";
         } else if (on == 0) {
-            text = "7 项提醒 · 已全部关闭";
+            text = total + " 项提醒 · 已全部关闭";
         } else {
-            text = "7 项提醒 · 已开启 " + on + " 项";
+            text = total + " 项提醒 · 已开启 " + on + " 项";
         }
 
         heroSummary.setText(text);

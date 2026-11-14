@@ -43,6 +43,12 @@ object RomDetector {
         // 魅族放在华为之前：meizu / flyme / mblu 与 huawei 不存在交叉授权，
         // 顺序对结果无影响，只是保持「华为始终垫底」这条不变量（见下条注释）
         RomId.FLYME to arrayOf("meizu", "flyme", "mblu"),
+        // 【5.2.0】三星 One UI。关键字只用 `samsung` 与 `oneui`：
+        // · `sec` 看着像三星的通用前缀，但它太短，会命中 `section`、`second`
+        //   这类无关字符串（haystack 里 brand 可能就是 `sec`，product 不会）；
+        // · 三星国行 / 港版 / 欧版的 MANUFACTURER 与 BRAND 都是 `samsung`，
+        //   S24 Ultra 的 PRODUCT 是 `e3q`/`b0q` 系列，不参与判定也没关系。
+        RomId.ONEUI to arrayOf("samsung", "oneui"),
         // 华为放最后：荣耀老机型 manufacturer 也是 HUAWEI、brand 是 HONOR，
         // MAGICOS 排在前面优先命中，正好落在「MagicUI 时期」那份档案里
         RomId.HARMONYOS to arrayOf("huawei", "harmony", "emui")
@@ -82,12 +88,16 @@ object RomDetector {
      * 是否「认不出这是哪一家」。
      *
      * 为什么不直接用 `detect(...) == AOSP`：Pixel 和 LineageOS 的判定结果也是 [RomId.AOSP]，
-     * 但那是「它本来就是原生」，跟用户说「本机 UI：原生」完全正确；而三星、摩托罗拉、
+     * 但那是「它本来就是原生」，跟用户说「本机 UI：原生」完全正确；而摩托罗拉、
      * 索尼同样落到 [RomId.AOSP]，如果也显示「原生」，用户看到的是一句**明确错误**的话
-     * ——他手机上是 One UI，不是原生 Android。
+     * ——他手机上不是原生 Android。
+     *
+     * 三星在 5.2.0 之前正是这种情况：用户拿 S24 Ultra 打开设置页，看到「本机 UI：原生」，
+     * 然后按 AOSP 的路径去找自启动，当然找不到。现在 [RomId.ONEUI] 已单独建档，
+     * 这里只剩「确实没收录」的厂商走未识别路径。
      *
      * 所以分成三种语义：
-     * - 命中 [TOKENS] → 六家之一；
+     * - 命中 [TOKENS] → 七家之一；
      * - 命中 [AOSP_TOKENS] → 真是原生；
      * - 都不命中 → 未收录，UI 上写「未识别（按原生处理）」，让用户知道可以手动指定。
      */

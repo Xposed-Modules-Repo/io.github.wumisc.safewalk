@@ -56,8 +56,11 @@ public class WalkConfirmPolicyTest {
 
     @Test
     public void slowWalkPasses() {
-        // 慢走 1.2 步/秒：10 步跨度 10.8s，最大间隔 1.2s
-        WalkConfirmPolicy.Verdict v = policy().evaluate(false, 10, steps(10, 1200L), 11_000L);
+        // 慢走 80 步/分：10 步跨度 6.75s，最大间隔 750ms。
+        // 5.1.0 把平均间隔上限收到 950ms（≈63 步/分）之后，原来那条
+        // 「间隔 1200ms 也算慢走」的用例必须改 —— 1200ms 是 50 步/分，
+        // 已经不是散步是挪步了，真机日志里这个量级全是手持低频晃动。
+        WalkConfirmPolicy.Verdict v = policy().evaluate(false, 10, steps(10, 750L), 7_000L);
         assertTrue("慢走应放行，实际原因=" + v.reason, v.pass);
     }
 
@@ -131,5 +134,67 @@ public class WalkConfirmPolicyTest {
         List<Long> ts = steps(10, 550L);
         WalkConfirmPolicy.Verdict v = policy().evaluate(false, 10, ts, ts.get(9) + 3_000L);
         assertFalse("步流已断必须拦，实际原因=" + v.reason, v.pass);
+    }
+
+    // ---------- 5.1.0 真机回归：这两条是用户实测误触发的原样数据 ----------
+
+    /**
+     * 真机日志原文：
+     * `✅ 纯加速度判走放行 | 连续步流可信 连续步=10/10 跨度=7183ms 最大间隔=1352ms 均隔=798ms`
+     *
+     * 均隔 798ms（≈75 步/分）能过平均间隔关，最大间隔 1352ms 也刚好在 1400 以内。
+     * 唯一破绽是间隔忽长忽短 —— 中位数附近的正常步只有 400ms 上下，
+     * 而 1352ms 那一下根本不像跨步。收紧后的节律一致性必须把它拦住。
+     */
+    @Test
+    public void realDeviceJitterSample1Blocked() {
+        long[] gaps = {400, 1352, 420, 1338, 410, 1300, 415, 1350, 598};
+        List<Long> ts = new ArrayList<>();
+        long t = 0;
+        ts.add(t);
+        for (long g : gaps) {
+            t += g;
+            ts.add(t);
+        }
+        WalkConfirmPolicy.Verdict v = policy().evaluate(false, 10, ts, t + 250);
+        assertFalse("真机抖动样本①必须拦，实际原因=" + v.reason, v.pass);
+        assertTrue("应被节律一致性拦下，实际=" + v.reason, v.reason.contains("节律散乱"));
+    }
+
+    /**
+     * 真机日志原文：
+     * `✅ 纯加速度判走放行 | 连续步流可信 连续步=10/10 跨度=9004ms 最大间隔=1530ms 均隔=1000ms`
+     *
+     * 均隔 1000ms 就是 1Hz / 60 步每分钟，比任何真人步行都慢，
+     * 属于手持手机时手臂自然摆动的频率。这一条直接被平均间隔关拦住。
+     */
+    @Test
+    public void realDeviceJitterSample2Blocked() {
+        List<Long> ts = new ArrayList<>();
+        long t = 0;
+        ts.add(t);
+        long[] gaps = {1000, 1000, 1530, 850, 1000, 1000, 870, 1000, 754};
+        for (long g : gaps) {
+            t += g;
+            ts.add(t);
+        }
+        WalkConfirmPolicy.Verdict v = policy().evaluate(false, 10, ts, t + 300);
+        assertFalse("真机抖动样本②必须拦，实际原因=" + v.reason, v.pass);
+    }
+
+    /** 真人步行步间隔的抖动只有几十毫秒，收紧后仍必须放行（不能误杀） */
+    @Test
+    public void realWalkingWithSmallJitterPasses() {
+        long[] gaps = {545, 560, 540, 555, 548, 562, 538, 556, 550};
+        List<Long> ts = new ArrayList<>();
+        long t = 0;
+        ts.add(t);
+        for (long g : gaps) {
+            t += g;
+            ts.add(t);
+        }
+        WalkConfirmPolicy.Verdict v = policy().evaluate(false, 10, ts, t + 280);
+        assertTrue("真走路小抖动应放行，实际原因=" + v.reason
+                + " avg=" + v.avgIntervalMs + " span=" + v.spanMs, v.pass);
     }
 }

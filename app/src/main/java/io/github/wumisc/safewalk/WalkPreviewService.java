@@ -71,6 +71,14 @@ public final class WalkPreviewService extends Service {
     private SharedPreferences sp;
     private final Handler main = new Handler(Looper.getMainLooper());
 
+    /**
+     * 【5.3.0 横竖屏】上一次看到的屏幕朝向（Configuration.ORIENTATION_*）。
+     *
+     * 用它判断「这次配置变化是不是方向变了」：深色模式切换也会走
+     * onConfigurationChanged，但那时不该重排窗口、也不该重算画面方向。
+     */
+    private int lastOrientation = android.content.res.Configuration.ORIENTATION_UNDEFINED;
+
     // ========== 自动跟随步行：步态检测放在应用进程（前台相机服务） ==========
     // SystemUI 进程里的计步「注册成功但永不回调」，导致自动模式永远不显示；
     // 本服务是 camera 前台服务，传感器回调不会被后台策略掐断，判定可靠。
@@ -102,7 +110,25 @@ public final class WalkPreviewService extends Service {
     // 设备无计步器 / 传感器从不回调时自动降级不拦，保证功能不被改崩。
     private Sensor stepCounterSensor;
     private SensorEventListener stepCounterListener;
+    /** 注册是否成功（getDefaultSensor 非空 ≠ registerListener 成功，两者要分开记） */
+    private boolean stepCounterRegistered = false;
     private final ArrayDeque<Long> stepEventQueue = new ArrayDeque<>();
+    /**
+     * 【5.2.0】逐帧计步通道（TYPE_STEP_DETECTOR）。
+     *
+     * COUNTER 是累计型，回调时机由 HAL 决定，小米/三星实测间隔 10~60 秒；
+     * DETECTOR 是事件型，**每走一步回调一次**，才是判「最近有没有在走」的正确信号源。
+     * 两路都注册、都往同一个队列里塞步数：哪路先到用哪路，互为备份。
+     */
+    private Sensor stepDetectorSensor;
+    private SensorEventListener stepDetectorListener;
+    private boolean stepDetectorRegistered = false;
+    /** 最近一次（任一通道）回调的时刻，elapsedRealtime */
+    private long lastStepCallbackTs = 0L;
+    /** 硬件计步回调间隔的滑动平均，用于自适应统计窗口（见 StepHealthPolicy.windowMs） */
+    private long stepCallbackIntervalEma = 0L;
+    /** 本次监听周期内是否已经说明过「为什么走纯加速度」，避免每帧刷屏 */
+    private int lastLoggedChannelOrdinal = -1;
     /** 是否收到过硬件计步事件（没收到 = 无计步器或传感器失效，不拦） */
     private boolean stepCounterAlive = false;
     /** 硬件计步确认窗口（毫秒）与最少步数 */
@@ -141,6 +167,20 @@ public final class WalkPreviewService extends Service {
 
     /** 静置超过该时长判定为停下（与 Hook 默认 20s 一致） */
     private static final long GAIT_STATIC_MS = 10_000L;
+    /**
+     * 【5.1.0】自动模式判停的默认静置时长（秒）。
+     *
+     * 4.x 是 10 秒。真机日志（13:57~16:25，3839 行）里「静置超时，判定停下 → 收起预览」
+     * 出现了 60 多次，其中大量发生在「刚弹出来十几秒」的时候：纯加速度把手持晃动
+     * 判成走路 → 弹窗 → 用户其实站着没走 → 10 秒后收起 → 又晃两下再弹。
+     * 用户描述成「在手里经常跳预览小窗」，看到的就是这个循环。
+     *
+     * 提到 15 秒：真人过马路、等红灯、低头看手机再抬头继续走，中间停 10~15 秒很常见，
+     * 15 秒能把这类正常停顿容纳进去，而不至于让误触发的小窗一闪就没。
+     */
+    private static final int DEFAULT_STOP_SEC = 15;
+    /** 本次自动显示的时刻，用于「显示驻留」判定（见 [StaticStopPolicy]） */
+    private long gaitShowTs = 0L;
     private final Handler gaitHandler = new Handler(Looper.getMainLooper());
     /**
      * 静置巡检：自动模式下超过 [GAIT_STATIC_MS] 无新步 → 判停 → 收起预览。
@@ -151,20 +191,24 @@ public final class WalkPreviewService extends Service {
         public void run() {
             long now = System.currentTimeMillis();
             long stopMs = Math.max(5, Math.min(30,
-                    SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, 10))) * 1000L;
+                    SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, DEFAULT_STOP_SEC))) * 1000L;
             // 会话基线：服务被保活复活 / START_STICKY 重建时，上一会话残留的
             // lastStepTs 会让这里在刚拉起几秒就判「静置超时」把预览收掉
             // （真机 19:06:49 复活 → 19:06:57 收起，只隔 8 秒）。
             // 判定交给 StaticStopPolicy（纯逻辑、有单测），旧时间戳作废 + 30s 宽限。
             if (gaitListener != null
                     && SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
-                    && StaticStopPolicy.shouldStop(lastStepTs, sessionStartTs, now, stopMs)) {
+                    && StaticStopPolicy.shouldStop(lastStepTs, sessionStartTs, now, stopMs,
+                            StaticStopPolicy.SESSION_GRACE_MS, gaitShowTs,
+                            StaticStopPolicy.DEFAULT_MIN_SHOW_MS, gaitWalking)) {
                 gaitWalking = false;
                 // 清零 lastStepTs：否则「超过 10s 无步」这个条件会一直成立，
                 // 每秒 tick 都重复打一条「判定停下」日志刷屏。下次真走会重新置位。
                 lastStepTs = 0L;
+                gaitShowTs = 0L;
                 lastStopTs = now;
-                DiagLog.log("[walk] 静置超时，判定停下 → 收起预览");
+                DiagLog.log("[walk] 静置超时，判定停下 → 收起预览（静置门槛 "
+                        + (stopMs / 1000) + "s）");
                 evaluateShow();
             }
 
@@ -187,6 +231,41 @@ public final class WalkPreviewService extends Service {
             } catch (Throwable t) {
                 DiagLog.logThrottled("head.down", "err", "[head-down] 评估异常: " + t.getMessage());
             }
+
+            // 久走提醒：累计（不是连续）走满 45 分钟才提醒一次，等红灯这类停顿不清零。
+            // 判定全在 LongWalkPolicy（纯逻辑、有单测），这里只负责取数与发通知。
+            try {
+                boolean longWalkOn =
+                        SafePrefs.getBool(sp, SafeWalkPrefKey.enableLongWalkRemind, false);
+                if (LongWalkPolicy.evaluate(longWalkOn, gaitWalking, now, longWalkState,
+                        LongWalkPolicy.DEFAULT_WALK_MS,
+                        LongWalkPolicy.DEFAULT_PAUSE_GRACE_MS,
+                        LongWalkPolicy.DEFAULT_COOLDOWN_MS)) {
+                    int minutes = (int) (LongWalkPolicy.DEFAULT_WALK_MS / 60_000L);
+                    new SafeWalkNotificationManager(WalkPreviewService.this).longWalkRemind(minutes);
+                    DiagLog.log("[long-walk] 累计行走满 " + minutes + " 分钟 → 已提醒歇脚");
+                }
+            } catch (Throwable t) {
+                DiagLog.logThrottled("long.walk", "err", "[long-walk] 评估异常: " + t.getMessage());
+            }
+
+            // 夜间独行提醒：只在夜间时段内累计（白天 enabled=false，累计清零）。
+            // 与夜间手电共用同一组时段配置，用户改时段两条提醒一起跟着变。
+            try {
+                boolean nightSoloOn =
+                        SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightSoloRemind, false);
+                boolean nightWindow = nightSoloOn && nightHourHit();
+                if (LongWalkPolicy.evaluate(nightWindow, gaitWalking, now, nightSoloState,
+                        LongWalkPolicy.NIGHT_WALK_MS,
+                        LongWalkPolicy.NIGHT_PAUSE_GRACE_MS,
+                        LongWalkPolicy.NIGHT_COOLDOWN_MS)) {
+                    int minutes = (int) (LongWalkPolicy.NIGHT_WALK_MS / 60_000L);
+                    new SafeWalkNotificationManager(WalkPreviewService.this).nightSoloRemind(minutes);
+                    DiagLog.log("[night-solo] 夜间累计行走满 " + minutes + " 分钟 → 已提醒留意周边");
+                }
+            } catch (Throwable t) {
+                DiagLog.logThrottled("night.solo", "err", "[night-solo] 评估异常: " + t.getMessage());
+            }
             gaitHandler.postDelayed(this, 1000L);
         }
     };
@@ -198,6 +277,17 @@ public final class WalkPreviewService extends Service {
 
     /** 低头提醒的计时 / 冷却状态（纯逻辑策略，见 HeadDownPolicy） */
     private final HeadDownPolicy.State headDownState = new HeadDownPolicy.State();
+
+    /**
+     * 久走提醒的累计状态（见 [LongWalkPolicy]）。
+     *
+     * 两条提醒各持一个 State，互不干扰：久走的 45 分钟累计不能因为夜间提醒
+     * 刚触发过就被清空，反之亦然。
+     */
+    private final LongWalkPolicy.State longWalkState = new LongWalkPolicy.State();
+
+    /** 夜间独行提醒的累计状态（规则同久走，阈值更短） */
+    private final LongWalkPolicy.State nightSoloState = new LongWalkPolicy.State();
 
     /** 悬浮窗权限被回收的累计次数：只在日志里做「是不是反复发生」的判断依据。 */
     private int overlayLostCount = 0;
@@ -349,6 +439,14 @@ public final class WalkPreviewService extends Service {
         // 否则它会在 90 秒后误判失联并再拉一次服务。
         startHeartbeat();
         sm = (SensorManager) getSystemService(SENSOR_SERVICE);
+        // 【5.3.0 横竖屏】记下服务启动时的朝向，之后对比才能判断「方向真的变了」。
+        // 不初始化的话第一次 onConfigurationChanged 会被当成「竖→横」，
+        // 即使只是切了深色模式，也会白重排一次窗口。
+        try {
+            lastOrientation = getResources().getConfiguration().orientation;
+        } catch (Throwable ignored) {
+            lastOrientation = android.content.res.Configuration.ORIENTATION_UNDEFINED;
+        }
         // 会话基线：服务实例创建即为一个新会话。StaticStopPolicy 用它作废
         // 上一会话残留的步时间戳，避免复活后立刻判「静置超时」收起预览。
         sessionStartTs = System.currentTimeMillis();
@@ -614,14 +712,145 @@ public final class WalkPreviewService extends Service {
         boolean linkEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorchGait, false);
         boolean night = isNightTime();
         boolean torchWithPreview = linkEnabled && night;
-        overlay.show(mode, opacity, corner, contrast, torchWithPreview, contrastLevel);
+
+        // 【4.9.0 小窗自定义】HUD 文案默认关：早期那句「路况预览中 · 增强对比度」
+        // 是调试遗留，用户明确反馈「没有任何价值」。这里保持空字符串 → 不显示，
+        // 只有用户在「小窗自定义」里主动打开并填写内容时才渲染文字层。
+        boolean hudEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.previewHudEnabled, false);
+        String hudText = hudEnabled
+                ? SafePrefs.getString(sp, SafeWalkPrefKey.previewHudText,
+                        SafeWalkPrefKey.PREVIEW_HUD_TEXT_DEFAULT)
+                : null;
+        if (hudText != null && hudText.trim().isEmpty()) {
+            hudText = SafeWalkPrefKey.PREVIEW_HUD_TEXT_DEFAULT;
+        }
+        int hudSize = SafePrefs.getInt(sp, SafeWalkPrefKey.previewHudTextSize,
+                RearCameraOverlay.HUD_TEXT_SIZE_DEFAULT_SP);
+        int smallWidth = SafePrefs.getInt(sp, SafeWalkPrefKey.previewSmallWidthDp,
+                RearCameraOverlay.SMALL_WIDTH_DEFAULT_DP);
+        int smallMargin = SafePrefs.getInt(sp, SafeWalkPrefKey.previewSmallMarginDp,
+                RearCameraOverlay.SMALL_MARGIN_DEFAULT_DP);
+
+        // 【5.0.0】取景范围 / 描边 / 低光增强。三者都是纯显示参数，
+        // 与「走没走」的判定无关，读不到时一律退回默认值（完整画面、无描边、不增强）。
+        int framing = SafePrefs.getInt(sp, SafeWalkPrefKey.previewFramingPct,
+                RearCameraOverlay.FRAMING_DEFAULT_PCT);
+        int border = SafePrefs.getInt(sp, SafeWalkPrefKey.previewBorderDp,
+                RearCameraOverlay.BORDER_DEFAULT_DP);
+        boolean lowLight = SafePrefs.getBool(sp, SafeWalkPrefKey.previewLowLight, false);
+
+        // 【5.1.0 画面增强】这三个值才是「让画面本身看得清」：对比度、暗部提亮、饱和度。
+        // 与上面那个 contrast（文字描边）是两件完全不同的事，所以名字里带 Screen 以示区分。
+        boolean screenEnhance = SafePrefs.getBool(sp, SafeWalkPrefKey.previewScreenEnhance, false);
+        int screenContrast = SafePrefs.getInt(sp, SafeWalkPrefKey.previewScreenContrast,
+                RearCameraOverlay.SCREEN_CONTRAST_DEFAULT);
+        int screenShadow = SafePrefs.getInt(sp, SafeWalkPrefKey.previewScreenShadowLift,
+                RearCameraOverlay.SCREEN_SHADOW_DEFAULT);
+        int screenSat = SafePrefs.getInt(sp, SafeWalkPrefKey.previewScreenSaturation,
+                RearCameraOverlay.SCREEN_SATURATION_DEFAULT);
+
+        // 【5.1.0 智能方案】跟随系统深色模式，浅色模式用户按自己设的夜间时段判断。
+        //
+        // 只在「跟随」开启时生效，且**不写回 SharedPreferences**：用户手动调过的
+        // 滑块值原样保留，关掉跟随立刻恢复 —— 自动化的东西一旦偷偷改配置，
+        // 用户就再也回不到他调好的那套参数了。
+        //
+        // 文字开关（hudEnabled）刻意不在方案里被覆盖：三个预设的 hud 都是 false，
+        // 照搬会把用户主动打开的状态文字关掉，那不是「智能」，是自作主张。
+        if (SafePrefs.getBool(sp, SafeWalkPrefKey.presetAuto, true)) {
+            boolean darkMode = isSystemDarkMode();
+            int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+            int startH = SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchStartHour, 22);
+            int endH = SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchEndHour, 6);
+            PresetResolve.Params preset = PresetResolve.resolveParams(darkMode, hour, startH, endH);
+            framing = preset.framing;
+            border = preset.borderDp;
+            lowLight = preset.lowLight;
+            screenEnhance = preset.screenEnhance;
+            screenContrast = preset.screenContrast;
+            screenShadow = preset.screenShadowLift;
+            screenSat = preset.screenSaturation;
+            DiagLog.log("[style] 智能方案 | " + PresetResolve.reason(darkMode, hour, startH, endH)
+                    + " → 取景=" + framing + "% 描边=" + border + "dp 低光=" + lowLight
+                    + " 画面对比=" + screenContrast + "% 暗部=" + screenShadow + "%");
+        }
+
+        // 【5.3.0 画面方向】auto / fixed / flip。刷不到值时按 auto ——
+        // 方向自动纠正是「看得见路」的前提，宁可多转一次也不能不转。
+        String rotationMode = SafePrefs.getString(sp, SafeWalkPrefKey.previewRotationMode,
+                PreviewOrientationPolicy.MODE_AUTO);
+        rotationMode = PreviewOrientationPolicy.normalizeMode(rotationMode);
+
+        overlay.show(mode, opacity, corner, contrast, torchWithPreview, contrastLevel,
+                hudText, hudSize, smallWidth, smallMargin, framing, border, lowLight,
+                screenEnhance, screenContrast, screenShadow, screenSat, rotationMode);
         DiagLog.log("[torch:overlay] 小窗联动闪光灯 | 开关=" + linkEnabled
                 + " 夜间区间=" + night + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
                 + " | 生命周期=小窗显示即亮、收起即灭（预览会话内 FLASH_MODE_TORCH）");
         DiagLog.log("[overlay] doShow | mode=" + mode + " opacity=" + opacity
-                + " corner=" + corner + " 增强对比度=" + contrast + "(" + contrastLevel + "%)"
-                + " | 窗口生命周期=attach/update（容器含画面层+HUD层）");
+                + " corner=" + corner + " 文字描边=" + contrast + "(" + contrastLevel + "%)"
+                + " 文字=" + (hudText == null ? "关" : hudText + "/" + hudSize + "sp")
+                + " 小窗=" + smallWidth + "dp 边距=" + smallMargin + "dp"
+                + " 取景=" + framing + "% 描边=" + border + "dp 低光增强=" + lowLight
+                + " | 画面增强=" + screenEnhance + "(对比 " + screenContrast
+                + "% 暗部 " + screenShadow + "% 饱和 " + screenSat + "%)"
+                + " | 方向=" + rotationMode);
         reportPreviewState();
+    }
+
+    /**
+     * 系统当前是否处于深色模式。
+     *
+     * 直接读 Configuration，而不是去问 PowerManager / UiModeManager：
+     * 配置里的 UI_MODE_NIGHT_YES 就是「系统现在是深色」这个事实本身，
+     * 而且深色模式切换时本进程会收到 onConfigurationChanged（见下方覆写），
+     * 判定与刷新走的是同一份数据，不会出现「日志说深色、界面还是白天」。
+     */
+    private boolean isSystemDarkMode() {
+        try {
+            int mode = getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+            return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 【5.1.0 智能方案 / 5.3.0 横竖屏】配置变化时立刻跟上。
+     *
+     * 两件事共用这一个回调，但**必须各自独立判断**：
+     *  · 屏幕方向变了 → 窗口要换尺寸、画面要重新算旋转。与「智能方案开不开」无关，
+     *    方向错了就是看不了路。旧实现第一行就 `if (!presetAuto) return;`，
+     *    于是关掉智能方案的用户把手机横过来，小窗画面永远侧躺。
+     *  · 深色模式变了 → 只有在「跟随自动方案」开启时才重算白天/夜间那套参数。
+     *
+     * 没有这个覆写，日落时系统自动切深色，小窗还停在白天那套（无增强、完整取景），
+     * 要么等到下次「走起来」才更新 —— 而人往往正在走，正是最需要看清的时候。
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (overlay == null || !overlay.getShowing()) return;
+
+        boolean rotated = lastOrientation != android.content.res.Configuration.ORIENTATION_UNDEFINED
+                && newConfig.orientation != lastOrientation;
+        lastOrientation = newConfig.orientation;
+        if (rotated) {
+            boolean landscape = newConfig.orientation
+                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+            DiagLog.log("[style] 屏幕方向变化 → " + (landscape ? "横屏" : "竖屏")
+                    + "，重排窗口并重算画面方向");
+            try {
+                overlay.onDisplayChanged();
+            } catch (Throwable t) {
+                DiagLog.log("[style] 方向重排失败: " + t.getMessage());
+            }
+        }
+
+        if (!SafePrefs.getBool(sp, SafeWalkPrefKey.presetAuto, true)) return;
+        DiagLog.log("[style] 系统配置变化（深色模式切换）→ 重算智能方案");
+        doShow();
     }
 
     /**
@@ -636,6 +865,20 @@ public final class WalkPreviewService extends Service {
         DiagLog.log("[torch:time] 小窗联动时段 | 当前=" + hour + " 时 生效区间="
                 + start + ":00~" + end + ":00 命中=" + hit);
         return hit;
+    }
+
+    /**
+     * 只算不记日志的夜间判定。
+     *
+     * [isNightTime] 每调一次都会写一行 `[torch:time]`。夜间独行提醒跑在 1 秒一次的
+     * 巡检里，直接复用它等于每秒刷一行日志——正是 4.5.0 修掉的日志洪泛。
+     * 判定逻辑与它保持同一组配置项，只是把日志出口让给调用方按需节流。
+     */
+    private boolean nightHourHit() {
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        int start = SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchStartHour, 22);
+        int end = SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchEndHour, 6);
+        return hour >= start || hour < end;
     }
 
     /**
@@ -765,7 +1008,8 @@ public final class WalkPreviewService extends Service {
                             "[GUARD] ⛔ 累计步已达门槛但姿态/节律不可信，抑制激活 | 累计="
                                     + guardCnt + "/" + guardNeed
                                     + " 姿态=" + attitude + " 节律稳定=" + stable
-                                    + " 硬件计步(10s)=" + hwSteps
+                                    + " 硬件计步=" + hwSteps + "/" + (stepCallbackIntervalEma / 1000)
+                                    + "s窗 通道=" + stepChannel().name()
                                     + " | 防床上/沙发平放抖动误触",
                             3_000L, 3_000L);
                 }
@@ -778,6 +1022,9 @@ public final class WalkPreviewService extends Service {
                     if (hw && cool) {
                         lastStepTs = now;
                         gaitWalking = true;
+                        // 记录本次自动显示的时刻：StaticStopPolicy 用它做「显示驻留」，
+                        // 保证误判弹出的小窗不会在 12 秒内一闪就消失
+                        gaitShowTs = now;
                         DiagLog.log("[ACTIVE] ✅ 激活行走模式 | 触发源="
                                 + (stepTick ? "feedAcc合格步" : "累计合格步达标(姿态/节律闸门已放行)")
                                 + " 累计=" + gait.confirmedStepCount() + "/"
@@ -785,8 +1032,10 @@ public final class WalkPreviewService extends Service {
                                 + " 硬件确认=过 冷却=过 → 显示预览");
                         evaluateShow();
                     } else {
-                        DiagLog.logThrottled("gait.active", "hw=" + hw + ",cool=" + cool,
+                        DiagLog.logThrottled("gait.active",
+                                "hw=" + hw + ",cool=" + cool + ",ch=" + stepChannel(),
                                 "[ACTIVE] ⏸ 达标但被拦截：硬件计步确认=" + (hw ? "过" : "拦")
+                                        + "(" + stepChannel().name() + ")"
                                         + " 收起冷却=" + (cool ? "过" : "拦")
                                         + " 累计=" + gait.confirmedStepCount() + "/"
                                         + gait.getConfirmSteps(),
@@ -828,6 +1077,7 @@ public final class WalkPreviewService extends Service {
         unregisterStepCounter();
         gaitWalking = false;
         lastStepTs = 0L;
+        gaitShowTs = 0L;
         walkingStreakStartTs = 0L;
         lastGuardCountSnapshot = 0;
         accelStepTs.clear();
@@ -836,55 +1086,177 @@ public final class WalkPreviewService extends Service {
 
     // ========== 硬件计步器（防误触确认） ==========
 
-    /** 注册系统硬件计步器：真迈步才计数，拿手机乱动不计数 */
+    /**
+     * 注册系统硬件计步通道：真迈步才计数，拿手机乱动不计数。
+     *
+     * 【5.2.0 双通道】
+     * 只注册 TYPE_STEP_COUNTER 是 5.1.0 那个「走了十几分钟一次没弹」的直接原因：
+     * COUNTER 是**累计型**传感器，回调时机由 HAL 决定，小米/三星实测 **10~60 秒**
+     * 才上报一次（省电策略会合并高频回调）。代码却用「最近 10 秒内步数」判定有没有
+     * 在走路 —— 只要上报间隔超过 10 秒，这个窗口**恒为 0**，于是一路
+     * `[gait] ⛔ 硬件计步器 10 秒 0 步 → 判未行走`，`return false` 之后再也
+     * 走不到纯加速度兜底，形成死锁。
+     *
+     * 现在：
+     *   · **TYPE_STEP_DETECTOR 为主**：事件型，每走一步回调一次，实时性够；
+     *   · **TYPE_STEP_COUNTER 为备**：DETECTOR 不可用的机型（少数 ROM 裁掉了）兜底；
+     *   · 两路都往 [stepEventQueue] 塞，共用同一套窗口与健康度判定。
+     */
     private void registerStepCounter() {
-        if (stepCounterListener != null) return;
+        if (stepCounterListener != null || stepDetectorListener != null) return;
         if (sm == null) return;
-        stepCounterSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
-        if (stepCounterSensor == null) {
-            stepCounterAlive = false;
-            DiagLog.log("[gait] 无硬件计步器：防误触确认停用（纯加速度判定）");
-            return;
-        }
         stepEventQueue.clear();
         stepCounterAlive = false;
         everSteppedTotal = 0L;
         lastTotalSteps = -1L;
+        lastStepCallbackTs = 0L;
+        stepCallbackIntervalEma = 0L;
+        lastLoggedChannelOrdinal = -1;
+
+        registerStepDetector();
+        registerStepCounterSensor();
+    }
+
+    /**
+     * 逐帧计步通道（每步一次回调）。
+     *
+     * 部分 ROM（含少数三星旧版本）为了省电会把这个传感器藏起来，
+     * 拿不到时静默跳过，交给 COUNTER 与纯加速度兜底。
+     */
+    private void registerStepDetector() {
+        stepDetectorSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
+        stepDetectorRegistered = false;
+        if (stepDetectorSensor == null) {
+            DiagLog.log("[gait] 本机无逐帧计步器(TYPE_STEP_DETECTOR)，仅用累计计步器");
+            return;
+        }
+        stepDetectorListener = new SensorEventListener() {
+            @Override
+            public void onSensorChanged(SensorEvent e) {
+                if (e == null || e.values == null || e.values.length < 1) return;
+                long now = SystemClock.elapsedRealtime();
+                markStepCallback(now);
+                stepCounterAlive = true;
+                everSteppedTotal++;
+                stepEventQueue.addLast(now);
+                trimStepQueue(now, StepHealthPolicy.MAX_WINDOW_MS);
+            }
+
+            @Override
+            public void onAccuracyChanged(Sensor s, int accuracy) {}
+        };
+        try {
+            stepDetectorRegistered = sm.registerListener(
+                    stepDetectorListener, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI);
+            DiagLog.log("[gait] 逐帧计步器注册" + (stepDetectorRegistered ? "成功" : "被拒")
+                    + " | " + stepDetectorSensor.getName());
+        } catch (Throwable t) {
+            stepDetectorRegistered = false;
+            stepDetectorListener = null;
+            DiagLog.log("[gait] 逐帧计步器注册抛异常: " + t.getMessage());
+        }
+    }
+
+    /** 累计计步通道（HAL 决定上报时机，通常 10~60 秒一次） */
+    private void registerStepCounterSensor() {
+        stepCounterSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+        stepCounterRegistered = false;
+        if (stepCounterSensor == null) {
+            DiagLog.log("[gait] 本机无累计计步器(TYPE_STEP_COUNTER)");
+            return;
+        }
         stepCounterListener = new SensorEventListener() {
             @Override
             public void onSensorChanged(SensorEvent e) {
                 if (e == null || e.values == null || e.values.length < 1) return;
                 long now = SystemClock.elapsedRealtime();
-                stepCounterAlive = true;
                 // TYPE_STEP_COUNTER 是累计传感器：values[0]=总步数，按增量计步
                 long total = (long) e.values[0];
                 if (lastTotalSteps < 0L) {
                     // 首次回调只记基线，不算一步
                     lastTotalSteps = total;
-                } else if (total > lastTotalSteps) {
+                    return;
+                }
+                if (total > lastTotalSteps) {
                     long delta = total - lastTotalSteps;
                     lastTotalSteps = total;
+                    markStepCallback(now);
+                    stepCounterAlive = true;
                     everSteppedTotal += delta;
                     for (long i = 0; i < delta; i++) {
                         stepEventQueue.addLast(now);
                     }
-                }
-                while (!stepEventQueue.isEmpty()
-                        && now - stepEventQueue.peekFirst() > STEP_CONFIRM_WINDOW_MS) {
-                    stepEventQueue.pollFirst();
+                    trimStepQueue(now, StepHealthPolicy.MAX_WINDOW_MS);
                 }
             }
+
             @Override
             public void onAccuracyChanged(Sensor s, int accuracy) {}
         };
         try {
-            sm.registerListener(stepCounterListener, stepCounterSensor,
-                    SensorManager.SENSOR_DELAY_UI);
+            stepCounterRegistered = sm.registerListener(
+                    stepCounterListener, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
         } catch (Throwable t) {
             stepCounterListener = null;
-            stepCounterAlive = false;
-            DiagLog.log("[gait] 硬件计步器注册失败，防误触确认停用: " + t.getMessage());
+            stepCounterRegistered = false;
+            DiagLog.log("[gait] 累计计步器注册失败: " + t.getMessage());
         }
+        if (!stepCounterRegistered && !stepDetectorRegistered) {
+            DiagLog.log("[gait] 两路计步器均不可用 → 纯加速度判定（建议到系统设置允许「身体活动」）");
+        }
+    }
+
+    /**
+     * 记录一次计步回调，并维护回调间隔的滑动平均。
+     *
+     * 间隔 EMA 是自适应窗口的输入：COUNTER 上报越稀疏，窗口就自动放得越宽，
+     * 避免「窗口 10 秒、回调 30 秒」这种**窗口必然为空**的错配。
+     */
+    private void markStepCallback(long now) {
+        if (lastStepCallbackTs > 0L && now > lastStepCallbackTs) {
+            long d = now - lastStepCallbackTs;
+            // 上限夹到 60 秒：息屏唤醒等异常间隔不该把平均值拉爆
+            d = Math.min(d, StepHealthPolicy.MAX_WINDOW_MS);
+            stepCallbackIntervalEma = (stepCallbackIntervalEma == 0L)
+                    ? d : (stepCallbackIntervalEma * 7L + d * 3L) / 10L;
+        }
+        lastStepCallbackTs = now;
+    }
+
+    /** 丢掉窗口外的旧步，避免长期运行后队列无限增长 */
+    private void trimStepQueue(long now, long windowMs) {
+        while (!stepEventQueue.isEmpty() && now - stepEventQueue.peekFirst() > windowMs) {
+            stepEventQueue.pollFirst();
+        }
+    }
+
+    /**
+     * 当前计步通道健康度。
+     *
+     * 详见 [StepHealthPolicy]：只有 LIVE 才有资格「否决」一次激活；
+     * NONE / DENIED / STALE 一律降级到纯加速度判定，而不是把功能判死。
+     */
+    private StepHealthPolicy.Channel stepChannel() {
+        boolean has = stepCounterSensor != null || stepDetectorSensor != null;
+        boolean ok = stepCounterRegistered || stepDetectorRegistered;
+        long age = (lastStepCallbackTs == 0L)
+                ? Long.MAX_VALUE
+                : Math.max(0L, SystemClock.elapsedRealtime() - lastStepCallbackTs);
+        return StepHealthPolicy.channelOf(has, ok, everSteppedTotal > 0L, age);
+    }
+
+    /**
+     * 通道降级时只说明一次，避免每帧刷屏。
+     *
+     * 用户看日志时最需要分清的是「我手机没有计步器」「权限没给」「被系统限流」
+     * 这三种完全不同的处境 —— 它们以前都表现为同一句「10 秒 0 步」。
+     */
+    private void logChannelOnce(StepHealthPolicy.Channel channel) {
+        if (lastLoggedChannelOrdinal == channel.ordinal()) return;
+        lastLoggedChannelOrdinal = channel.ordinal();
+        DiagLog.log("[gait] 计步通道降级 → " + channel.name()
+                + " | " + StepHealthPolicy.describe(channel)
+                + " | 已出步=" + everSteppedTotal);
     }
 
     private void unregisterStepCounter() {
@@ -892,20 +1264,49 @@ public final class WalkPreviewService extends Service {
             try { sm.unregisterListener(stepCounterListener); } catch (Throwable ignored) {}
             stepCounterListener = null;
         }
+        if (stepDetectorListener != null) {
+            try { sm.unregisterListener(stepDetectorListener); } catch (Throwable ignored) {}
+            stepDetectorListener = null;
+        }
+        stepCounterRegistered = false;
+        stepDetectorRegistered = false;
         stepEventQueue.clear();
         stepCounterAlive = false;
         everSteppedTotal = 0L;
         lastTotalSteps = -1L;
+        lastStepCallbackTs = 0L;
+        stepCallbackIntervalEma = 0L;
+        lastLoggedChannelOrdinal = -1;
     }
 
-    /** 最近 10 秒内硬件计步数 */
+    /** 最近 [STEP_CONFIRM_WINDOW_MS] 内的硬件计步数（仅日志用，判定用自适应窗口） */
     private int stepCountInWindow() {
+        return stepCountInWindow(STEP_CONFIRM_WINDOW_MS);
+    }
+
+    /**
+     * 指定窗口内的硬件计步数（**只读**，不改动队列）。
+     *
+     * 【5.2.0 改成只读的原因】
+     * 旧版这里一边数一边 `pollFirst()` 把窗口外的步丢掉。5.2.0 引入自适应窗口后，
+     * 同一个队列会被不同窗口长度分别查询（诊断日志用 10s、判定用 10~60s），
+     * 谁先调用就把队列裁到自己的长度 —— 10s 的那次会**永久删掉** 10~60s 区间的步，
+     * 让随后按 60s 判定的那次数不到数据，等于把自适应窗口废掉。
+     *
+     * 裁剪只在回调里做（[trimStepQueue] 按 [StepHealthPolicy.MAX_WINDOW_MS]），
+     * 那是唯一需要控制内存的地方；查询一律不改状态。
+     */
+    private int stepCountInWindow(long windowMs) {
         long now = SystemClock.elapsedRealtime();
-        while (!stepEventQueue.isEmpty()
-                && now - stepEventQueue.peekFirst() > STEP_CONFIRM_WINDOW_MS) {
-            stepEventQueue.pollFirst();
+        int n = 0;
+        // 队列按时间升序（addLast 单调递增），从尾部往前数到出窗为止最省
+        java.util.Iterator<Long> it = stepEventQueue.descendingIterator();
+        while (it.hasNext()) {
+            long ts = it.next();
+            if (now - ts > windowMs) break;
+            n++;
         }
-        return stepEventQueue.size();
+        return n;
     }
 
     /** 当前连续步流已持续的毫秒数；未起步返回 0 */
@@ -916,46 +1317,46 @@ public final class WalkPreviewService extends Service {
 
     /**
      * 硬件计步确认（自适应，既不误杀走路、也不放过床上/沙发误触）：
-     * 1) 无计步器 / 传感器从未回调 → **不再无条件放行**，走纯加速度严格判定
-     *    [accelOnlyConfirm]（旧版 `return true` 是沙发误触的第二道闸失效点）。
-     * 2) 计步器在线但从未出数（ACTIVITY_RECOGNITION 未授予或被后台掐断）→ 同上严格判定。
-     * 3) 计步器在线且出过数、但最近 10 秒 0 步 → 直接拦。TYPE_STEP_COUNTER 是
-     *    硬件物理计数，真迈步必然 +1；10 秒 0 步就说明没在走路，此时若还按
-     *    「纯加速度累计达标」放行，等于给严格校验开后门（真机 13:08:15 现场）。
-     * 4) 计步器正常出数 → 10 秒内 ≥2 步直接放行（硬件背书最可靠）；
-     *    0 < 步数 < 2 时保留兜底，但必须同时满足「节律稳定 + 连续步流够久」。
+     *
+     * 【5.2.0 引入健康度，修的是死锁】
+     * 5.1.0 只看两个布尔量：`stepCounterAlive` 与 `everSteppedTotal`。二者成立之后，
+     * 「最近 10 秒 0 步」就直接 `return false` —— 看似合理，实则把**稀疏上报**
+     * 误判成**没在走路**。真机日志（2026-11-14，Redmi / HyperOS 4）18 分钟内
+     * 这条分支命中 27 次，`[ACTIVE] ✅ 激活` **0 次**，自动跟随全程失效。
+     *
+     * 现在先问 [stepChannel]：
+     * | 健康度 | 处理 |
+     * |---|---|
+     * | NONE / DENIED | 纯加速度严格判定（[accelOnlyConfirm]） |
+     * | STALE（回调已停 >45s） | 同样走纯加速度 —— 信号不可用 ≠ 你没走 |
+     * | LIVE | 用**自适应窗口**（按实际回调间隔放大）数步，再判 |
+     *
+     * 只有 LIVE 才有否决权：这是 [StepHealthPolicy.canVeto] 的唯一用途。
      */
     private boolean hardwareStepConfirm() {
-        // 【沙发误触修复】计步器不可用时绝不无条件放行：旧版这里直接 return true，
-        // 让第二道防误触闸形同虚设，沙发上有节奏地晃手机就能弹出小窗（真机日志
-        // 12:47:33 / 12:49:23 两次）。改为纯加速度严格判定。
-        if (!stepCounterAlive) return accelOnlyConfirm();
-        if (everSteppedTotal == 0L) {
-            // 计步器在线但从未出数：同样退回严格判定，而不是「非平躺就放行」。
+        StepHealthPolicy.Channel channel = stepChannel();
+
+        // 非 LIVE 一律降级：把「信号不可用」当成「没走路」正是 5.1.0 的死锁来源
+        if (channel != StepHealthPolicy.Channel.LIVE) {
+            logChannelOnce(channel);
             return accelOnlyConfirm();
         }
-        int n = stepCountInWindow();
+
+        // 自适应窗口：COUNTER 上报越稀疏，窗口越宽，避免「10 秒窗口 / 30 秒回调」错配
+        long window = StepHealthPolicy.windowMs(stepCallbackIntervalEma);
+        int n = stepCountInWindow(window);
         if (n >= STEP_CONFIRM_MIN) return true;
 
         // 【沙发误触修复 v2 · 真机日志 13:08:15 / 13:08:52 / 13:09:56】
-        // 计步器在线、历史上出过数，但最近 10 秒一步未出 —— 这是「没在走路」的
-        // 硬证据（TYPE_STEP_COUNTER 是硬件物理计数，真迈一步必然 +1）。
-        //
-        // 旧版此时仍允许「累计合格步 ≥ 门槛×2」放行，而 confirmedStepCount() 是
-        // 纯加速度自己数出来的，于是沙发上晃手机只要攒够 10 个加速度峰就必然弹窗：
-        // 日志里 13:08:07 / 13:08:10 / 13:08:13 连续三次被拦，13:08:15 一到 10 步
-        // 立刻「放行显示」，此后每 40 秒弹一次小窗（13:08:52、13:09:5x 循环）。
-        // 这条兜底等于给严格校验开了后门，必须堵掉。
+        // 通道 LIVE（刚刚还在正常上报）却在这个窗口里一步未出 —— 这才是「没在走路」
+        // 的硬证据。旧版此时仍允许「累计合格步 ≥ 门槛×2」放行，等于给严格校验开后门，
+        // 沙发上有节奏地晃手机就能弹窗，必须堵掉。
         if (n == 0) {
-            // 【2026-11-11 洪泛修复】此处原来直接 DiagLog.log，而本方法在
-            // onSensorChanged 里按帧调用（SENSOR_DELAY_UI，每秒几十帧）；窗口满格后
-            // (stepTick || countReached) 近乎恒真，真机 19:11:38 一秒刷出 80+ 条，
-            // 把 512KB 文件和 400 行环形缓冲全部冲掉，现场日志就此断尾。
-            // 判定与 return **一字不改**，只把日志换成按原因节流的统一出口。
             DiagLog.logThrottled("gait.hw", "zero",
-                    "[gait] ⛔ 硬件计步器 10 秒 0 步（真走路不可能不出数）"
-                            + " → 判未行走，抑制激活 | 纯加速度累计="
-                            + gait.confirmedStepCount(),
+                    "[gait] ⛔ 计步通道在线但 " + (window / 1000) + " 秒 0 步"
+                            + "（真走路不可能不出数）→ 判未行走，抑制激活 | 纯加速度累计="
+                            + gait.confirmedStepCount()
+                            + " 回调间隔≈" + (stepCallbackIntervalEma / 1000) + "s",
                     2_000L, 10_000L);
             return false;
         }
@@ -1002,11 +1403,12 @@ public final class WalkPreviewService extends Service {
             // 只在每段监听里说一次：用户反馈「自动跟随不灵」时，先看这行就能分清
             // 是「本机没有计步器」还是「权限被拒/被后台掐断」，不用再猜。
             accelFallbackLogged = true;
+            StepHealthPolicy.Channel ch = stepChannel();
             DiagLog.log("[gait] 本机走纯加速度判定 | 计步传感器="
-                    + (stepCounterSensor != null ? "有" : "无")
+                    + (stepCounterSensor != null || stepDetectorSensor != null ? "有" : "无")
                     + " 已出步=" + everSteppedTotal
-                    + (stepCounterSensor != null && everSteppedTotal == 0L
-                       ? "（疑似未授予「身体活动」权限或被后台限制，建议在系统设置里允许）" : ""));
+                    + " 通道=" + ch.name()
+                    + " | " + StepHealthPolicy.describe(ch));
         }
         WalkConfirmPolicy.Verdict v = accelPolicy.evaluate(
                 gait.getAttitude() == PhoneAttitude.LAY_FLAT,

@@ -180,12 +180,15 @@ public class RomRegistryTest {
 
     @Test
     public void detectorNeverGuessesOnUnknownVendor() {
-        assertEquals("三星不该被猜成国产四家", RomId.AOSP,
-                RomDetector.detect("samsung", "samsung", "SM-S918B"));
-        assertEquals("摩托罗拉同理", RomId.AOSP,
+        assertEquals("摩托罗拉不该被猜成任何一家", RomId.AOSP,
                 RomDetector.detect("motorola", "motorola", "lynx"));
+        assertEquals("索尼同理", RomId.AOSP,
+                RomDetector.detect("Sony", "sony", "XQ-DQ72"));
         assertEquals("全空也要安全", RomId.AOSP, RomDetector.detect(null, null, null));
         assertEquals(RomId.AOSP, RomDetector.detect("", "", ""));
+        // 【5.2.0】三星已单独建档，不再是「未知厂商」——这一条改成反向锁
+        assertEquals("三星必须命中 ONEUI，不能落 AOSP", RomId.ONEUI,
+                RomDetector.detect("samsung", "samsung", "SM-S918B"));
     }
 
     // ---------------------------------------------------------------- 合并与文案

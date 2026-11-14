@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    功能建议（关于页 → 二级页）。
+
+    目标不是做一个「留言板」——留言板没人看。这里只做一件事：
+    把用户那句「能不能加个 XX」变成一条格式完整、自带环境信息的 GitHub issue，
+    让建议真的能落到代码里，而不是沉在某个表单后台。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fitsSystemWindows="true"
+    android:padding="16dp"
+    android:paddingTop="40dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:id="@+id/btn_back"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingVertical="4dp"
+            android:text="‹ 关于"
+            android:textColor="@color/primary"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="功能建议"
+            android:textColor="@color/text_primary"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="想加什么、哪里不好用，写在这里。提交时会自动带上机型与版本，省掉来回问的一轮。"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
+
+        <!-- 建议内容 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="你的建议" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <EditText
+                android:id="@+id/et_suggestion"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@null"
+                android:gravity="top|start"
+                android:hint="例如：希望小窗能一键切换前后摄像头"
+                android:inputType="textMultiLine"
+                android:lineSpacingExtra="4dp"
+                android:minLines="5"
+                android:padding="16dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_hint"
+                android:textSize="15sp" />
+        </LinearLayout>
+
+        <!-- 环境信息 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="附带信息" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:id="@+id/card_attach"
+                style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="附上设备信息" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="机型、系统版本、应用版本。没有这些很难复现问题" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_attach"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <TextView
+                android:id="@+id/tv_env_preview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:lineSpacingExtra="3dp"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp"
+                android:textColor="@color/text_hint"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_submit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:backgroundTint="@color/primary"
+            android:text="去 GitHub 提交"
+            android:textColor="@color/on_accent" />
+
+        <Button
+            android:id="@+id/btn_copy"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="@color/card_bg"
+            android:text="复制内容"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:lineSpacingExtra="3dp"
+            android:text="提交会打开 GitHub 页面，需要你有账号并已登录。没有账号也没关系：点「复制内容」，把文字发到酷安评论区同样能看到。"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

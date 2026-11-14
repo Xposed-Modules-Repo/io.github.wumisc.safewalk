@@ -175,6 +175,18 @@ public class LabActivity extends Activity implements SensorEventListener {
                     testNotify("久坐提醒", "已坐了2小时了，该起来运动运动了");
                     log("久坐提醒");
                 }},
+                // 久走 / 夜间独行：真机走满 45 分钟才能看到，这里直接出文案，
+                // 供用户确认「长什么样」；真实触发链路见 WalkPreviewService 的 [long-walk]/[night-solo] 日志
+                {"久走提醒", (Runnable) () -> {
+                    testNotify("SafeWalk 久走提醒",
+                            "已经连着走了 45 分钟。找个地方坐五分钟，顺便喝口水——腿不酸，路才走得稳。");
+                    log("久走提醒");
+                }},
+                {"夜间独行提醒", (Runnable) () -> {
+                    testNotify("SafeWalk 夜间独行",
+                            "夜间已经走了 10 分钟。过路口多看一眼两侧，走有灯的一侧；把行程告诉家人，多一层照应。");
+                    log("夜间独行提醒");
+                }},
                 {"社交礼仪", (Runnable) () -> {
                     testNotify("社交提示", "守时，不打探隐私，不强行劝酒");
                     log("社交礼仪");

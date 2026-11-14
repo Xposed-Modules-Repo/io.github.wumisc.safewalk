@@ -1,7 +1,7 @@
 # ROM 支持矩阵
 
 > 本表是**测试台账**，不是宣传页。状态只反映「跑过什么」，不反映「应该能行」。
-> 最后更新：2026-11-13（4.8.0：新增 Flyme 一列；P4 真机验证仍未开始）
+> 最后更新：2026-11-14（5.2.0：新增三星 One UI 一列；P4 真机验证仍未开始）
 
 ## 图例
 
@@ -15,23 +15,28 @@
 > 「✅」≠「这家 ROM 上一定好用」。它只表示「这一条不需要真机就能确认的部分是对的」。
 > 真正的可用性判断必须看 🟡 项的真机结果。
 
-## 九项能力 × 六家厂商 + 原生
+## 九项能力 × 七家厂商 + 原生
 
-| # | 能力 | HyperOS | MagicOS | ColorOS | OriginOS | 华为 | Flyme | AOSP | 依据 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Hook 注入（4 锚点 + 兜底） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 代码静态可确认 4 条路径，命中情况需真机日志 |
-| 2 | 前台服务降级链 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HyperOsCompatStrategyTest` 6 条：camera 优先、三档共用、不看版本 |
-| 3 | 悬浮窗显示前复核 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 策略常量 + `verifyBeforeShow`，真机需验回收场景 |
-| 4 | 自启动页 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | — | P1 已接通：候选 → `resolveActivity` → 打开 → 回退详情页；组件名需真机验 |
-| 5 | 电池白名单 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 六家共用标准 action（`REQUEST_IGNORE` → `IGNORE_BATTERY_OPTIMIZATION_SETTINGS` → 详情页），无厂商私有页 |
-| 6 | 磁贴 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | `WalkTileStatePolicyTest` 6 条通过；真机需验添加与切换 |
-| 7 | 无障碍收起小窗 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `CameraAppPolicyTest` 4 条；包名并集已由 `RomRegistryTest` 验证 |
-| 8 | 图标（三层 + 主题图标） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | P3 已实现：矢量前景 + `monochrome` 层 + 渐变背景；各家的主题图标效果需真机看 |
-| 9 | 进程回收后自动恢复 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | `KeepAlivePolicy` 15 条单测 + 30s 心跳 / 90s 超时 / 静态兜底；杀进程→复活未真机跑通 |
+| # | 能力 | HyperOS | MagicOS | ColorOS | OriginOS | 华为 | Flyme | 三星 | AOSP | 依据 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Hook 注入（4 锚点 + 兜底） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 代码静态可确认 4 条路径，命中情况需真机日志 |
+| 2 | 前台服务降级链 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HyperOsCompatStrategyTest` 6 条：camera 优先、三档共用、不看版本 |
+| 3 | 悬浮窗显示前复核 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 策略常量 + `verifyBeforeShow`，真机需验回收场景 |
+| 4 | 自启动页 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | — | P1 已接通：候选 → `resolveActivity` → 打开 → 回退详情页；组件名需真机验 |
+| 5 | 电池白名单 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 七家共用标准 action（`REQUEST_IGNORE` → `IGNORE_BATTERY_OPTIMIZATION_SETTINGS` → 详情页）；三星额外有 `lool/BatteryActivity` |
+| 6 | 磁贴 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | `WalkTileStatePolicyTest` 6 条通过；真机需验添加与切换 |
+| 7 | 无障碍收起小窗 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `CameraAppPolicyTest` 4 条；包名并集已由 `RomRegistryTest` 验证（三星 `com.sec.android.app.camera`） |
+| 8 | 图标（三层 + 主题图标） | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | P3 已实现：矢量前景 + `monochrome` 层 + 渐变背景；各家的主题图标效果需真机看 |
+| 9 | 进程回收后自动恢复 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | `KeepAlivePolicy` 15 条单测 + 30s 心跳 / 90s 超时 / 静态兜底；杀进程→复活未真机跑通 |
 
 > 第 9 行全列 🟡：代码与单测就绪，但「ROM 杀掉 App 进程 → 看门狗 90 秒内拉回来」这条链路
 > 一次都没在真机上跑过。心跳显式投递 `com.android.systemui` 与 `com.miui.systemui`，
 > 第三种包名会让看门狗进入 3 分钟一次的盲区重试。详见 [docs/keepalive.md](keepalive.md)。
+
+> 三星一列是 5.2.0 新加的：One UI **没有「自启动管理」开关**，控制冻结的是
+> 「设备维护 → 电池 → 后台使用限制」里的休眠名单，所以 `AUTOSTART` 与 `BATTERY`
+> 指向同一个 `com.samsung.android.lool/...BatteryActivity` —— 这是设计，不是漏写。
+> 三条候选（子路径两套 + Android 7 老包名）都没在三星真机上 resolve 过，标 🟡。
 
 > Flyme 一列是 4.8.0 新加的：自启动首选落在 `com.meizu.safe` 的 `SHOW_APPSEC`，备选 `SmartBGActivity`，
 > 两条都只做静态核对，**没在魅族真机上点过**。魅蓝（`mblu`）与魅族共用这一列。

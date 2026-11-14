@@ -224,6 +224,21 @@
             android:theme="@style/Theme.Safewalk"
             android:label="行走模式" />
 
+        <!-- 预览小窗自定义（行走模式的三级页）：只从行走模式页进入，不对外导出 -->
+        <activity
+            android:name=".PreviewStyleActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="小窗自定义" />
+
+        <!-- 功能建议：从关于页进入 -->
+        <activity
+            android:name=".FeedbackActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="功能建议"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".LabActivity"
             android:exported="false"

@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    权限与无障碍（关于 → 二级页）。
+
+    【为什么从「纯代码建布局」改成 XML】
+    这一页原本是 963 行 Kotlin 里手搓的 LinearLayout：自己算 padding、自己写
+    十六进制色值、自己造按钮样式。结果是它成了全应用唯一一个「长得不像自己」
+    的页面：标题顶在状态栏下面、条目没有卡片、按钮是系统灰底、深色模式靠
+    一段 if(night) 覆写十几个变量。
+
+    改成 XML + 复用全局 style 之后：配色自动跟随 values-night、
+    版式与急救卡 / 智能提醒 / 行走模式完全一致。代码只负责动态插条目与刷状态。
+
+    【状态栏】
+    根节点用 @style/PageScroll：它带 fitsSystemWindows + 40dp 顶部内边距，
+    与所有二级页同一套参数。原来手写的 ScrollView 没有这两项，
+    内容从屏幕 y=0 开始画，标题就被状态栏压住了。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageScroll">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/btn_back"
+            style="@style/BackLink"
+            android:text="‹ 返回" />
+
+        <TextView
+            style="@style/PageTitle"
+            android:layout_marginTop="12dp"
+            android:text="权限与无障碍" />
+
+        <TextView
+            android:id="@+id/tv_perm_summary"
+            style="@style/PageSubtitle"
+            android:text="权限仅用于本机功能，不上传数据。" />
+
+        <TextView
+            android:id="@+id/tv_perm_rom"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="2dp"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
+        <!-- ============ 首次安装：重启系统界面 ============
+             5.3.0 新增。模块跑在 SystemUI 进程里，装完不重启等于没装 ——
+             这件事以前只写在文档里，用户根本不会去看，表现出来就是「装了没用」。
+             只对首次安装显示（见 RestartReminderPolicy.shouldPrompt），
+             老用户升级时不会反复弹，免得变成狼来了。 -->
+        <LinearLayout
+            android:id="@+id/block_restart_sui"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/SectionLabel"
+                android:text="首次安装必做" />
+
+            <LinearLayout
+                android:id="@+id/card_restart_sui"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="0dp"
+                android:background="@color/card_bg"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:id="@+id/tv_restart_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="还要重启一次系统界面"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_restart_body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/text_body"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btn_restart_sui"
+                    style="@style/PrimaryButton"
+                    android:text="重启系统界面" />
+
+                <TextView
+                    android:id="@+id/tv_restart_state"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 检查清单 ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="检查清单" />
+
+        <LinearLayout
+            android:id="@+id/perm_rows"
+            style="@style/CardStyle"
+            android:layout_marginTop="0dp"
+            android:orientation="vertical" />
+
+        <!-- ============ 操作 ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="操作" />
+
+        <Button
+            android:id="@+id/btn_apply_runtime"
+            style="@style/PrimaryButton"
+            android:layout_marginTop="0dp"
+            android:text="一键申请全部运行时权限" />
+
+        <Button
+            android:id="@+id/btn_special"
+            style="@style/SecondaryButton"
+            android:text="逐项开启需手动授权的项" />
+
+        <Button
+            android:id="@+id/btn_done"
+            style="@style/SecondaryButton"
+            android:text="跳过 / 完成" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:lineSpacingExtra="3dp"
+            android:text="标注「需手动开启」的项无法用代码授予：系统不提供对应接口，必须由你在系统设置里亲手打开。返回本页后状态会自动刷新。"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

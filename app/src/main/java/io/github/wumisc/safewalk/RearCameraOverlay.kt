@@ -4,8 +4,13 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
+import android.graphics.RenderEffect
+import android.graphics.RuntimeShader
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraAccessException
@@ -20,6 +25,7 @@ import java.util.concurrent.Executor
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.Surface
 import android.view.TextureView
@@ -61,10 +67,91 @@ class RearCameraOverlay(
         const val MODE_FULLSCREEN = "fullscreen"
         const val MODE_SMALLWINDOW = "smallwindow"
 
+        /** 画面增强实际生效路径（仅用于日志与诊断，不参与判定） */
+        private const val PATH_AGSL = "AGSL"
+        private const val PATH_MATRIX = "COLOR_MATRIX"
+
         const val CORNER_BR = "bottom_right"
         const val CORNER_BL = "bottom_left"
         const val CORNER_TR = "top_right"
         const val CORNER_TL = "top_left"
+
+        /** 角落小窗宽:高 = 150:260。所有尺寸都按这个比例换算，避免画面被拉变形 */
+        const val SMALL_ASPECT = 260f / 150f
+
+        /** 小窗宽度取值范围，与设置页滑块保持一致 */
+        const val SMALL_WIDTH_MIN_DP = 100
+        const val SMALL_WIDTH_MAX_DP = 200
+        const val SMALL_WIDTH_DEFAULT_DP = 150
+
+        /** 小窗边距取值范围 */
+        const val SMALL_MARGIN_MIN_DP = 0
+        const val SMALL_MARGIN_MAX_DP = 40
+        const val SMALL_MARGIN_DEFAULT_DP = 12
+
+        /** HUD 字号取值范围 */
+        const val HUD_TEXT_SIZE_MIN_SP = 11
+        const val HUD_TEXT_SIZE_MAX_SP = 20
+        const val HUD_TEXT_SIZE_DEFAULT_SP = 13
+
+        /** 取景范围 0~100：见 [Style.framingPct] */
+        const val FRAMING_MIN_PCT = 0
+        const val FRAMING_MAX_PCT = 100
+        const val FRAMING_DEFAULT_PCT = 0
+
+        /** 小窗描边 0~4dp：0 = 不画 */
+        const val BORDER_MIN_DP = 0
+        const val BORDER_MAX_DP = 4
+        const val BORDER_DEFAULT_DP = 0
+
+        /** 画面增强三参数取值范围：见 [Style.screenContrast] 等 */
+        const val SCREEN_CONTRAST_DEFAULT = 45
+        const val SCREEN_SHADOW_DEFAULT = 40
+        const val SCREEN_SATURATION_DEFAULT = 50
+
+        /**
+         * 【5.1.0 画面对比度】AGSL 运行时着色器。
+         *
+         * 为什么不用 ColorMatrix：ColorMatrix 只能做**线性**变换
+         * （`out = s * in + o`），也就是整体乘一个系数再加一个偏移。
+         * 线性拉对比度有两个副作用同时出现：
+         *  · 中间调一起被推亮/推暗，画面整体发灰或发白；
+         *  · 暗部被压得更暗，路边台阶这种「本来就黑」的东西直接消失 ——
+         *    而这正是用户最需要看清的部分。
+         *
+         * 所以这里走 S 曲线（以 0.5 为支点的线性拉伸 + 暗部回抬）：
+         *  · 亮的地方继续亮，暗的地方先被拉开再被提回来一点；
+         *  · 台阶、路沿、坑洼的边缘因此有了明暗差，轮廓才看得见。
+         *
+         * AGSL 从 Android 13（API 33）起可用，本应用 minSdk 就是 33，
+         * 不需要版本分支；万一某个 ROM 的实现有坑，[applyScreenEnhance]
+         * 会退到 ColorMatrix 并在日志里说明。
+         */
+        private const val ENHANCE_AGSL = """
+            uniform shader content;
+            uniform float contrast;   // 0..1  S 曲线增益
+            uniform float lift;       // 0..1  暗部回抬
+            uniform float sat;        // -1..1 饱和度偏移
+
+            half4 main(float2 xy) {
+                half4 src = content.eval(xy);
+                half3 c = src.rgb;
+
+                // ① 以 0.5 为支点拉伸：k 最大 1.2 倍，够明显但不会一开就成黑白照
+                half3 s = half3(0.5) + (c - half3(0.5)) * half(1.0 + contrast * 1.2);
+
+                // ② 暗部回抬：权重在中灰处最大、纯黑纯白处为 0，
+                //    所以高光不会被压平（那是「发白」的来源），暗部也不会被抬成灰雾
+                half3 w = half3(1.0) - abs(s * half3(2.0) - half3(1.0));
+                s = s + (half3(0.5) - s) * w * half(lift * 0.45);
+
+                // ③ 饱和度：夜间噪点在灰度里更不显眼，降饱和等于免费降噪
+                half l = dot(s, half3(0.299, 0.587, 0.114));
+                s = mix(half3(l), s, half(1.0 + sat));
+
+                return half4(clamp(s, half3(0.0), half3(1.0)), src.a);
+            }
+        """
 
         /**
          * close 之后至少等这么久再 open。
@@ -111,7 +198,53 @@ class RearCameraOverlay(
         /** 【对比度强度进度条】0~100，驱动 HUD 描边/阴影/衬底强弱 */
         val contrastLevel: Int,
         /** 【小窗联动闪光灯】在预览会话内开 FLASH_MODE_TORCH，随小窗显示/收起开关 */
-        val torchWithPreview: Boolean
+        val torchWithPreview: Boolean,
+        /**
+         * 【4.9.0 小窗自定义】HUD 文案。null 或空白 = 不显示文字层。
+         *
+         * 与 [enhanceContrast] 的关系从「绑定」改成「依赖」：对比度只决定
+         * **文字怎么画**，文字内容由本字段决定。没有文字时对比度开关不产生任何视觉。
+         */
+        val hudText: String?,
+        /** HUD 字号 sp。只在 [hudText] 非空时生效 */
+        val hudTextSizeSp: Int,
+        /** 角落小窗宽度 dp；高度按 [SMALL_ASPECT] 换算 */
+        val smallWidthDp: Int,
+        /** 角落小窗边距 dp */
+        val smallMarginDp: Int,
+        /**
+         * 【5.0.0 取景范围】0~100。
+         *
+         * 0 = 完整画面（默认）；100 = 只保留画面下半部分，等比放大 2 倍铺满。
+         * 越往后路面占比越大、能看清更近的障碍，代价是横向视野变窄。
+         */
+        val framingPct: Int,
+        /** 【5.0.0 小窗描边】宽度 dp，0 = 不描边。亮背景下靠它分出小窗边界 */
+        val borderDp: Int,
+        /** 【5.0.0 低光增强】预览请求里下发正向曝光补偿，夜间画面不发黑 */
+        val lowLight: Boolean,
+        /**
+         * 【5.1.0 画面增强】总开关。开启后对**画面像素**做处理，不是给文字加描边。
+         *
+         * 这是用户明确纠偏的一点：上一版把「增强对比度」做成了给 HUD 文字加黑边黑底，
+         * 文字确实更清楚了，可路面上的台阶、路沿、积水反光和柏油仍然是糊成一片 ——
+         * 那不是「看得清路」，只是「看得清那行字」。
+         */
+        val screenEnhance: Boolean,
+        /** 【5.1.0】画面对比度 0~100（S 曲线增益） */
+        val screenContrast: Int,
+        /** 【5.1.0】暗部提亮 0~100（只抬阴影，不压高光） */
+        val screenShadowLift: Int,
+        /** 【5.1.0】饱和度 0~100，50 = 不变 */
+        val screenSaturation: Int,
+        /**
+         * 【5.3.0 画面方向】自动 / 固定竖屏 / 翻转 180°。
+         *
+         * 为什么这个参数必须由外部传进来、而不是在这里读配置：本类运行在
+         * SystemUI 进程，读不到 App 的私有 SharedPreferences。所有用户设置
+         * 都是 WalkPreviewService 读完再当参数传下来的，这里保持同一条路。
+         */
+        val rotationMode: String
     )
 
     private val wm = wmOverride
@@ -139,8 +272,36 @@ class RearCameraOverlay(
     /** 增强对比度开启时显示的 HUD 文字层；关闭时置 GONE，不移除（避免频繁重建） */
     private var hudView: HudTextView? = null
 
+    /**
+     * 【5.1.0 画面增强】色矩阵兜底路径用的 Paint。
+     *
+     * 只在 AGSL 不可用时才被 `setLayerType(LAYER_TYPE_HARDWARE, enhancePaint)` 使用；
+     * 走 AGSL 时它保持空白，不产生任何开销。
+     */
+    private val enhancePaint = Paint()
+
+    /** 画面增强当前实际走通的路：""（关）/ [PATH_AGSL] / [PATH_MATRIX] */
+    private var screenEnhancePath = ""
+
+    /** AGSL 是否可用。出错一次就永久降级，避免每次拖滑块重复抛异常刷日志 */
+    private var agslAvailable = true
+
     private var isShowing = false
-    private var style = Style(MODE_FULLSCREEN, 50, CORNER_BR, false, 50, false)
+    private var style = Style(
+        MODE_FULLSCREEN, 50, CORNER_BR, false, 50, false,
+        hudText = null,
+        hudTextSizeSp = HUD_TEXT_SIZE_DEFAULT_SP,
+        smallWidthDp = SMALL_WIDTH_DEFAULT_DP,
+        smallMarginDp = SMALL_MARGIN_DEFAULT_DP,
+        framingPct = FRAMING_DEFAULT_PCT,
+        borderDp = BORDER_DEFAULT_DP,
+        lowLight = false,
+        screenEnhance = false,
+        screenContrast = SCREEN_CONTRAST_DEFAULT,
+        screenShadowLift = SCREEN_SHADOW_DEFAULT,
+        screenSaturation = SCREEN_SATURATION_DEFAULT,
+        rotationMode = PreviewOrientationPolicy.MODE_AUTO
+    )
 
     /**
      * 【小窗联动闪光灯】后置相机是否带闪光灯。
@@ -149,6 +310,36 @@ class RearCameraOverlay(
      * 表现为预览黑屏），所以这里做能力探测 + 自动降级。
      */
     private var flashAvailable = false
+
+    /**
+     * 【5.0.0 低光增强】要下发的曝光补偿档数。
+     *
+     * 由 openCamera 按机型读取：`CONTROL_AE_COMPENSATION_RANGE` 给上限，
+     * `CONTROL_AE_COMPENSATION_STEP` 给每档多少 EV（常见 1/3 或 1/6）。
+     * 目标是 +2 EV，按步长折算成档数后再与上限取小。
+     * 0 表示本机不支持曝光补偿（或读不到），此时开关不产生任何请求改动。
+     */
+    private var aeCompTarget = 0
+
+    /**
+     * 【5.3.0 画面方向】后置传感器的安装角度。
+     *
+     * 绝大多数手机后摄是「横装在机身里」的（SENSOR_ORIENTATION = 90），
+     * 所以读不到时按 90 兜底：猜错的代价只是画面转 90°，而猜 0 会让竖屏直接侧躺。
+     */
+    private var sensorOrientation = 90
+
+    /** 预览输出缓冲尺寸（决定源画面宽高比）。0 = 还没选过，按窗口尺寸兜底 */
+    private var previewSrcW = 0
+    private var previewSrcH = 0
+
+    /**
+     * 上一次实际应用的旋转角。
+     *
+     * 单独存一份而不是每次现算：屏幕旋转、用户改模式、相机重开三条路径都会改它，
+     * 存下来才能判断「这次到底变没变」，避免每帧重复写日志。
+     */
+    private var appliedRotDeg = -1
 
     /**
      * 相机「代号」。每次 [closeCamera] 递增一次，[openCamera] 把当时的值
@@ -225,7 +416,31 @@ class RearCameraOverlay(
         corner: String = CORNER_BR,
         enhanceContrast: Boolean = false,
         torchWithPreview: Boolean = false,
-        contrastLevel: Int = 50
+        contrastLevel: Int = 50,
+        /** 【4.9.0】HUD 文案；null/空白 = 完全不显示文字层 */
+        hudText: String? = null,
+        /** 【4.9.0】HUD 字号 sp */
+        hudTextSizeSp: Int = HUD_TEXT_SIZE_DEFAULT_SP,
+        /** 【4.9.0】角落小窗宽度 dp */
+        smallWidthDp: Int = SMALL_WIDTH_DEFAULT_DP,
+        /** 【4.9.0】角落小窗边距 dp */
+        smallMarginDp: Int = SMALL_MARGIN_DEFAULT_DP,
+        /** 【5.0.0】取景范围 0~100（0=完整画面，100=只留下半） */
+        framingPct: Int = FRAMING_DEFAULT_PCT,
+        /** 【5.0.0】小窗描边宽度 dp（0=不描边） */
+        borderDp: Int = BORDER_DEFAULT_DP,
+        /** 【5.0.0】低光增强：预览请求下发正向曝光补偿 */
+        lowLight: Boolean = false,
+        /** 【5.1.0】画面增强总开关（动画面像素，不是给文字描边） */
+        screenEnhance: Boolean = false,
+        /** 【5.1.0】画面对比度 0~100 */
+        screenContrast: Int = SCREEN_CONTRAST_DEFAULT,
+        /** 【5.1.0】暗部提亮 0~100 */
+        screenShadowLift: Int = SCREEN_SHADOW_DEFAULT,
+        /** 【5.1.0】饱和度 0~100，50 = 不变 */
+        screenSaturation: Int = SCREEN_SATURATION_DEFAULT,
+        /** 【5.3.0】画面方向：auto / fixed / flip（见 PreviewOrientationPolicy） */
+        rotationMode: String = PreviewOrientationPolicy.MODE_AUTO
     ) {
         // 硬失败静默期：Hook 每 2s 一次 ACTION_HOOK_SHOW 会不断把我们叫醒，
         // 但「无相机权限」不会自己变好。静默期内直接拒绝拉起，
@@ -242,24 +457,70 @@ class RearCameraOverlay(
             corner,
             enhanceContrast,
             contrastLevel.coerceIn(0, 100),
-            torchWithPreview
+            torchWithPreview,
+            hudText?.takeIf { it.isNotBlank() },
+            hudTextSizeSp.coerceIn(HUD_TEXT_SIZE_MIN_SP, HUD_TEXT_SIZE_MAX_SP),
+            smallWidthDp.coerceIn(SMALL_WIDTH_MIN_DP, SMALL_WIDTH_MAX_DP),
+            smallMarginDp.coerceIn(SMALL_MARGIN_MIN_DP, SMALL_MARGIN_MAX_DP),
+            framingPct.coerceIn(FRAMING_MIN_PCT, FRAMING_MAX_PCT),
+            borderDp.coerceIn(BORDER_MIN_DP, BORDER_MAX_DP),
+            lowLight,
+            screenEnhance,
+            screenContrast.coerceIn(0, 100),
+            screenShadowLift.coerceIn(0, 100),
+            screenSaturation.coerceIn(0, 100),
+            PreviewOrientationPolicy.normalizeMode(rotationMode)
         )
         // 【原地快刷】只改「对比度强度 / 闪光灯联动」这类不需要重建视图的参数时，
         // 不重建窗口、不重开相机：HUD 层改样式只要 invalidate，闪光灯只要重新下发
         // 一次 repeating request。否则拖一下进度条就「画面黑一下 + 重新握手 400ms」。
         // torchChanged / contrastChanged 必须在 style 被覆盖前算好。
         val torchChanged = target.torchWithPreview != style.torchWithPreview
-        val contrastChanged = target.contrastLevel != style.contrastLevel
+        // 【4.9.0】文字相关的任何变化都只影响 HUD 层，连窗口都不用重排。
+        // 单独拎出来是为了让「改字号/改文案/开关文字」不至于掉进下面的重建路径。
+        val hudChanged = target.hudText != style.hudText
+                || target.hudTextSizeSp != style.hudTextSizeSp
+                || target.enhanceContrast != style.enhanceContrast
+                || target.contrastLevel != style.contrastLevel
+        // 尺寸/边距变化只需要 updateViewLayout，相机与 Surface 完全不用动。
+        val geometryChanged = target.smallWidthDp != style.smallWidthDp
+                || target.smallMarginDp != style.smallMarginDp
+        // 【5.0.0】取景裁剪与描边都只是 View 层的事：改矩阵 / 改前景，不动相机。
+        val visualChanged = target.framingPct != style.framingPct
+                || target.borderDp != style.borderDp
+        // 【5.1.0 画面增强】改的是 RenderEffect / colorFilter，同样是纯绘制层的事：
+        // 不重建窗口、不重开相机，拖滑块能逐帧看到变化。
+        val enhanceChanged = target.screenEnhance != style.screenEnhance
+                || target.screenContrast != style.screenContrast
+                || target.screenShadowLift != style.screenShadowLift
+                || target.screenSaturation != style.screenSaturation
+        // 低光增强要重下发一次 repeating request（曝光补偿在 CaptureRequest 里）
+        val lowLightChanged = target.lowLight != style.lowLight
+        // 【5.3.0 方向】改方向只重算矩阵，不动相机：缓冲尺寸与旋转角解耦，
+        // 源画面比例不变，只是「怎么摆」变了。重开相机会黑一下，没必要。
+        val rotationChanged = target.rotationMode != style.rotationMode
         if (isShowing && rootView?.parent != null
             && target.mode == style.mode
             && target.opacity == style.opacity
             && target.corner == style.corner
-            && target.enhanceContrast == style.enhanceContrast
-            && (contrastChanged || torchChanged)
+            && (hudChanged || geometryChanged || torchChanged || visualChanged
+                || lowLightChanged || enhanceChanged || rotationChanged)
         ) {
             style = target
-            applyHudStyle()
-            if (torchChanged) refreshTorchInSession()
+            if (hudChanged) applyHudStyle()
+            if (enhanceChanged) applyScreenEnhance()
+            if (geometryChanged) {
+                rootView?.let {
+                    try { wm.updateViewLayout(it, buildParams()) } catch (_: Throwable) {}
+                }
+            }
+            // 窗口尺寸变了，transform 的基准也变了，必须跟着重算
+            if (visualChanged || geometryChanged || rotationChanged) {
+                if (rotationChanged) refreshRotation()
+                applyFraming()
+                applyBorder()
+            }
+            if (torchChanged || lowLightChanged) refreshRequestInSession()
             return
         }
         // 除了参数未变，还要确认视图真的还挂在 WindowManager 上；
@@ -334,6 +595,9 @@ class RearCameraOverlay(
         hudView = null
         tv = null
         surfaceTexture = null
+        // 老 View 连同它的 RenderEffect 一起被丢掉，记录也跟着清空，
+        // 下一次 apply 会按新 View 重新判断「要不要启用、走哪条路」
+        screenEnhancePath = ""
     }
 
     private fun apply() {
@@ -386,6 +650,13 @@ class RearCameraOverlay(
         // 增强对比度：开关决定 HUD 层可见性，强度决定描边/阴影/衬底，
         // 都只作用于文字层，不重建视图、不碰相机、不改变画面层 alpha。
         applyHudStyle()
+        // 【5.1.0】画面增强：作用在 tv 上，与 HUD 层互不影响。
+        // 必须放在窗口挂载之前 —— 否则第一帧会先以原始画质闪一下再变成增强画质。
+        applyScreenEnhance()
+        // 取景与描边都在 View 层：drawable / 矩阵独立于相机，重复调用是幂等的。
+        // 复用旧窗口时宽高已经就绪，这里能立刻生效；新建窗口则在 Surface 就绪时再算一次。
+        applyFraming()
+        applyBorder()
 
         val lp = buildParams()
         try {
@@ -441,16 +712,26 @@ class RearCameraOverlay(
         init {
             background = bg
             setTextColor(Color.WHITE)
-            textSize = 13f
+            // 文案与字号统一由 applyHudStyle() 按 Style 写入，这里不再硬编码
+            // 「路况预览中 · 增强对比度」—— 那句实现细节已经删掉。
             isClickable = false
             isFocusable = false
             setPadding(dp(14), dp(8), dp(14), dp(8))
-            text = "路况预览中 · 增强对比度"
             applyLevel()
         }
 
         private fun applyLevel() {
             val t = level / 100f
+            // level=0 表示「不加任何修饰」：无描边、无衬底、无阴影。
+            // 这样「文字开关」与「对比度开关」才能彼此独立 —— 想只要一行白字
+            // 也可以，不必被迫接受黑边黑底。
+            if (level <= 0) {
+                strokePaint.strokeWidth = 0f
+                bg.setColor(Color.TRANSPARENT)
+                setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
+                invalidate()
+                return
+            }
             strokePaint.strokeWidth = dp(1).toFloat() + dp(4).toFloat() * t
             bg.setColor(Color.argb((40 + 180 * t).toInt(), 0, 0, 0))
             bg.cornerRadius = dp(12).toFloat()
@@ -471,13 +752,218 @@ class RearCameraOverlay(
     private fun buildHudView(): HudTextView = HudTextView(ctx.applicationContext)
 
     /**
-     * 【对比度强度进度条】把当前 style 应用到 HUD 文字层：开关决定可见性，
-     * 强度决定描边/阴影/衬底。可反复调用，不重建 View、不碰相机。
+     * 把当前 style 应用到 HUD 文字层。
+     *
+     * 【4.9.0 语义变更】可见性只由 [Style.hudText] 决定，不再由 [Style.enhanceContrast]
+     * 决定。对比度从「文字层的总闸」降级为「文字层的画法」：
+     *   · hudText 为空        → GONE，画面上一个字都没有（默认状态）；
+     *   · hudText 非空 + 对比度关 → 显示纯白字，无描边无衬底；
+     *   · hudText 非空 + 对比度开 → 显示带描边/阴影/衬底的字，强度由 level 决定。
+     * 这样「不想看那句废话」和「想要字更清楚」就不再绑在一起。
      */
     private fun applyHudStyle() {
         val hud = hudView ?: return
-        hud.visibility = if (style.enhanceContrast) View.VISIBLE else View.GONE
-        hud.level = style.contrastLevel
+        val text = style.hudText
+        if (text.isNullOrBlank()) {
+            hud.visibility = View.GONE
+            return
+        }
+        hud.visibility = View.VISIBLE
+        if (hud.text?.toString() != text) hud.text = text
+        val currentSp = hud.textSize / ctx.resources.displayMetrics.scaledDensity
+        if (Math.abs(currentSp - style.hudTextSizeSp) > 0.5f) {
+            hud.setTextSize(TypedValue.COMPLEX_UNIT_SP, style.hudTextSizeSp.toFloat())
+        }
+        hud.level = if (style.enhanceContrast) style.contrastLevel else 0
+    }
+
+    /**
+     * 【5.0.0 取景范围 / 5.3.0 画面方向】把「源画面」映射到「窗口」。
+     *
+     * 参数：`PreviewOrientationPolicy.transform` 负责算 3×3 矩阵，这里只负责
+     * 拿当前真实宽高、把矩阵塞进 TextureView。
+     *
+     * 【为什么用 transform 而不是相机裁剪】
+     * `SCALER_CROP_REGION` 属于 CaptureRequest，改一次要重下发、部分 HAL 还会
+     * 重新对焦，改个滑块就闪一下。TextureView 的 transform 是纯 View 层矩阵，
+     * 拖滑块时逐帧生效，相机完全不知道。
+     *
+     * 【为什么是等比放大而不是只拉伸纵向】
+     * 纵向拉长会让前后距离看起来比实际更远，看路的人会误判「还早」，反而更危险。
+     * 等比放大只是把两侧裁掉，比例仍然可信。
+     *
+     * 【5.3.0 的这件事】
+     * 老实现只做「纵向裁 + 放大」，等于默认「画面方向本来就是对的」。
+     * 竖屏时靠窗口比例勉强凑合，一横过来就侧躺 —— 用户看到的就是「方向不对」。
+     * 现在旋转、铺满、取景三件事一起算，见 [PreviewOrientationPolicy.transform]。
+     */
+    private fun applyFraming() {
+        val view = tv ?: return
+        val w = view.width
+        val h = view.height
+        // 还没布局完（宽高为 0）时算不出矩阵，onSurfaceTextureAvailable/
+        // SizeChanged 里会再来一次；此时 setTransform 也会被系统忽略。
+        if (w <= 0 || h <= 0) return
+
+        val srcW = if (previewSrcW > 0) previewSrcW else w
+        val srcH = if (previewSrcH > 0) previewSrcH else h
+        // 三项都「不需要处理」时清空矩阵，走回旧版那条最简路径：
+        // 少一层合成开销，也避免在某些 ROM 上 setTransform 与硬件叠层互相干扰。
+        if (appliedRotDeg <= 0 && style.framingPct <= 0 && srcW == w && srcH == h) {
+            view.setTransform(null)
+            return
+        }
+        val values = PreviewOrientationPolicy.transform(
+            w, h, srcW, srcH, appliedRotDeg, style.framingPct
+        )
+        val m = Matrix()
+        m.setValues(values)
+        view.setTransform(m)
+    }
+
+    /** 当前屏幕旋转角度（0/90/180/270）。取不到时按 0 处理，等价于「跟着竖屏」 */
+    private fun currentDisplayDegrees(): Int = try {
+        @Suppress("DEPRECATION")
+        PreviewOrientationPolicy.displayDegrees(wm.defaultDisplay.rotation)
+    } catch (_: Throwable) {
+        0
+    }
+
+    /**
+     * 只重算「该转多少度」，不动缓冲、不重建会话。
+     *
+     * 屏幕旋转与用户切换方向模式都走这里：源画面没变，只是摆法变了。
+     */
+    private fun refreshRotation() {
+        val autoDeg = PreviewOrientationPolicy.rotationDegrees(
+            sensorOrientation, currentDisplayDegrees(), false
+        )
+        val newDeg = PreviewOrientationPolicy.applyMode(autoDeg, style.rotationMode)
+        if (newDeg == appliedRotDeg) return
+        appliedRotDeg = newDeg
+        diag(
+            "方向切换 → 实转 " + newDeg + "°（传感器 " + sensorOrientation
+                + "° 屏幕 " + currentDisplayDegrees() + "° 模式 " + style.rotationMode + "）"
+        )
+    }
+
+    /**
+     * 屏幕方向变化后的重排（由 WalkPreviewService.onConfigurationChanged 调用）。
+     *
+     * 刻意不检查任何用户开关：方向错了就是看不了路，不能因为「智能方案没开」
+     * 而不处理。全屏窗口要换宽高、小窗高度上限要跟着屏高变、矩阵基准也变了。
+     */
+    fun onDisplayChanged() {
+        if (!isShowing || rootView?.parent == null) return
+        val view = tv ?: return
+        if (view.width <= 0 || view.height <= 0) return
+        refreshRotation()
+        // 排序不能反：先重排窗口，布局完成后 SizeChanged 会再算一次矩阵；
+        // 这里先按旧尺寸算一版，避免旋转瞬间出现一帧拉伸画面。
+        rootView?.let {
+            try { wm.updateViewLayout(it, buildParams()) } catch (_: Throwable) {}
+        }
+        applyFraming()
+    }
+
+    /**
+     * 【5.0.0 小窗描边】给窗口加一圈半透明白边。
+     *
+     * 白天小窗叠在浅色路面上时，画面边界与背景亮度接近，看不出小窗到哪儿为止；
+     * 一条 1~2dp 的白边就能把范围交代清楚。用 foreground 而不是背景：
+     * 背景会被画面层完全盖住，foreground 画在最上层。
+     */
+    private fun applyBorder() {
+        val root = rootView ?: return
+        // 只给角落小窗描边：全屏铺满整块屏幕，边框会贴在屏幕边缘，
+        // 看起来像「画面没铺满」，反而像故障。
+        if (style.mode != MODE_SMALLWINDOW || style.borderDp <= 0) {
+            root.foreground = null
+            return
+        }
+        val d = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            // 圆角跟窗口裁剪保持一致，否则描边会在圆角处露出尖角
+            cornerRadius = if (style.mode == MODE_SMALLWINDOW) dp(24).toFloat() else 0f
+            setStroke(dp(style.borderDp), Color.argb(204, 255, 255, 255))
+        }
+        root.foreground = d
+    }
+
+    /**
+     * 【5.1.0 画面增强】把 [style] 里的对比度 / 暗部提亮 / 饱和度作用到**画面本身**。
+     *
+     * 这是这一版最重要的修正。上一版那个名叫「增强对比度」的开关，实际做的是
+     * 给 HUD 文字加描边、阴影和深色衬底 —— 字是清楚了，可要看的从来不是那行字，
+     * 是路面、台阶、路沿、井盖。用户反馈得很准：「不是一句增强对比度文字激励就可以了」。
+     *
+     * 实现上走 [RenderEffect] + AGSL 运行时着色器（见 [ENHANCE_AGSL]）：
+     *  · 纯 GPU 后处理，TextureView 的 Surface 直通不变，相机侧零改动；
+     *  · 只影响绘制，不影响相机采集与会话，拖滑块时逐帧生效，不掉帧不黑屏；
+     *  · 关掉时把 RenderEffect 置 null、layerType 恢复 NONE，画面回到原始状态，
+     *    不留任何常驻开销。
+     *
+     * AGSL 万一在某个 ROM 上抛异常，退到 [ColorMatrix]（只能线性拉伸，效果打折
+     * 但绝不黑屏），并在日志里写清走的是哪条路 —— 用户反馈画面不对时，
+     * 一眼就能看出是「着色器没生效」还是「参数不合适」。
+     */
+    private fun applyScreenEnhance() {
+        val view = tv ?: return
+        if (!style.screenEnhance) {
+            if (screenEnhancePath.isNotEmpty()) {
+                view.setRenderEffect(null)
+                view.setLayerType(View.LAYER_TYPE_NONE, null)
+                enhancePaint.colorFilter = null
+                screenEnhancePath = ""
+                diag("画面增强 → 关，恢复相机原始画面")
+            }
+            return
+        }
+        val k = style.screenContrast / 100f
+        val lift = style.screenShadowLift / 100f
+        val sat = (style.screenSaturation - 50) / 50f
+
+        if (agslAvailable) {
+            try {
+                val shader = RuntimeShader(ENHANCE_AGSL)
+                shader.setFloatUniform("contrast", k)
+                shader.setFloatUniform("lift", lift)
+                shader.setFloatUniform("sat", sat)
+                view.setRenderEffect(
+                    RenderEffect.createRuntimeShaderEffect(shader, "content")
+                )
+                if (screenEnhancePath != PATH_AGSL) {
+                    screenEnhancePath = PATH_AGSL
+                    diag("画面增强 → 开（AGSL S 曲线）对比度=${style.screenContrast}%"
+                            + " 暗部=${style.screenShadowLift}% 饱和=${style.screenSaturation}%")
+                }
+                return
+            } catch (t: Throwable) {
+                // 一次性永久降级：留着它会让每次拖滑块都抛一次，日志被刷满
+                agslAvailable = false
+                diag("画面增强 AGSL 不可用（${t.javaClass.simpleName}: ${t.message}）"
+                        + " → 降级线性 ColorMatrix")
+            }
+        }
+
+        // 兜底：线性对比度 + 饱和度，加一点整体提亮近似「暗部回抬」。
+        // 效果不如 S 曲线（中灰会被一起推亮），但这是能保证不黑屏的最后一道。
+        val s = 1f + k * 0.9f
+        val offset = 127.5f * (1f - s) + lift * 22f
+        val cm = ColorMatrix()
+        cm.setSaturation(1f + sat)
+        cm.postConcat(ColorMatrix(floatArrayOf(
+            s, 0f, 0f, 0f, offset,
+            0f, s, 0f, 0f, offset,
+            0f, 0f, s, 0f, offset,
+            0f, 0f, 0f, 1f, 0f
+        )))
+        enhancePaint.colorFilter = ColorMatrixColorFilter(cm)
+        view.setLayerType(View.LAYER_TYPE_HARDWARE, enhancePaint)
+        if (screenEnhancePath != PATH_MATRIX) {
+            screenEnhancePath = PATH_MATRIX
+            diag("画面增强 → 开（ColorMatrix 兜底）对比度=${style.screenContrast}%")
+        }
     }
 
     private fun buildTextureView(): TextureView {
@@ -487,10 +973,15 @@ class RearCameraOverlay(
                     // apply 作用域内 surfaceTexture 会解析到 TextureView 的只读属性，必须显式限定
                     this@RearCameraOverlay.surfaceTexture = st
                     stage("画面缓冲就绪 ${w}x${h}")
+                    // 取景矩阵依赖真实宽高，必须在这里算；show() 里算时窗口还没布局
+                    this@RearCameraOverlay.applyFraming()
                     openCamera()
                 }
 
-                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                    // 小窗尺寸滑块拖动 / 横竖屏切换都会走到这里，矩阵基准随之变化
+                    this@RearCameraOverlay.applyFraming()
+                }
 
                 override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
                     closeCamera()
@@ -575,8 +1066,22 @@ class RearCameraOverlay(
                 CORNER_TL -> Gravity.TOP to Gravity.START
                 else -> Gravity.BOTTOM to Gravity.END
             }
+            // 【4.9.0】尺寸与边距改为用户可调。高度按 SMALL_ASPECT 换算而不是
+            // 单独给一个值：宽高比固定，画面才不会在任意尺寸下被拉变形。
+            val w = dp(style.smallWidthDp)
+            // 先按比例四舍五入再转像素：`.toInt()` 是截断，180dp×1.7333 会算成 311 而不是 312，
+            // 每次换算都少 1dp，调大宽度时能明显看出比例在飘。
+            var h = dp(Math.round(style.smallWidthDp * SMALL_ASPECT))
+            // 【5.3.0 横屏】横过来之后屏幕高度只剩竖屏的一半多（约 411dp 变成 200dp 出头
+            // 的可用高度），200dp 宽的小窗换算出来 346dp 高，会直接顶出屏幕外。
+            // 宽度不动（用户调的是宽度），只压高度，上限取屏高的 62%：
+            // 留出状态栏与一点余量，画面本身是等比铺满，压扁一点只会多裁上下，不变形。
+            val (_, screenH) = screenSize()
+            val maxH = (screenH * 0.62f).toInt()
+            if (maxH > 0 && h > maxH) h = maxH
+            val margin = dp(style.smallMarginDp)
             WindowManager.LayoutParams(
-                dp(150), dp(260),
+                w, h,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -586,9 +1091,8 @@ class RearCameraOverlay(
                 android.graphics.PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = vGrav or hGrav
-                // 与第一版一致：四角统一 12dp 边距
-                x = dp(12)
-                y = dp(12)
+                x = margin
+                y = margin
             }
         }
     }
@@ -634,6 +1138,9 @@ class RearCameraOverlay(
         hudView = null
         tv = null
         surfaceTexture = null
+        // 老 View 连同它的 RenderEffect 一起被丢掉，记录也跟着清空，
+        // 下一次 apply 会按新 View 重新判断「要不要启用、走哪条路」
+        screenEnhancePath = ""
     }
 
     /**
@@ -779,30 +1286,40 @@ class RearCameraOverlay(
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
         }
+        // 【5.0.0 低光增强】夜间路面几乎没有光，AUTO 曝光会把画面压成一片黑，
+        // 看得见轮廓才谈得上「看路」。这里按机型支持范围给正向补偿，不做固定写死：
+        // 不同 HAL 的补偿步长不同（1/3 EV 或 1/6 EV），固定值在部分机型上等于没设。
+        if (style.lowLight && aeCompTarget > 0) {
+            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, aeCompTarget)
+        }
         return builder.build()
     }
 
     /**
-     * 联动开关切换时：窗口与相机会话都还在跑，不重建视图、不重开相机，
-     * 只重新下发一次 repeating request 即可开/关闪光灯（无黑屏、无 400ms 握手）。
+     * 会话语义内的参数切换：窗口与相机会话都还在跑，不重建视图、不重开相机，
+     * 只重新下发一次 repeating request。
+     *
+     * 当前走这条路径的只有两项，都在 CaptureRequest 里：闪光灯联动（FLASH_MODE_TORCH）
+     * 与低光增强（CONTROL_AE_EXPOSURE_COMPENSATION）。
      */
-    private fun refreshTorchInSession() {
+    private fun refreshRequestInSession() {
         val d = camera
         val cs = session
         val surface = previewSurface
         if (d == null || cs == null || surface == null) {
-            diag("[torch:overlay] 相机会话未就绪，联动开关将在下次打开预览时生效")
+            diag("[overlay] 相机会话未就绪，参数将在下次打开预览时生效")
             return
         }
         try {
-            val torchOn = style.torchWithPreview && flashAvailable
             cs.setRepeatingRequest(buildPreviewRequest(d, surface), null, mainHandler)
-            diag("[torch:overlay] 预览会话内闪光灯 → ${if (torchOn) "常亮" else "熄灭"}"
-                    + "（flashAvailable=$flashAvailable）")
+            val torchOn = style.torchWithPreview && flashAvailable
+            diag("[overlay] 预览请求已重下发 | 闪光灯=" + (if (torchOn) "常亮" else "熄灭")
+                    + "(flashAvailable=$flashAvailable)"
+                    + " 低光增强=" + (if (style.lowLight) "+${aeCompTarget}档" else "关"))
         } catch (t: Throwable) {
             // 相机正处于重连窗口时 createCaptureRequest 会抛异常：只记日志，
             // 下一轮 onConfigured 会用最新 style 重新构建，功能不会丢。
-            diag("❌ 预览会话内闪光灯切换失败: ${t.message}")
+            diag("❌ 预览请求重下发失败: ${t.message}")
         }
     }
 
@@ -855,10 +1372,18 @@ class RearCameraOverlay(
                 return
             }
             layoutRetry = 0
-            st.setDefaultBufferSize(view.width, view.height)
+            // 【5.3.0 方向】顺序很关键：先拿到相机 id → 算旋转角与缓冲尺寸 →
+            // 再把尺寸写给 SurfaceTexture → 最后建 Surface。
+            // 反过来的话，会话会按「窗口宽高」这个错误比例配起来，
+            // 中途改只能重建会话（画面黑一下），而横屏时用户往往正在走路。
+            val id = backCameraId()
+            resolveOrientation(id, view.width, view.height)
+            st.setDefaultBufferSize(
+                if (previewSrcW > 0) previewSrcW else view.width,
+                if (previewSrcH > 0) previewSrcH else view.height
+            )
             val surface = Surface(st)
             previewSurface = surface
-            val id = backCameraId()
             if (id == null) {
                 Log.e(TAG, "无后置摄像头")
                 stage("❌ 找不到后置摄像头")
@@ -877,6 +1402,22 @@ class RearCameraOverlay(
             }
             if (style.torchWithPreview && !flashAvailable) {
                 diag("⚠️ 本机后置相机无闪光灯，小窗联动闪光灯自动降级（预览照常显示）")
+            }
+            // 【5.0.0 低光增强】能力探测：补偿范围与步长都读得到才算支持。
+            // 部分 ROM 的 HAL 会返回 null 或 0 上限，此时保持 aeCompTarget=0，
+            // 开关开着也不下发——下发超出范围的档数会让 HAL 拒掉整条 request（预览黑屏）。
+            aeCompTarget = try {
+                val chars = cm.getCameraCharacteristics(id)
+                val range = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+                val step = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+                val stepEv = step?.toFloat() ?: 0f
+                val max = range?.upper ?: 0
+                if (max > 0 && stepEv > 0f) minOf(max, Math.round(2f / stepEv)) else 0
+            } catch (_: Throwable) {
+                0
+            }
+            if (style.lowLight && aeCompTarget <= 0) {
+                diag("⚠️ 本机不支持曝光补偿，低光增强自动降级（预览照常显示）")
             }
             // 捕获发起时的代号：回调回来要是对不上，说明这次请求已经过期
             val gen = cameraGen
@@ -1057,6 +1598,61 @@ class RearCameraOverlay(
 
     /** 冷却结束后的重开入口。单独抽成字段，方便 removeCallbacks 去重 */
     private val reopenTask = Runnable { if (isShowing) openCamera() }
+
+    /**
+     * 【5.3.0 画面方向】把「转多少度、缓冲开多大」一次算清。
+     *
+     * 三件事必须一起做，分开做一定会出问题：
+     *  · 只转角度不改缓冲 → HAL 把 4:3 的画面硬拉成小窗的长条，方向对了但路被压扁；
+     *  · 只改缓冲不转角度 → 竖屏侧躺，就是这一版要修的那个 bug；
+     *  · 两者都对但取景矩阵没跟上 → 一旋转，取景就从「只留下半」跳到别处。
+     *
+     * 尺寸一律从 `SCALER_STREAM_CONFIGURATION_MAP` 里挑，不能直接用窗口宽高：
+     * SurfaceTexture 的输出尺寸必须是 HAL 支持的档位，否则 createCaptureSession
+     * 会直接失败（画面全黑），而日志里只会看到一句「会话配置失败」。
+     */
+    private fun resolveOrientation(cameraId: String?, viewW: Int, viewH: Int) {
+        var sensor = sensorOrientation
+        var front = false
+        var sizes: Array<IntArray>? = null
+        if (cameraId != null) {
+            try {
+                val cc = cm.getCameraCharacteristics(cameraId)
+                sensor = cc.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: sensor
+                front = cc.get(CameraCharacteristics.LENS_FACING) ==
+                        CameraCharacteristics.LENS_FACING_FRONT
+                val map = cc.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                val arr = map?.getOutputSizes(SurfaceTexture::class.java)
+                if (arr != null && arr.isNotEmpty()) {
+                    sizes = Array(arr.size) { intArrayOf(arr[it].width, arr[it].height) }
+                }
+            } catch (t: Throwable) {
+                diag("⚠️ 读取相机方向失败，按 90° 兜底: " + t.message)
+            }
+        }
+        sensorOrientation = sensor
+        val displayDeg = currentDisplayDegrees()
+        val autoDeg = PreviewOrientationPolicy.rotationDegrees(sensor, displayDeg, front)
+        val mode = PreviewOrientationPolicy.normalizeMode(style.rotationMode)
+        appliedRotDeg = PreviewOrientationPolicy.applyMode(autoDeg, mode)
+
+        val picked = PreviewOrientationPolicy.pickPreviewSize(sizes, viewW, viewH, appliedRotDeg)
+        if (picked != null && picked.size >= 2) {
+            previewSrcW = picked[0]
+            previewSrcH = picked[1]
+        } else {
+            // 没有任何可用尺寸：退回窗口宽高。此时比例会被 HAL 拉过，
+            // 但方向仍然是对的 —— 方向错是「没法用」，比例差只是「有点变形」。
+            previewSrcW = viewW
+            previewSrcH = viewH
+            diag("⚠️ 相机未上报可用预览尺寸，按窗口尺寸兜底（画面可能略变形）")
+        }
+        diag(
+            PreviewOrientationPolicy.describe(
+                sensor, displayDeg, mode, autoDeg, appliedRotDeg, previewSrcW, previewSrcH
+            )
+        )
+    }
 
     private fun backCameraId(): String? {
         try {

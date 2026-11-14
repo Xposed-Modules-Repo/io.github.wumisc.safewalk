@@ -17,6 +17,7 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -138,19 +139,18 @@ class PermissionOnboardingActivity : Activity() {
         }
     }
 
-    // ===== 配色：深浅两套，按系统夜间模式在 onCreate 里切换 =====
-    // 【BUG 修复】旧版这里写死一套浅色值，深色模式下整页仍是一块白面板 + 深色字，
-    // 用户反馈「最开始的授权页面没有适配深色模式」。全部在代码里强制设置，
-    // 不依赖 Theme.Safewalk 当前是深是浅；默认值即浅色配色。
-    private var colorBg = 0xFFF7F8FA.toInt()
-    private var colorTitle = 0xFF1A1A1A.toInt()
-    private var colorText = 0xFF2B2B2B.toInt()
-    private var colorDesc = 0xFF555555.toInt()
-    private var colorOk = 0xFF2E7D32.toInt()
-    private var colorBad = 0xFFC62828.toInt()
-    private var colorNeutral = 0xFF6D6D6D.toInt()
-    private var colorDivider = 0xFFDDDDDD.toInt()
-    private var colorBtn = 0xFFE3EBF5.toInt()
+    // ===== 配色 =====
+    // 【5.0.0】不再由本页判断夜间模式：全部读 @color token，
+    // values-night/colors.xml 里有同名覆盖项，系统切深色时自动生效。
+    // 原来那套 if(night) 覆写十几个十六进制值的写法，已经和全局色板
+    // 对不上（底色 #F7F8FA 与 @color/bg 的 #F2F2F7 差一档，页面看起来「灰得不一样」）。
+    private var colorTitle = 0
+    private var colorText = 0
+    private var colorDesc = 0
+    private var colorOk = 0
+    private var colorBad = 0
+    private var colorNeutral = 0
+    private var colorDivider = 0
 
     /**
      * 访问适配表的统一安全壳。
@@ -166,22 +166,6 @@ class PermissionOnboardingActivity : Activity() {
             "[ROM] 适配表不可用，降级为通用文案：${t.javaClass.simpleName} ${t.message}"
         )
         fallback
-    }
-
-    /** 读取 Configuration.uiMode 的夜间位，覆盖成对应的一套配色。必须早于构建布局。 */    private fun applyThemeColors() {
-        val night = (resources.configuration.uiMode
-                and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        if (!night) return
-        colorBg = 0xFF121316.toInt()
-        colorTitle = 0xFFF2F2F5.toInt()
-        colorText = 0xFFE4E4EA.toInt()
-        colorDesc = 0xFFA6A6B0.toInt()
-        colorOk = 0xFF66BB6A.toInt()
-        colorBad = 0xFFEF5350.toInt()
-        colorNeutral = 0xFF9C9CA6.toInt()
-        colorDivider = 0xFF2E2E34.toInt()
-        colorBtn = 0xFF2C2C36.toInt()
-        DiagLog.log("[PERM] 授权页配色 → 深色模式")
     }
 
     /** 清单里一行的静态信息 + 一个「当前状态」取值器（onResume 时反复调用）。 */
@@ -211,6 +195,9 @@ class PermissionOnboardingActivity : Activity() {
     /** ROOT 探测结果在 onCreate 里算一次即可（su 是否存在不会在页面存活期间变化）。 */
     private var rootAvailable = false
 
+    /** 【5.3.0】首次安装的「重启系统界面」卡片是否还在等用户处理（点「完成」时据此二次确认） */
+    private var restartPending = false
+
     // ============================ 生命周期 ============================
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -222,8 +209,7 @@ class PermissionOnboardingActivity : Activity() {
         } catch (_: Throwable) {
         }
         DiagLog.log("[PERM] 首次安装权限引导页 onCreate")
-        // 【BUG 修复】必须在构建布局之前切好深浅配色，否则 TextView 已按浅色创建
-        applyThemeColors()
+        // 5.0.0 起不再手工切深浅配色：布局走 @color token，values-night 自动生效。
 
         // 【P1 多 ROM】先认本机属于哪一家，再决定「自启动」这一类文案怎么写、往哪儿跳。
         // 判定只读 Build 的三个字段，不读 prop、不依赖 Hook，冷启动第一页也能用。
@@ -257,114 +243,185 @@ class PermissionOnboardingActivity : Activity() {
             }
         )
 
-        // ---- ScrollView > LinearLayout(vertical, padding 24dp) ----
-        val scroll = ScrollView(this).apply {
-            setBackgroundColor(colorBg)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val p = dp(24)
-            setPadding(p, p, p, p)
-        }
-        scroll.addView(
-            root,
-            ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        setContentView(scroll)
+        // 【5.0.0 版式统一】布局交给 activity_permission.xml，复用 PageScroll /
+        // SectionLabel / CardStyle / PrimaryButton 这套全局 style。
+        // 这一页从此与其他二级页同款：同样 40dp 顶部内边距（不再顶到状态栏）、
+        // 同样卡片与分隔线、同样按钮。代码只负责动态插条目与刷状态。
+        setContentView(R.layout.activity_permission)
+        findViewById<View>(R.id.btn_back).setOnClickListener { finish() }
 
-        // ---- 标题 ----
-        val title = TextView(this).apply {
-            text = "首次使用 · 权限集中授权"
-            setTextSize(22f)
-            setTextColor(colorTitle)
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        root.addView(title, itemLp(0))
+        // 配色一律读 @color token：values-night 已一一对应，
+        // 不再需要本页自己判断夜间模式、逐个覆写十六进制值。
+        colorTitle = getColor(R.color.text_primary)
+        colorText = getColor(R.color.text_body)
+        colorDesc = getColor(R.color.text_hint)
+        colorOk = getColor(R.color.accent_green)
+        colorBad = getColor(R.color.seal_red)
+        colorNeutral = getColor(R.color.text_hint)
+        colorDivider = getColor(R.color.divider)
 
-        // ---- 本机 UI 识别结果（一行，不占地方但能省掉「为什么找不到自启动」的半页问答）----
-        val romLine = TextView(this).apply {
-            text = safeRom("本机 UI：未识别 · 按标准 Android 设置引导") {
-                if (romId.hasVendorPages) {
-                    "本机 UI：${romId.displayName} · 自启动在「" +
-                        RomRegistry.routeHint(romId, TargetKind.AUTOSTART) + "」"
-                } else {
-                    "本机 UI：${romId.displayName} · 无厂商私有开关，全部走标准设置"
-                }
-            }
-            setTextSize(12f)
-            setTextColor(colorNeutral)
-            setLineSpacing(dp(1).toFloat(), 1f)
-        }
-        root.addView(romLine, itemLp(6))
-
-        // ---- 说明（精简：一句话讲清用途与操作，替代原来的三行长文）----
-        val desc = TextView(this).apply {
-            text = "权限仅用于本机功能，不上传数据。点下方按钮一次性申请；" +
+        // ---- 说明（一句话讲清用途与操作）----
+        findViewById<TextView>(R.id.tv_perm_summary).text =
+            "权限仅用于本机功能，不上传数据。点下方按钮一次性申请；" +
                 "标注「需手动开启」的会逐项引导到系统设置，返回后状态自动刷新。"
-            setTextSize(13f)
-            setTextColor(colorDesc)
-            setLineSpacing(dp(2).toFloat(), 1f)
+
+        // ---- 本机 UI 识别结果（一行，省掉「为什么找不到自启动」的半页问答）----
+        findViewById<TextView>(R.id.tv_perm_rom).text = safeRom(
+            "本机 UI：未识别 · 按标准 Android 设置引导"
+        ) {
+            if (romId.hasVendorPages) {
+                "本机 UI：${romId.displayName} · 自启动在「" +
+                    RomRegistry.routeHint(romId, TargetKind.AUTOSTART) + "」"
+            } else {
+                "本机 UI：${romId.displayName} · 无厂商私有开关，全部走标准设置"
+            }
         }
-        root.addView(desc, itemLp(8))
 
         // ---- 权限清单（精简版）----
         // 【BUG 修复】旧版 12 项 × 4 行 + 12 条分隔线，页面长得要一直滚，
         // 用户反馈「授权页面太长了简短一些」。现在按「自动申请 / 手动开启 /
-        // 仅说明」合并为 7 项，每项两行，只在清单末尾留一条分隔线。
-        for (item in buildItems()) {
+        // 仅说明」合并为 8 项，每项两行，行间一条分隔线。
+        val container = findViewById<LinearLayout>(R.id.perm_rows)
+        val items = buildItems()
+        items.forEachIndexed { index, item ->
             val tv = TextView(this).apply {
-                setTextSize(13f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(colorText)
-                setLineSpacing(dp(1).toFloat(), 1.1f)
+                setLineSpacing(dp(2).toFloat(), 1.1f)
+                setPadding(dp(16), dp(13), dp(16), dp(13))
             }
-            root.addView(tv, itemLp(8))
+            container.addView(
+                tv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
             rows.add(item to tv)
+            if (index != items.lastIndex) {
+                container.addView(
+                    View(this).apply { setBackgroundColor(colorDivider) },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, 1
+                    ).apply { leftMargin = dp(16) }
+                )
+            }
         }
-
-        root.addView(
-            View(this).apply { setBackgroundColor(colorDivider) },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ).apply { topMargin = dp(10) }
-        )
 
         // ---- 底部操作区 ----
-        val btnAll = Button(this).apply {
-            text = "一键申请全部运行时权限"
-            setTextColor(colorTitle)
-            setBackgroundColor(colorBtn)
-        }
-        btnAll.setOnClickListener { requestAllRuntime() }
-        root.addView(btnAll, itemLp(14))
+        findViewById<Button>(R.id.btn_apply_runtime)
+            .setOnClickListener { requestAllRuntime() }
 
-        val btnSpecial = Button(this).apply {
-            text = specialButtonText()
-            setTextColor(colorTitle)
-            setBackgroundColor(colorBtn)
-        }
+        val btnSpecial = findViewById<Button>(R.id.btn_special)
+        btnSpecial.text = specialButtonText()
         btnSpecial.setOnClickListener { onSpecialClicked(btnSpecial) }
-        root.addView(btnSpecial, itemLp(6))
 
-        val btnDone = Button(this).apply {
-            text = "跳过 / 完成"
-            setTextColor(colorTitle)
-            setBackgroundColor(colorBtn)
-        }
+        val btnDone = findViewById<Button>(R.id.btn_done)
         btnDone.setOnClickListener {
-            DiagLog.log("[PERM] 用户点击「跳过 / 完成」，结束引导")
-            markDone(this@PermissionOnboardingActivity)
-            finish()
+            // 【5.3.0】首次安装还没重启系统界面就点「完成」：把后果说清楚再放人走。
+            // 不拦着（用户可能想先去 LSPosed 勾作用域），但必须让他知道
+            // 接下来会看到「开关打开了却什么都没发生」。
+            if (restartPending) {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("还没重启系统界面")
+                    .setMessage(RestartReminderPolicy.skipWarning())
+                    .setPositiveButton("立即重启") { _, _ -> doRestartSystemUi() }
+                    .setNegativeButton("稍后再说") { _, _ -> finishOnboarding() }
+                    .show()
+                return@setOnClickListener
+            }
+            finishOnboarding()
         }
-        root.addView(btnDone, itemLp(6))
+
+        // 【5.3.0】首次安装：「重启系统界面」卡片。放在最后初始化，
+        // 因为它依赖 onCreate 早前算出的 rootAvailable。
+        setupRestartCard()
 
         // 文本由 onResume() 的 refreshStates() 统一填充（onCreate 之后必然紧跟 onResume）。
+    }
+
+    /**
+     * 首次安装的「重启系统界面」卡片（5.3.0）。
+     *
+     * 为什么放在权限页而不是弹一个对话框：这一页是用户装完 App 打开的第一屏，
+     * 也是他「一路点下去」的地方。弹窗会被手快地关掉，而卡片留在页面上，
+     * 即使这次跳过了，下次进「权限与无障碍」还能看到（只要还没点过重启）。
+     */
+    private fun setupRestartCard() {
+        val block = findViewById<View>(R.id.block_restart_sui)
+        val ack = try {
+            getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
+                .getBoolean(RestartReminderPolicy.KEY_ACK, false)
+        } catch (_: Throwable) {
+            false
+        }
+        // shouldShow 为 true = 还没走过引导页 = 刚装上。老用户从「关于」进来时
+        // 这里是 false，卡片不会出现 —— 每次打开设置都提醒「请重启」只会变成狼来了。
+        restartPending = RestartReminderPolicy.shouldPrompt(shouldShow(this), ack)
+        if (!restartPending) {
+            block.visibility = View.GONE
+            return
+        }
+        block.visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_restart_title).text = RestartReminderPolicy.title()
+        findViewById<TextView>(R.id.tv_restart_body).text =
+            RestartReminderPolicy.body(rootAvailable)
+        findViewById<TextView>(R.id.tv_restart_state).text =
+            RestartReminderPolicy.pendingText()
+        findViewById<Button>(R.id.btn_restart_sui).apply {
+            text = RestartReminderPolicy.actionText()
+            setOnClickListener { doRestartSystemUi() }
+        }
+        DiagLog.log(
+            "[PERM] 首次安装：显示「重启系统界面」提醒（rootAvailable=$rootAvailable）"
+        )
+    }
+
+    /**
+     * 发起重启，并把结果写回卡片状态行。
+     *
+     * 走 [SystemUiRestarter] 而不是自己拼 su 命令：它已经处理了
+     * 「Hook 自尽 → su 兜底」两条通道、广播鉴权、命令超时和 pid 精确 kill。
+     * 这里只负责把结果翻译成用户能看懂的一句话。
+     */
+    private fun doRestartSystemUi() {
+        val btn = findViewById<Button>(R.id.btn_restart_sui)
+        val state = findViewById<TextView>(R.id.tv_restart_state)
+        btn.isEnabled = false
+        state.setTextColor(colorNeutral)
+        state.text = "正在发送重启指令…"
+        DiagLog.log("[PERM] 用户点击「重启系统界面」（首次安装引导）")
+        SystemUiRestarter.restart(this) { ok: Boolean, viaRoot: Boolean ->
+            if (isFinishing || isDestroyed) return@restart
+            btn.isEnabled = true
+            if (ok) {
+                restartPending = false
+                markRestartAcknowledged()
+                state.setTextColor(colorOk)
+                state.text = RestartReminderPolicy.successText(viaRoot)
+            } else {
+                state.setTextColor(colorBad)
+                state.text = RestartReminderPolicy.failureText()
+            }
+        }
+    }
+
+    /** 重启成功后落一个一次性标记，之后不再显示这张卡片 */
+    private fun markRestartAcknowledged() {
+        try {
+            getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
+                .edit().putBoolean(RestartReminderPolicy.KEY_ACK, true).commit()
+            DiagLog.log("[PERM] 已记录「重启系统界面」完成标记")
+        } catch (t: Throwable) {
+            DiagLog.log("[PERM:SYSTEM] 写入重启标记失败：${t.message}")
+        }
+    }
+
+    /** 「跳过 / 完成」的统一出口：写标记 + 结束页面 */
+    private fun finishOnboarding() {
+        DiagLog.log("[PERM] 用户点击「跳过 / 完成」，结束引导")
+        markDone(this)
+        finish()
     }
 
     override fun onResume() {

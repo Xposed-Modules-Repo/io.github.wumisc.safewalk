@@ -2,6 +2,7 @@ package io.github.wumisc.safewalk;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
@@ -147,26 +148,119 @@ public class PreviewWindowTest {
     @Test
     public void contrastLevel_isAcceptedAndTogglesHudVisibility() {
         build();
-        // 【对比度强度进度条】六参 show：开关开 + 强度 85%，窗口仍正常挂载，
-        // 容器含画面层 + HUD 文字层，且 HUD 层可见。
+        // 【4.9.0 语义变更】HUD 可见性由「有没有文案」决定，不再由对比度开关决定。
+        // 这组断言锁住三件事：
+        //  1) 没文案 → 即使对比度开着也不显示（默认状态，画面上一个字都没有）；
+        //  2) 有文案 + 对比度开 → 可见；
+        //  3) 有文案 + 对比度关 → 仍然可见，但退化成纯白字（level=0，无描边无衬底）。
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
-                true, false, 85);
+                true, false, 85, null, 13, 150, 12);
         assertNotNull(recorder.params);
         assertTrue("窗口根必须是 FrameLayout 容器", recorder.view instanceof ViewGroup);
         ViewGroup root = (ViewGroup) recorder.view;
         assertTrue("容器应含画面层 + HUD 文字层", root.getChildCount() >= 2);
-        assertEquals("增强对比度开启时 HUD 层应可见",
-                View.VISIBLE, root.getChildAt(1).getVisibility());
+        assertEquals("没有文案时 HUD 层不应显示（哪怕对比度开着）",
+                View.GONE, root.getChildAt(1).getVisibility());
         assertEquals("容器 alpha 恒为 1（文字层永不被调淡）",
                 1.0f, root.getAlpha(), 0.001f);
 
-        // 关掉总闸：HUD 层置 GONE，透明度仍只作用于画面层
+        // 有文案 + 对比度开：HUD 可见
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
-                false, false, 85);
+                true, false, 85, "路况预览", 13, 150, 12);
         ViewGroup root2 = (ViewGroup) recorder.view;
-        assertEquals("增强对比度关闭时 HUD 层应隐藏",
-                View.GONE, root2.getChildAt(1).getVisibility());
-        assertEquals("画面层透明度不受对比度开关影响",
+        assertEquals("有文案且对比度开启时 HUD 层应可见",
+                View.VISIBLE, root2.getChildAt(1).getVisibility());
+        assertEquals("画面层透明度不受 HUD 影响",
                 0.50f, root2.getChildAt(0).getAlpha(), 0.01f);
+
+        // 有文案 + 对比度关：仍显示，只是不加修饰
+        overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 85, "路况预览", 13, 150, 12);
+        ViewGroup root3 = (ViewGroup) recorder.view;
+        assertEquals("文案开关与对比度解耦：关掉对比度文字仍在",
+                View.VISIBLE, root3.getChildAt(1).getVisibility());
+    }
+
+    @Test
+    @Config(sdk = 34, qualifiers = "w411dp-h891dp")
+    public void smallWindowSizeAndMargin_followUserSettings() {
+        build();
+        // 小窗尺寸按 150:260 比例换算，边距按设置值下发。
+        // 指定一块够高的屏幕（891dp），让「横屏高度上限」不参与，这条只测用户设置是否生效。
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 180, 30);
+        assertNotNull(recorder.params);
+        Context ctx = ApplicationProvider.getApplicationContext();
+        float density = ctx.getResources().getDisplayMetrics().density;
+        int expectW = Math.round(180 * density);
+        int expectH = Math.round((180 * RearCameraOverlay.SMALL_ASPECT) * density);
+        assertEquals("宽度应等于用户设置值", expectW, recorder.params.width);
+        assertEquals("高度按固定宽高比换算", expectH, recorder.params.height);
+        assertEquals("边距应等于用户设置值", Math.round(30 * density), recorder.params.x);
+    }
+
+    /**
+     * 【5.3.0 横屏】横过来之后屏幕高度腰斩，小窗不能顶出屏幕。
+     *
+     * 411dp 高的横屏上，180dp 宽换算出来 312dp 高，已经占了屏高四分之三，
+     * 再叠加边距就顶到状态栏外面。所以只压高度、不动宽度（用户调的是宽度），
+     * 上限取屏高 62% —— 画面是等比铺满，压矮只会多裁上下，不变形。
+     */
+    @Test
+    @Config(sdk = 34, qualifiers = "w891dp-h411dp")
+    public void smallWindowHeightIsCappedOnLandscapeScreens() {
+        build();
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 180, 30);
+        assertNotNull(recorder.params);
+        Context ctx = ApplicationProvider.getApplicationContext();
+        float density = ctx.getResources().getDisplayMetrics().density;
+        int screenH = ctx.getResources().getDisplayMetrics().heightPixels;
+        int uncapped = Math.round((180 * RearCameraOverlay.SMALL_ASPECT) * density);
+        assertEquals("宽度不受高度上限影响", Math.round(180 * density), recorder.params.width);
+        assertEquals("高度应压到屏高的 62%", (int) (screenH * 0.62f), recorder.params.height);
+        assertTrue("横屏下确实压矮了", recorder.params.height < uncapped);
+    }
+
+    /**
+     * 描边只作用于小窗。
+     *
+     * 全屏描边会紧贴屏幕边缘画一圈白线，看上去像「画面没铺满」，
+     * 用户会当成故障 —— 所以这条既是功能，也是防回归。
+     */
+    @Test
+    public void borderOnlyAppliesToSmallWindow() {
+        build();
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 150, 12, 0, 2, false);
+        assertNotNull("小窗 + 2dp 描边应设置前景 drawable", recorder.view.getForeground());
+
+        overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 150, 12, 0, 2, false);
+        assertNull("全屏不应描边", recorder.view.getForeground());
+
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 150, 12, 0, 0, false);
+        assertNull("描边为 0 时不应有前景", recorder.view.getForeground());
+    }
+
+    /**
+     * 取景范围 / 描边 / 低光增强越界时不能把窗口搞崩。
+     *
+     * 这三个值来自 SeekBar 与配置文件（用户在旧版本可能存过任意值），
+     * 越界必须在 Style 构造时夹住，而不是带着 500% 去算矩阵。
+     */
+    @Test
+    public void framingAndBorder_areClampedAndWindowStillMounts() {
+        build();
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 150, 12, 500, 99, true);
+        assertNotNull("越界参数也必须能正常挂窗", recorder.params);
+        assertTrue("窗口宽高仍为正数", recorder.params.width > 0 && recorder.params.height > 0);
+
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR,
+                false, false, 50, null, 13, 150, 12, -80, -5, true);
+        assertNotNull("负值同样不能崩", recorder.params);
+        assertNull("负描边按 0 处理，不应有前景", recorder.view.getForeground());
     }
 }

@@ -1,7 +1,7 @@
 package io.github.wumisc.safewalk
 
 /**
- * 五家厂商 + 原生的适配数据表（P0 交付物）。
+ * 七家厂商 + 原生的适配数据表（P0 交付物；5.2.0 补了三星 One UI）。
  *
  * ## 候选页的来源
  *
@@ -39,7 +39,7 @@ package io.github.wumisc.safewalk
  * ## 关于准确性的诚实说明
  *
  * 表中 component 取自社区常见值与项目既有代码（`PermissionOnboardingActivity`、
- * `EmergencyCardActivity` 里已在用的路径），**尚未在五家真机上逐条验证**。
+ * `EmergencyCardActivity` 里已在用的路径），**尚未在七家真机上逐条验证**。
  * 验证方法：`adb shell cmd package resolve-activity --brief <pkg/cls>`。
  * 计划 P1 的验收标准就是「每家至少一条能打开」。
  */
@@ -64,10 +64,19 @@ object RomRegistry {
     private const val HUAWEI_SM = "com.huawei.systemmanager"
     private const val MEIZU_SAFE = "com.meizu.safe"
 
+    /**
+     * 三星「设备维护」（Device Care）。
+     *
+     * One UI 4 起由独立 APK `com.samsung.android.lool` 提供；
+     * Android 7 时代的老三星用的是 `com.samsung.android.sm`，两条都留着当候选。
+     */
+    private const val SAMSUNG_LH = "com.samsung.android.lool"
+    private const val SAMSUNG_SM = "com.samsung.android.sm"
+
     /** 所有 ROM 都能用的应用详情页，作为最终兜底。 */
     private const val FALLBACK_DETAILS = "android.settings.APPLICATION_DETAILS_SETTINGS"
 
-    /** 标准电池优化页（AOSP 就有，五家国产 ROM 也都保留了这条 action）。 */
+    /** 标准电池优化页（AOSP 就有，六家国产 ROM + 三星也都保留了这条 action）。 */
     private const val ACTION_BATTERY = "android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS"
 
     private val HYPEROS = RomProfile(
@@ -288,6 +297,67 @@ object RomRegistry {
         note = "Flyme 的后台冻结比 MIUI 更激进，且「后台管理」默认按智能策略放行，必须手动改成允许"
     )
 
+    /**
+     * 三星 One UI（S24 Ultra / S23 / Z Fold 等）。
+     *
+     * ## 和国产 ROM 的结构差异
+     *
+     * 三星**没有「自启动管理」这个独立开关**。它用「设备维护 → 电池 → 后台使用限制」
+     * 里的「休眠应用 / 深度休眠应用」两张名单控制冻结，语义等价于国产 ROM 的
+     * 自启动白名单。所以 [TargetKind.AUTOSTART] 与 [TargetKind.BATTERY] 指向
+     * 同一个页面，只是文案不同 —— 这不是偷懒，是这台机器上真的只有这一个入口。
+     *
+     * ## 组件名的不确定性
+     *
+     * `BatteryActivity` 这个类名从 One UI 3 一直用到 One UI 8 没变过，
+     * 但包内的**子路径**换过两次（`sm.battery.ui` → `sm.ui.battery`），
+     * 而且 Android 7 时代整体换过一次包名（`com.samsung.android.sm` → `lool`）。
+     * 三条全列上，运行时逐条 `resolveActivity`，命中即用 —— 多写一条的代价
+     * 只是多一次失败尝试，不会让用户卡住。
+     */
+    private val ONEUI = RomProfile(
+        id = RomId.ONEUI,
+        pages = listOf(
+            // One UI 5~8（含 S24 系列的 One UI 6.1 / 7 / 8）：设备维护 → 电池
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$SAMSUNG_LH/com.samsung.android.sm.ui.battery.BatteryActivity",
+                "设备维护 → 电池 → 后台使用限制（把本应用移出休眠名单）"
+            ),
+            // One UI 3/4 的子路径
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$SAMSUNG_LH/com.samsung.android.sm.battery.ui.BatteryActivity",
+                "设备维护 → 电池 → 后台使用限制（旧版）"
+            ),
+            // Android 7/8 时代的老包名，只在极旧机器上命中
+            PageTarget.component(
+                TargetKind.AUTOSTART,
+                "$SAMSUNG_SM/com.samsung.android.sm.ui.battery.BatteryActivity",
+                "智能管理器 → 电池 → 后台使用限制（旧版）"
+            ),
+            PageTarget.action(
+                TargetKind.AUTOSTART, FALLBACK_DETAILS, "应用详情 → 电池 → 不受限制（兜底）"
+            ),
+            // 电池页：同一条路径，文案写明用户该在这里做什么
+            PageTarget.component(
+                TargetKind.BATTERY,
+                "$SAMSUNG_LH/com.samsung.android.sm.ui.battery.BatteryActivity",
+                "电池 → 后台使用限制 → 不受限制"
+            ),
+            PageTarget.action(
+                TargetKind.BATTERY, ACTION_BATTERY, "电池优化 → 不优化"
+            ),
+            // 三星没有「后台弹出界面」开关，悬浮窗权限在应用详情的权限列表里
+            PageTarget.action(
+                TargetKind.BACKGROUND_POPUP, FALLBACK_DETAILS,
+                "应用详情 → 权限 → 在其他应用上层显示"
+            )
+        ),
+        cameraPkgs = setOf("com.sec.android.app.camera"),
+        note = "「休眠应用」名单是主要杀手；关掉「自适应电池」对相机服务没有帮助，反而更费电"
+    )
+
     private val AOSP = RomProfile(
         id = RomId.AOSP,
         pages = listOf(
@@ -308,6 +378,7 @@ object RomRegistry {
         RomId.ORIGINOS to ORIGINOS,
         RomId.HARMONYOS to HARMONYOS,
         RomId.FLYME to FLYME,
+        RomId.ONEUI to ONEUI,
         RomId.AOSP to AOSP
     )
 

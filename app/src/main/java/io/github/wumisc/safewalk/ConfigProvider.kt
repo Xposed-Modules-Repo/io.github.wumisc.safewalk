@@ -76,7 +76,31 @@ class ConfigProvider : ContentProvider() {
             // RomSettings.romOverride（本机 UI 是哪一家）。后者只影响设置页跳转与
             // 文案，Hook 端不需要知道 —— 少一个跨进程状态，就少一种两边不一致的可能。
             SafeWalkPrefKey.enablePreviewContrast,
-            SafeWalkPrefKey.previewContrastLevel
+            SafeWalkPrefKey.previewContrastLevel,
+            // 4.9.0 预览小窗自定义：纯显示参数，无隐私字段。进白名单只为导出配置
+            // 时一并带上，换机/重装后小窗形态与文字设置不会丢。
+            SafeWalkPrefKey.previewHudEnabled,
+            SafeWalkPrefKey.previewHudText,
+            SafeWalkPrefKey.previewHudTextSize,
+            SafeWalkPrefKey.previewSmallWidthDp,
+            SafeWalkPrefKey.previewSmallMarginDp,
+            // 5.0.0 取景范围 / 描边 / 低光增强：同样是纯显示参数，
+            // 进白名单只为「导出配置带全」，Hook 侧不读。
+            SafeWalkPrefKey.previewFramingPct,
+            SafeWalkPrefKey.previewBorderDp,
+            SafeWalkPrefKey.previewLowLight,
+            // 5.1.0 智能方案 + 画面增强：同样是纯显示参数，进白名单只为导出配置带全。
+            // 注意 nightTorchStartHour / nightTorchEndHour 本来就在上面（手电联动时段），
+            // 智能方案的夜间判定直接复用它们 —— 用户只该有一个「夜间」概念，
+            // 分成两套时段只会出现「手电按 22 点算夜间、小窗按 20 点算」的荒唐结果。
+            SafeWalkPrefKey.presetAuto,
+            SafeWalkPrefKey.previewScreenEnhance,
+            SafeWalkPrefKey.previewScreenContrast,
+            SafeWalkPrefKey.previewScreenShadowLift,
+            SafeWalkPrefKey.previewScreenSaturation,
+            // 5.3.0 画面方向：字符串档位（auto/fixed/flip），
+            // 进白名单既是为了导出配置带全，也是为了 Hook 侧切换形态时能读到当前档位。
+            SafeWalkPrefKey.previewRotationMode
         )
     }
 

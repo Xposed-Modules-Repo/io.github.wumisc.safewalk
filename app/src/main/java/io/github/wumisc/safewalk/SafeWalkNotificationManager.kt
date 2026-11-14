@@ -38,6 +38,12 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         /** 低头提醒（行走时长时间看手机） */
         const val ID_HEAD_DOWN = 1011
 
+        /** 久走提醒（累计步行 45 分钟） */
+        const val ID_LONG_WALK = 1012
+
+        /** 夜间独行提醒（夜间累计步行 10 分钟） */
+        const val ID_NIGHT_SOLO = 1013
+
         /** 本模块包名，用于构造跨进程 PendingIntent */
         private const val APP_PKG = "io.github.wumisc.safewalk"
         /** SystemUI 包名：手电广播必须显式投递，否则隐式广播收不到 */
@@ -161,6 +167,42 @@ class SafeWalkNotificationManager(private val ctx: Context) {
     fun headDownRemind() {
         if (!checkCooldown(ID_HEAD_DOWN)) return
         notify(ID_HEAD_DOWN, baseBuilder("SafeWalk 抬头提醒", "已经低头走了一会儿了，抬头看看前面的路。"))
+    }
+
+    /**
+     * 久走提醒：连续出行累计走满阈值，提醒歇一下。
+     *
+     * 文案只给一个动作（坐五分钟、喝口水），不说「注意健康」这种没法执行的话。
+     * 阈值与冷却由 [LongWalkPolicy] 决定，这里只管发。
+     */
+    fun longWalkRemind(minutes: Int) {
+        if (!checkCooldown(ID_LONG_WALK)) return
+        notify(
+            ID_LONG_WALK,
+            baseBuilder(
+                "SafeWalk 久走提醒",
+                "已经连着走了 ${minutes} 分钟。找个地方坐五分钟，顺便喝口水——腿不酸，路才走得稳。"
+            )
+        )
+    }
+
+    /**
+     * 夜间独行提醒：夜间时段走了一段时间还没到地方。
+     *
+     * 刻意不走「注意安全」这种空话，给两条能立刻做的事：留意身后与路口、
+     * 把行程告诉家人。不放「一键报警」——它需要跳系统拨号，
+     * 夜间误触的代价比收益大，急救卡那套已有更完整的求助链路。
+     */
+    fun nightSoloRemind(minutes: Int) {
+        if (!checkCooldown(ID_NIGHT_SOLO)) return
+        notify(
+            ID_NIGHT_SOLO,
+            baseBuilder(
+                "SafeWalk 夜间独行",
+                "夜间已经走了 ${minutes} 分钟。过路口多看一眼两侧，走有灯的一侧；" +
+                    "把行程告诉家人，多一层照应。"
+            )
+        )
     }
 
     /**

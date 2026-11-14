@@ -1,0 +1,873 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    预览小窗自定义（三级页）。
+
+    为什么单独开一页：行走模式那一页承担的是「开不开、怎么触发」，
+    这一页承担的是「长什么样」。两者改动的频率与心智完全不同 ——
+    前者一年改一次，后者可能为了不挡导航栏一天调三次。
+    参数全在这里，改完即生效，不需要保存按钮。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fitsSystemWindows="true"
+    android:padding="16dp"
+    android:paddingTop="40dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:id="@+id/btn_back"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingVertical="4dp"
+            android:text="‹ 行走模式"
+            android:textColor="@color/primary"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="小窗自定义"
+            android:textColor="@color/text_primary"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_style_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="改完立即生效。若预览未在显示，可先回到上一页打开开关看效果。"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp" />
+
+        <!-- ============ 一键方案 ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="一键方案" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <LinearLayout
+                    android:id="@+id/card_preset_auto"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="跟随环境自动切换"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="系统开深色模式就是夜间；没开深色模式的机器，按下面设的时段判断"
+                            android:textColor="@color/text_hint"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_preset_auto"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/chip_preset_day"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="白天"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_preset_night"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="夜间"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_preset_plain"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="极简"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_preset_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="白天=完整取景+细描边；夜间=低光增强+只看路面+粗描边+画面增强；极简=不描边、不增强。点一下覆盖下方对应参数"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginLeft="0dp"
+                    android:layout_marginTop="14dp" />
+
+                <LinearLayout
+                    android:id="@+id/row_night_window"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="夜间时段"
+                        android:textColor="@color/text_primary"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/tv_night_start"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:minWidth="76dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="22:00"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginHorizontal="8dp"
+                        android:text="→"
+                        android:textColor="@color/text_hint"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/tv_night_end"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:minWidth="76dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="06:00"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_night_window_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="跨零点没问题（22:00→06:00 就是到次日早上六点）。这一段与「夜间闪光灯联动」共用同一个时段，改一处两处都变"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 取景与可见度 ============
+             这一组替代了原来与「行走模式」页重复的「形态与位置」。
+             形态（全屏/小窗）与位置是「怎么显示」，属于上一页的决策；
+             这里只解决「显示出来之后看得清不清」。 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="取景与可见度" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:id="@+id/tv_framing"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="取景范围 · 完整画面"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_framing"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="100" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="往右拖只保留画面下半部分并等比放大：路面占比更大、看得清更近的障碍，代价是两侧视野变窄"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="小窗描边"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/chip_border_0"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="无"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_border_1"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="细 1dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_border_2"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="粗 2dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="白天小窗叠在浅色路面上时，边界和背景亮度接近；加一条白边就能看出小窗到哪儿为止"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:id="@+id/card_low_light"
+                style="@style/SwitchRow">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="低光增强" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="夜间画面发黑时加亮约 2 档曝光（+2EV）。画面更亮，噪点也会更明显；部分机型不支持，开关不生效" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_low_light"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 画面增强 ============
+             这一组是 5.1.0 补上的真东西。上一版的「增强对比度」只在文字层画描边，
+             字清楚了、路面还是糊的 —— 用户要的是「小窗预览增强对比度」，
+             不是「一句增强对比度的文字」。这里动的是画面像素本身。 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="画面增强" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:id="@+id/card_screen_enhance"
+                style="@style/SwitchRow">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="增强画面（不是文字）" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="对相机画面做逐像素处理：拉开明暗差、把暗部提亮、压掉夜间噪点。台阶、路沿、井盖的轮廓靠这个才看得见" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/sw_screen_enhance"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View style="@style/RowDivider" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:id="@+id/tv_screen_contrast"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="对比度 · 45%"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_screen_contrast"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:max="100"
+                    android:progress="45" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="0 = 原始画面。往右拉，暗的更暗、亮的更亮；调到 80% 以上高光可能过曝，白天路面反光会白成一片"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginLeft="0dp" />
+
+                <TextView
+                    android:id="@+id/tv_screen_shadow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="暗部提亮 · 40%"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_screen_shadow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:max="100"
+                    android:progress="40" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="只抬阴影、不动高光。树荫、楼道口、下穿隧道里最容易藏台阶，靠它把轮廓找回来；调太高画面会发灰"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginLeft="0dp" />
+
+                <TextView
+                    android:id="@+id/tv_screen_sat"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="饱和度 · 50%（原始）"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_screen_sat"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:max="100"
+                    android:progress="50" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="往左调偏灰：夜间彩色噪点在灰度里更不显眼，等于免费降噪。往右调更艳，只在白天有用"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 透明度 ============
+             与「小窗尺寸」相邻：这两个都是「占多大、透不透」的几何属性，
+             放在一起改起来才顺；夹在画面增强和文字之间会显得东一块西一块。 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="画面透明度" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:id="@+id/tv_opacity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="画面不透明度"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_opacity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="90" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="范围 10% ~ 100%，越低越能看清底下的界面"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 画面方向 ============
+             5.3.0 新增。相机传感器是横装的，屏幕可以竖、可以横、还能倒；
+             以前完全没有旋转逻辑，竖屏靠窗口比例勉强凑合，一横过来画面就侧躺。
+             默认「自动」即可，两个手动档是给「自动算错」的机器留的后悔药。 -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="画面方向" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="画面朝哪边"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/chip_rot_auto"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="自动"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_rot_fixed"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="固定竖屏"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_rot_flip"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="翻转 180°"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="横屏时画面会自动转正，一般不用改。若画面侧躺或倒置：选「固定竖屏」不跟随屏幕旋转；选「翻转 180°」在自动结果上再转半圈"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 尺寸（仅角落小窗） ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="小窗尺寸" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:id="@+id/tv_width"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="宽度 · 150dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_width"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="100" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="100 ~ 200dp。高度按 150:260 的比例跟随，画面不会被拉变形"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginLeft="0dp" />
+
+                <TextView
+                    android:id="@+id/tv_margin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="距屏幕边缘 · 12dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_margin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="40" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="0 ~ 40dp。避开导航栏、手势区、屏幕圆角"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 状态文字 ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="画面上的文字" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <LinearLayout
+                    android:id="@+id/card_hud"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="显示状态文字"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="默认关闭。画面本身已经说明一切，不需要额外一行提示"
+                            android:textColor="@color/text_hint"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_hud"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginLeft="0dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="文字内容"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <EditText
+                    android:id="@+id/et_hud_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@null"
+                    android:hint="留空则显示「路况预览」"
+                    android:inputType="text"
+                    android:maxLength="20"
+                    android:singleLine="true"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_hint"
+                    android:textSize="14sp" />
+
+                <View
+                    style="@style/RowDivider"
+                    android:layout_marginLeft="0dp" />
+
+                <TextView
+                    android:id="@+id/tv_hud_size"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="字号 · 13sp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <SeekBar
+                    android:id="@+id/seek_hud_size"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="9" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="11 ~ 20sp。看不清就调大，嫌挡视线就调小"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ============ 文字描边 ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="文字描边" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <LinearLayout
+                    android:id="@+id/card_contrast"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="给文字描边加衬底"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="只作用于这行字，让它不糊。路面清楚与否，请用上面的「画面增强」"
+                            android:textColor="@color/text_hint"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_contrast"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="强度"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/tv_contrast_level"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:text="50% · 适中"
+                        android:textColor="@color/text_hint"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/seek_contrast_level"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:max="100"
+                    android:progress="50" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="只在「显示状态文字」打开时有效"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="所有改动即时写入配置，退出本页不会丢失。"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

@@ -155,10 +155,25 @@ class GaitDetector {
     private var currentAxis = 0
 
     private var currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
-    var currentAttitude: PhoneAttitude = PhoneAttitude.UNKNOWN
-        private set
 
-    fun getAttitude(): PhoneAttitude = currentAttitude
+    /**
+     * 姿态稳定器：滞回 + 700ms 驻留。
+     *
+     * 【5.2.0 为什么必须加这一层】
+     * 原来 `updateAttitude` 是单帧直判 `abs(gz) > 8.5 → LAY_FLAT`，而 8.5 对应
+     * 倾角 acos(8.5/9.8) ≈ 30° —— 手持低头看屏幕（30~50° 仰角）正好卡在边界上，
+     * 握持微抖就会在 LAY_FLAT / TILTED 之间反复翻转。
+     *
+     * 真机日志（2026-11-14，Redmi / HyperOS 4）里 18 分钟内 LAY_FLAT 出现 58 次、
+     * TILTED 71 次，3 秒内翻两次。LAY_FLAT 是 [WalkConfirmPolicy] 的第一道硬闸，
+     * 每翻一次就直接判死一次，这是「走了十几分钟一次没弹」的第二个原因。
+     */
+    private val attitudeStabilizer = AttitudeStabilizer()
+
+    val currentAttitude: PhoneAttitude
+        get() = attitudeStabilizer.current()
+
+    fun getAttitude(): PhoneAttitude = attitudeStabilizer.current()
 
     /**
      * 屏幕法线与水平面的夹角：0° ≈ 屏幕朝上平放，90° ≈ 手机竖直。
@@ -186,17 +201,15 @@ class GaitDetector {
         gaitStateCallback = callback
     }
 
-    private fun updateAttitude(gx: Float, gy: Float, gz: Float) {
-        val gMag = sqrt(gx * gx + gy * gy + gz * gz)
-        if (gMag < 8f) {
-            currentAttitude = PhoneAttitude.UNKNOWN
-            return
-        }
-        currentAttitude = when {
-            abs(gz) > MotionConfig.LAY_FLAT_Z_THRESHOLD -> PhoneAttitude.LAY_FLAT
-            abs(gx) > 7f || abs(gy) > 7f -> PhoneAttitude.UPRIGHT
-            else -> PhoneAttitude.TILTED
-        }
+    /**
+     * 姿态判定：交给 [AttitudeStabilizer] 做滞回与驻留，本方法只负责把
+     * 低通后的重力分量转发过去。
+     *
+     * 5.2.0 之前这里是单帧直判（`abs(gz) > 8.5 → LAY_FLAT`），没有滞回也没有
+     * 驻留，握持微抖就会反复翻转。判定细节与阈值理由见 [AttitudeStabilizer]。
+     */
+    private fun updateAttitude(gx: Float, gy: Float, gz: Float, now: Long) {
+        attitudeStabilizer.feed(gx, gy, gz, now)
     }
 
     fun feedAcc(ax: Float, ay: Float, az: Float): Boolean =
@@ -230,7 +243,7 @@ class GaitDetector {
         val linY = ay - gravityY
         val linZ = az - gravityZ
 
-        updateAttitude(gravityX, gravityY, gravityZ)
+        updateAttitude(gravityX, gravityY, gravityZ, now)
 
         // —— 1.5 预热：等重力收敛，别让启动瞬态污染包络 ——
         if (warmupLeft > 0) {
@@ -351,6 +364,17 @@ class GaitDetector {
      * 容差从 250ms 放宽到 400ms：真人步间隔的抖动，加上手机在口袋里
      * 被裤子带着晃造成的峰位漂移，250ms 会把正常步行判成「不稳」，
      * 而这在真机上是常态 —— 之前正是它把 50 步之后的提醒全部卡住。
+     *
+     * 【5.1.0 为什么没跟着收紧】
+     * 治「手持误触发」时第一时间想动这里：把 ±400ms 的绝对容差改成
+     * ±35% 的相对容差，一眼看上去更合理。但试过之后不行 ——
+     * 它只服务于 [WalkPreviewService] 里那条「姿态/节律闸门」的**旁路**，
+     * 真走路的间隔会被漏峰、口袋晃动拉成 500/600/1000ms 混合，
+     * 相对容差 650×0.35=227ms 直接把这类真实步流判死（已有单测覆盖）。
+     *
+     * 误触发的真正关卡在 [WalkConfirmPolicy]：那里看的是整段步流的形态
+     * （平均间隔、最大间隔、节律一致性），且是「要不要显示」的最后一票。
+     * 收紧放在那一处，边界清楚、有真机日志做依据，也不会误伤旁路。
      */
     fun hasStableGait(): Boolean {
         // 至少2步间隔稳定就算真走路（采样窗口内2步足够判定）
@@ -377,7 +401,7 @@ class GaitDetector {
         envelope = 0f
         lastSampleTs = 0L
         currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
-        currentAttitude = PhoneAttitude.UNKNOWN
+        attitudeStabilizer.reset()
         // gravity / ema / warmupLeft 刻意不清：见上面的说明
         // 清空静置状态
         staticDetectTimerStart = null

@@ -29,6 +29,9 @@ public final class WalkModeActivity extends Activity {
     private SeekBar seekOpacity;
     private SeekBar seekGaitSteps, seekGaitStop;
     private TextView tvGaitSteps, tvGaitStop;
+    /** 【5.1.0】步态诊断提示（只有「没权限 / 没计步器」时才显示） */
+    private TextView tvGaitDiagnosis;
+    private View cardGaitDiagnosis;
     private TextView[] modeChips, posChips;
 
     // 【新增对比度 UI 模块】增强对比度独立开关（整卡可点）
@@ -100,6 +103,8 @@ public final class WalkModeActivity extends Activity {
         seekGaitStop = findViewById(R.id.seek_gait_stop);
         tvGaitSteps = findViewById(R.id.tv_gait_steps);
         tvGaitStop = findViewById(R.id.tv_gait_stop);
+        tvGaitDiagnosis = findViewById(R.id.tv_gait_diagnosis);
+        cardGaitDiagnosis = findViewById(R.id.card_gait_diagnosis);
 
         modeChips = new TextView[]{
                 findViewById(R.id.chip_mode_full),
@@ -131,6 +136,16 @@ public final class WalkModeActivity extends Activity {
         // 控制中心磁贴：Android 13+ 可直接请求系统弹「是否添加」对话框，
         // 不必让用户自己进「编辑控制中心」翻列表找。
         findViewById(R.id.card_add_tile).setOnClickListener(v -> requestAddQsTile());
+
+        // 小窗自定义（三级页）：尺寸 / 边距 / 画面文字。参数都在那边，
+        // 本页只留入口，避免同一组控件维护两份。
+        findViewById(R.id.card_preview_style).setOnClickListener(v -> {
+            try {
+                startActivity(new android.content.Intent(this, PreviewStyleActivity.class));
+            } catch (Throwable t) {
+                Toast.makeText(this, "打开失败：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void loadConfig() {
@@ -158,13 +173,15 @@ public final class WalkModeActivity extends Activity {
 
         updateOpacityLabel(opacity);
 
-        // 确认步数 2~10（滑条 0~8），默认 5；停下延迟 5~30 秒（滑条 0~25），默认 10
+        // 确认步数 2~10（滑条 0~8），默认 5；停下延迟 5~30 秒（滑条 0~25），默认 15
         int steps = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5);
         steps = Math.max(2, Math.min(10, steps));
         seekGaitSteps.setProgress(steps - 2);
         tvGaitSteps.setText("连续走 " + steps + " 步才弹出预览");
 
-        int stopSec = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, 10);
+        // 默认从 10 秒提到 15 秒（v5.1.0）：等红灯、低头看手机再走，
+        // 中间停 10~15 秒是常态，10 秒会让小窗在正常停顿里反复收起又弹出。
+        int stopSec = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, 15);
         stopSec = Math.max(5, Math.min(30, stopSec));
         seekGaitStop.setProgress(stopSec - 5);
         tvGaitStop.setText("停下后 " + stopSec + " 秒收起预览");
@@ -339,6 +356,8 @@ public final class WalkModeActivity extends Activity {
     // ========== 权限申请 ==========
 
     private static final int REQ_CAMERA = 2001;
+    /** 【5.1.0】请求「身体活动」权限：硬件计步器出数依赖它 */
+    private static final int REQ_STEP_PERM = 2002;
 
     /** 相机权限 + 悬浮窗权限都齐了才启动预览服务，缺哪样补哪样 */
     private void ensurePermissionsThenStart() {
@@ -385,6 +404,15 @@ public final class WalkModeActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        // 【5.1.0】「身体活动」权限：拿到就直接刷新诊断行，那一行会自己消失；
+        // 没拿到就保持提示（红色、可再点），不要让用户以为已经好了。
+        if (requestCode == REQ_STEP_PERM) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            DiagLog.log("[walk] 身体活动权限 → " + (granted ? "已授予" : "仍被拒绝"));
+            refreshGaitDiagnosis();
+            return;
+        }
         if (requestCode != REQ_CAMERA) return;
         if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             DiagLog.log("[walk] 相机权限已授予");
@@ -515,7 +543,54 @@ public final class WalkModeActivity extends Activity {
         refreshDependencies();
         refreshModeChips();
         refreshPosChips();
+        refreshGaitDiagnosis();
         // 「系统 UI 适配」卡片在首页，本页不刷新它。
+    }
+
+    /**
+     * 【5.1.0】步态判定可信度诊断。
+     *
+     * 真机日志里有一行反复出现：「计步传感器=有 已出步=0」—— 这台机器有硬件计步器，
+     * 却一步都没出过数，于是整套判定退化成「纯加速度猜」，拿在手里也会误弹。
+     * 这件事原来只写在日志里，用户只会觉得「新版本变差了」。
+     *
+     * 这里把它搬到界面上：有问题才显示（红色一行），没问题时那一条整块 GONE，
+     * 不占地方也不制造焦虑。点一下直接去授权，不用自己去设置里翻三层菜单。
+     */
+    private void refreshGaitDiagnosis() {
+        if (tvGaitDiagnosis == null || cardGaitDiagnosis == null) return;
+        String issue;
+        try {
+            android.hardware.SensorManager sm =
+                    (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
+            boolean hasSensor = sm != null
+                    && sm.getDefaultSensor(android.hardware.Sensor.TYPE_STEP_COUNTER) != null;
+            boolean hasPerm = checkSelfPermission(android.Manifest.permission.ACTIVITY_RECOGNITION)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            issue = StepSensorPolicy.diagnose(hasSensor, hasPerm);
+        } catch (Throwable t) {
+            issue = StepSensorPolicy.OK;
+        }
+        if (!StepSensorPolicy.needsAttention(issue)) {
+            cardGaitDiagnosis.setVisibility(View.GONE);
+            return;
+        }
+        cardGaitDiagnosis.setVisibility(View.VISIBLE);
+        tvGaitDiagnosis.setText(StepSensorPolicy.hint(issue));
+        // 没有计步器的机器点了也没用，不给点击反馈免得空点
+        cardGaitDiagnosis.setClickable(StepSensorPolicy.NO_PERMISSION.equals(issue));
+        cardGaitDiagnosis.setOnClickListener(
+                StepSensorPolicy.NO_PERMISSION.equals(issue) ? v -> requestStepPermission() : null);
+    }
+
+    private void requestStepPermission() {
+        try {
+            requestPermissions(
+                    new String[]{android.Manifest.permission.ACTIVITY_RECOGNITION}, REQ_STEP_PERM);
+        } catch (Throwable t) {
+            Toast.makeText(this, "请在系统设置 → 应用 → 权限里允许「身体活动」",
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     // ========== 系统 UI 适配 ==========
@@ -686,8 +761,18 @@ public final class WalkModeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         // 权限可能在页面之外被改动（adb 授权、系统更新重置权限），
-        // 回到页面重新读一次，不然这行状态会一直停在打开页面那一刻的结论
-        if (!binding) refreshDependencies();
+        // 回到页面重新读一次，不然这行状态会一直停在打开页面那一刻的结论。
+        //
+        // 【4.9.0】还必须重读配置：用户可能刚从「小窗自定义」三级页改了透明度/对比度
+        // 再返回。若这里只刷依赖关系，滑条会停在旧位置，而 onPause 又会把旧值写回 SP，
+        // 等于把三级页刚做的修改静默撤销。binding 置位是为了挡住 setChecked 触发
+        // 的监听器（swRearCam 的回调会去启动预览服务）。
+        if (!binding) {
+            binding = true;
+            loadConfig();
+            binding = false;
+            refreshAll();
+        }
     }
 
     @Override
