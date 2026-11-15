@@ -45,10 +45,27 @@ object PresetResolve {
         @JvmField val screenSaturation: Int
     )
 
-    /** 白天：完整取景、一条细白边把边界交代清楚，算法增强全关（白天光线够，省电也省算力） */
+    /**
+     * 白天：完整取景、一条细白边把边界交代清楚，画面增强**轻度开着**。
+     *
+     * 【5.3.3】原来是 `screenEnhance = false`，理由是「白天光线够，省电也省算力」。
+     * 真机日志（2026-11-15 13:29，白天）里成了这样：
+     *
+     * ```
+     * [style] 智能方案 | 浅色模式且不在 22:00~06:00 → 白天 → … 画面对比=45% 暗部=40%
+     * [overlay] doShow | … | 画面增强=false(对比 45% 暗部 40% 饱和 50%)
+     * ```
+     *
+     * 参数算出来了、也写进日志了，但总开关是关的 —— 用户看到的就是「我明明开了
+     * 增强对比度，白天却一点变化都没有」。而白天才是他走路的主要时段。
+     *
+     * 改开之后强度仍取白天这组（对比 45 / 暗部 40 / 饱和 50，都是轻度）：
+     * AGSL 只是一层片元着色，与已有的圆角裁剪、文字描边在同一次合成里完成，
+     * 不额外开合成层；「省电」的收益远小于「功能看起来没生效」的代价。
+     */
     private val DAY_PARAMS = Params(
         DAY, framing = 0, borderDp = 1, lowLight = false, hud = false,
-        screenEnhance = false, screenContrast = 45, screenShadowLift = 40, screenSaturation = 50
+        screenEnhance = true, screenContrast = 45, screenShadowLift = 40, screenSaturation = 50
     )
 
     /**

@@ -83,7 +83,9 @@ public class PresetResolveTest {
         PresetResolve.Params p = PresetResolve.resolveParams(false, 13, 22, 6);
         assertEquals(PresetResolve.DAY, p.kind);
         assertFalse(p.lowLight);
-        assertFalse("白天不做算法增强，省电也省算力", p.screenEnhance);
+        // 【5.3.3】白天也要开画面增强：用户在白天走路，参数算了却不生效
+        // 等于「开了增强却没变化」。强度用白天这组（45/40/50），是轻度。
+        assertTrue("白天也要开画面增强（轻度）", p.screenEnhance);
     }
 
     // ---------- 参数表 ----------
