@@ -406,8 +406,16 @@ class RearCameraOverlay(
         try {
             // SENSOR_DELAY_UI≈60ms：姿态判定只需要「横还是竖」，不需要高精度；
             // 用 GAME 档在行走时白耗电。迟滞与驻留在策略层做，不靠采样率。
-            sm.registerListener(poseListener, accel, SensorManager.SENSOR_DELAY_UI)
-            poseTracking = true
+            val ok = sm.registerListener(poseListener, accel, SensorManager.SENSOR_DELAY_UI)
+            poseTracking = ok
+            // 注册结果必须回执：只有「注册成功」和「一个样本都没来」分开记，
+            // 下次回传日志才能判断是没注册上，还是注册了但 ROM 不给数据。
+            // （5.3.1 只打了姿态变化，没打注册结果，真机上一片空白时无从下手。）
+            if (ok) {
+                diag("姿态监听已启动（加速度计 ${accel.name}），等待首个样本")
+            } else {
+                diag("⚠️ 加速度计注册被拒，方向退化为按屏幕旋转判断")
+            }
         } catch (t: Throwable) {
             diag("⚠️ 注册加速度计失败: " + t.message)
         }
@@ -763,10 +771,10 @@ class RearCameraOverlay(
         try {
             if (root.parent == null) {
                 wm.addView(root, lp)
-                stage("窗口已挂载: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast}/${style.contrastLevel}% torch=${style.torchWithPreview}")
+                stage("窗口已挂载: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast}/${style.contrastLevel}% torch=${style.torchWithPreview} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})")
             } else {
                 wm.updateViewLayout(root, lp)
-                stage("窗口已更新: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast}/${style.contrastLevel}% torch=${style.torchWithPreview}")
+                stage("窗口已更新: ${style.mode} ${lp.width}x${lp.height} alpha=$renderAlpha contrast=${style.enhanceContrast}/${style.contrastLevel}% torch=${style.torchWithPreview} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})")
             }
             armFrameWatchdog()
         } catch (t: Throwable) {

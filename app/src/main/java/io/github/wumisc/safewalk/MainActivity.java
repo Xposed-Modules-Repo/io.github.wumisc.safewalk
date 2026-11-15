@@ -39,6 +39,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     /** 水平滑动判定的最小位移，避免点击/轻微抖动也让导航栏抽动 */
     private static final float SWIPE_SLOP = 24f;
 
+    /** 升级后的「重启系统界面」提示是否正在显示，防止旋转屏等重建时叠两个框 */
+    private boolean restartPromptShowing = false;
+
     // ========== 【系统 UI 适配 · 首页入口】 ==========
     // 4.3 起取代原来的「HyperOS 版本适配」三芯片。旧版让用户选 HyperOS 3 / 4，
     // 但三个策略函数（前台服务 / 手电 / 悬浮窗）都是运行时降级链，版本号根本没被读过；
@@ -137,7 +140,83 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             // 延后弹是避免引导框和系统权限框同时出现会叠在一起，用户只会全点掉。
             getWindow().getDecorView().postDelayed(this::maybeGuideLogDir, 1500);
             if (!hasAllPermissions()) requestNeededPermissions();
+            // 【5.3.2】覆盖升级后，SystemUI 里跑的还是旧代码。引导页的卡片只在
+            // 用户主动进去时才看得到，而升级的人通常不会再进——所以首页补一次提示。
+            // 放在这里而不是无条件执行：首次安装由引导页负责，两处同时弹会打架。
+            getWindow().getDecorView().postDelayed(this::maybePromptRestartForUpdate, 2200);
         }
+    }
+
+    /**
+     * 检测到「装的比跑的新」时，提示重启系统界面（5.3.2）。
+     *
+     * 为什么必须有这一步：模块代码是在 SystemUI 进程启动时注入的，覆盖安装只会
+     * 换掉磁盘上的 APK，那个进程里仍然是旧类。表现就是「更新日志写了修 A，
+     * 装上以后 A 一点没变」——真机上已经发生过两次（5.3.0 的方向代码、
+     * 5.3.1 的姿态代码，日志里连一条新增诊断都没有）。
+     *
+     * 只对「升级」触发：ackedVersionCode 为 0 表示从没确认过，那是首次安装，
+     * 引导页会讲得更细（还带 root 通道的差异说明），这里不重复打扰。
+     */
+    private void maybePromptRestartForUpdate() {
+        if (isFinishing() || isDestroyed()) return;
+        final int installed = BuildConfig.VERSION_CODE;
+        final int acked;
+        try {
+            acked = getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, MODE_PRIVATE)
+                    .getInt(RestartReminderPolicy.KEY_ACK_VERSION, 0);
+        } catch (Throwable t) {
+            return;
+        }
+        if (acked <= 0) return;
+        if (!RestartReminderPolicy.shouldPrompt(installed, acked)) return;
+        if (restartPromptShowing) return;
+        restartPromptShowing = true;
+        DiagLog.log("[PERM] 首页检测到版本变化：" + RestartReminderPolicy.describe(installed, acked));
+        try {
+            new AlertDialog.Builder(this)
+                    .setTitle(RestartReminderPolicy.title(false))
+                    .setMessage(RestartReminderPolicy.bodyNeutral())
+                    .setPositiveButton(RestartReminderPolicy.actionText(),
+                            (d, w) -> restartSystemUiFromMain())
+                    .setNegativeButton(RestartReminderPolicy.laterText(), null)
+                    .setOnDismissListener(d -> restartPromptShowing = false)
+                    .show();
+        } catch (Throwable t) {
+            restartPromptShowing = false;
+            DiagLog.log("[PERM:SYSTEM] 升级提示弹窗失败: " + t.getMessage());
+        }
+    }
+
+    /**
+     * 首页里的「重启系统界面」。
+     *
+     * 成功后记下 versionCode —— 下次再启动时 [maybePromptRestartForUpdate] 就不会再问，
+     * 直到下一次升级把 versionCode 顶上去。
+     */
+    private void restartSystemUiFromMain() {
+        DiagLog.log("[PERM] 首页：用户点击「重启系统界面」v" + BuildConfig.VERSION_CODE);
+        SystemUiRestarter.restart(this, (ok, viaRoot) -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (ok) {
+                try {
+                    getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, MODE_PRIVATE)
+                            .edit()
+                            .putInt(RestartReminderPolicy.KEY_ACK_VERSION, BuildConfig.VERSION_CODE)
+                            .commit();
+                } catch (Throwable ignored) {
+                }
+                Toast.makeText(this, RestartReminderPolicy.successText(viaRoot),
+                        Toast.LENGTH_LONG).show();
+            } else {
+                DiagLog.log("[PERM] 首页重启失败：两条通道都没通");
+                new AlertDialog.Builder(this)
+                        .setTitle("重启失败")
+                        .setMessage(RestartReminderPolicy.failureText())
+                        .setPositiveButton("知道了", null)
+                        .show();
+            }
+        });
     }
 
     /**

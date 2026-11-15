@@ -641,6 +641,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             HyperOsCompat.logEnvironment()
             diag("[VER] Hook(SystemUI) 适配结论: " + HyperOsCompat.describe(
                     HyperOsCompat.detect(), HyperOsCompat.MODE_AUTO))
+            // 【5.3.2】把「进程里实际加载的代码版本」写进日志开头。
+            // 覆盖安装不会重启 SystemUI，于是「磁盘上是新版、内存里是旧类」这种
+            // 状态在界面上完全看不出来 —— 5.3.0、5.3.1 两次真机日志都栽在这上面：
+            // 新增的诊断行一条没有，我还以为是代码写错了。
+            // 有这一行，下次回传日志开头就能判断到底跑的是哪一版。
+            diag("[VER] 模块实际运行版本=" + BuildConfig.VERSION_NAME
+                + "(" + BuildConfig.VERSION_CODE + ")  APK 安装包版本以首页显示为准")
         } catch (_: Throwable) {
         }
 

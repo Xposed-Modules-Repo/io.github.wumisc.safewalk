@@ -341,40 +341,59 @@ class PermissionOnboardingActivity : Activity() {
     }
 
     /**
-     * 首次安装的「重启系统界面」卡片（5.3.0）。
+     * 「重启系统界面」卡片（5.3.0 引入，5.3.2 改成按版本判断）。
      *
      * 为什么放在权限页而不是弹一个对话框：这一页是用户装完 App 打开的第一屏，
      * 也是他「一路点下去」的地方。弹窗会被手快地关掉，而卡片留在页面上，
-     * 即使这次跳过了，下次进「权限与无障碍」还能看到（只要还没点过重启）。
+     * 即使这次跳过了，下次进「权限与无障碍」还能看到（只要这版还没点过重启）。
+     *
+     * 判定从「是否首次安装」换成「安装的 versionCode 是否大于上次确认的」，
+     * 是因为覆盖升级同样需要重启 SystemUI —— 而旧判定在升级时一条提示都不给，
+     * 结果就是「修了但没生效」，用户和我都以为是代码没修对。
      */
     private fun setupRestartCard() {
         val block = findViewById<View>(R.id.block_restart_sui)
-        val ack = try {
-            getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
-                .getBoolean(RestartReminderPolicy.KEY_ACK, false)
-        } catch (_: Throwable) {
-            false
-        }
-        // shouldShow 为 true = 还没走过引导页 = 刚装上。老用户从「关于」进来时
-        // 这里是 false，卡片不会出现 —— 每次打开设置都提醒「请重启」只会变成狼来了。
-        restartPending = RestartReminderPolicy.shouldPrompt(shouldShow(this), ack)
+        val installed = BuildConfig.VERSION_CODE
+        val acked = readAckedVersionCode()
+        restartPending = RestartReminderPolicy.shouldPrompt(installed, acked)
+        DiagLog.log(
+            "[PERM] 重启提醒 | " + RestartReminderPolicy.describe(installed, acked)
+                + " rootAvailable=$rootAvailable"
+        )
         if (!restartPending) {
             block.visibility = View.GONE
             return
         }
+        val firstInstall = RestartReminderPolicy.isFirstInstall(acked)
         block.visibility = View.VISIBLE
-        findViewById<TextView>(R.id.tv_restart_title).text = RestartReminderPolicy.title()
+        findViewById<TextView>(R.id.tv_restart_title).text =
+            RestartReminderPolicy.title(firstInstall)
         findViewById<TextView>(R.id.tv_restart_body).text =
-            RestartReminderPolicy.body(rootAvailable)
+            RestartReminderPolicy.body(rootAvailable, firstInstall)
         findViewById<TextView>(R.id.tv_restart_state).text =
-            RestartReminderPolicy.pendingText()
+            RestartReminderPolicy.pendingText(firstInstall)
         findViewById<Button>(R.id.btn_restart_sui).apply {
             text = RestartReminderPolicy.actionText()
             setOnClickListener { doRestartSystemUi() }
         }
         DiagLog.log(
-            "[PERM] 首次安装：显示「重启系统界面」提醒（rootAvailable=$rootAvailable）"
+            "[PERM] 显示「重启系统界面」卡片（firstInstall=$firstInstall v$installed）"
         )
+    }
+
+    /**
+     * 读「上次确认重启」时的 versionCode。
+     *
+     * 老的布尔标记只作为迁移线索：写过 true 的用户也返回 0，
+     * 于是他升级后会**再看到一次**提醒 —— 这是对的，他确实没重启过新版。
+     */
+    private fun readAckedVersionCode(): Int {
+        return try {
+            getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
+                .getInt(RestartReminderPolicy.KEY_ACK_VERSION, 0)
+        } catch (_: Throwable) {
+            0
+        }
     }
 
     /**
@@ -406,12 +425,19 @@ class PermissionOnboardingActivity : Activity() {
         }
     }
 
-    /** 重启成功后落一个一次性标记，之后不再显示这张卡片 */
+    /**
+     * 重启成功后落一个「这一版已确认」的标记，之后同版本不再显示这张卡片。
+     *
+     * 写的是 versionCode 而不是 true：下次升级（versionCode 变大）时
+     * 判定自然重新命中，不需要额外一步。
+     */
     private fun markRestartAcknowledged() {
         try {
             getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
-                .edit().putBoolean(RestartReminderPolicy.KEY_ACK, true).commit()
-            DiagLog.log("[PERM] 已记录「重启系统界面」完成标记")
+                .edit()
+                .putInt(RestartReminderPolicy.KEY_ACK_VERSION, BuildConfig.VERSION_CODE)
+                .commit()
+            DiagLog.log("[PERM] 已记录「重启系统界面」完成标记 v${BuildConfig.VERSION_CODE}")
         } catch (t: Throwable) {
             DiagLog.log("[PERM:SYSTEM] 写入重启标记失败：${t.message}")
         }
