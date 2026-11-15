@@ -312,6 +312,9 @@ class RearCameraOverlay(
      */
     private var lastWindowW = 0
     private var lastWindowH = 0
+    /** 【5.3.7】真正写给 SurfaceTexture 的缓冲尺寸，与选中的 previewSrcW/H 可能不同 */
+    private var actualBufferW = 0
+    private var actualBufferH = 0
     /** 增强对比度开启时显示的 HUD 文字层；关闭时置 GONE，不移除（避免频繁重建） */
     private var hudView: HudTextView? = null
 
@@ -577,19 +580,23 @@ class RearCameraOverlay(
      * 传感器读歪了、姿态没样本、还是矩阵没跟上，一眼分得出来，不必再靠截图反推。
      */
     private fun orientationSummary(): String {
-        val w = tv?.width ?: 0
-        val h = tv?.height ?: 0
+        // 【5.3.7】这里必须用「窗口」尺寸，不能用 tv 的尺寸：旋转之后 tv 的宽高
+        // 是交换过的，5.3.6 的日志因此把 488x845 的竖条窗口打成了「横条 845x488」，
+        // 看日志的人会被直接带偏。
+        val w = if (lastWindowW > 0) lastWindowW else (tv?.width ?: 0)
+        val h = if (lastWindowH > 0) lastWindowH else (tv?.height ?: 0)
         val layer = rotLayer
         return "窗口=" + (if (w > h) "横条" else "竖条") + " " + w + "x" + h +
             " 传感器=" + sensorOrientation + "°" +
             " 姿态=" + (if (poseDeg == DevicePosePolicy.NO_SAMPLE) "无" else poseDeg.toString() + "°") +
-            " 实转=" + appliedRotDeg + "°" +
-            // 【5.3.6】新增：旋转层的布局框与 View 旋转角。
-            // 这是「画面到底转没转」最直接的自证 —— 矩阵那套再也看不出来了。
+            // 【5.3.7】竖条窗口根本不转，这里必须打「实际生效」的角，
+            // 否则日志里写着「实转=90°」而画面纹丝不动，排查时会被带偏。
+            " 实转=" + (if (h >= w) 0 else appliedRotDeg) + "°" +
+            (if (h >= w && appliedRotDeg > 0) "（竖屏固定不转，算得 " + appliedRotDeg + "°）" else "") +
             " 旋转层=" + (layer?.width ?: 0) + "x" + (layer?.height ?: 0) +
             "@" + (layer?.rotation?.toInt() ?: 0) + "°" +
             " 放大=" + "%.2f".format(tv?.scaleX ?: 1f) + "x" +
-            " 缓冲=" + previewSrcW + "x" + previewSrcH
+            " 缓冲=" + (if (actualBufferW > 0) actualBufferW else previewSrcW) + "x" + (if (actualBufferH > 0) actualBufferH else previewSrcH)
     }
 
     /** 统一走 SafeWalkLSPHook 的日志出口（logcat + SystemUI 私有目录） */
@@ -1074,10 +1081,19 @@ class RearCameraOverlay(
 
         // 方向还没算过（openCamera 之前那次布局）就不转：拿窗口尺寸冒充画面朝向，
         // 只会转出一张歪图，等 resolveOrientation 之后会再算一次。
-        val deg = if (appliedRotDeg < 0) 0
-        else PreviewOrientationPolicy.alignToWindow(appliedRotDeg, w > h)
+        //
+        // 【5.3.7】竖条窗口一律不转 —— 这就是「没动路况预览之前」（4.8.0）的行为：
+        // 不旋转、不变换，相机缓冲直接按窗口尺寸出，铺满即可。当时用户从没抱怨过
+        // 竖屏画面，是 5.3.0 为了修横屏才把整套旋转引进来，结果把竖屏一起带歪了。
+        // 现在只有横条窗口才走旋转这条路。
+        val landscapeWindow = w > h
+        val deg = when {
+            appliedRotDeg < 0 -> 0
+            !landscapeWindow -> 0
+            else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)
+        }
 
-        // 【5.3.6】旋转层用「旋转前」的长宽摆：90/270 时长边当宽。
+        // 旋转层用「旋转前」的长宽摆：90/270 时长边当宽。
         // 这样 View.rotation 转 90° 之后的投影，正好是 w×h 的窗口。
         val swap = deg == 90 || deg == 270
         val boxW = if (swap) h else w
@@ -1750,10 +1766,15 @@ class RearCameraOverlay(
             // 当时 appliedRotDeg 还是 -1（不旋转）；此后尺寸不变就不会再触发回调，
             // 于是「会转但没转」会一直挂到下次窗口 resize —— 正是「改了方向没反应」。
             applyFraming()
-            st.setDefaultBufferSize(
-                if (previewSrcW > 0) previewSrcW else view.width,
-                if (previewSrcH > 0) previewSrcH else view.height
-            )
+            // 【5.3.7】竖条窗口回到 4.8.0 的做法：缓冲直接按窗口尺寸出，
+            // 由相机 HAL 负责缩放，铺满即完整 —— 那时用户从没抱怨过竖屏。
+            // 横条窗口仍用相机选中的尺寸，保证旋转后分辨率够。
+            val portraitWindow = lastWindowW > 0 && lastWindowH >= lastWindowW
+            actualBufferW = if (portraitWindow) lastWindowW
+            else if (previewSrcW > 0) previewSrcW else view.width
+            actualBufferH = if (portraitWindow) lastWindowH
+            else if (previewSrcH > 0) previewSrcH else view.height
+            st.setDefaultBufferSize(actualBufferW, actualBufferH)
             val surface = Surface(st)
             previewSurface = surface
             if (id == null) {

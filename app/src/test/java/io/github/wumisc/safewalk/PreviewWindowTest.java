@@ -278,18 +278,16 @@ public class PreviewWindowTest {
     }
 
     /**
-     * 【5.3.6】画面旋转必须落在 View 层，不能再靠 setTransform 矩阵。
+     * 【5.3.7】竖条窗口必须**不转** —— 这是「没动路况预览之前」（4.8.0）的行为。
      *
-     * 真机把矩阵这条路走死了两次（5.3.3 缩成四成、5.3.5 视野只剩中间一条），
-     * 同一个公式两种结果，说明「系统拉伸 buffer 之后 transform 作用在哪套坐标」
-     * 在这台 ROM 上不可预期。现在旋转交给旋转层（root 的第 0 个子 View），
-     * 这个测试锁住它的两条不变量：
-     *   · 竖条窗口 + 90° → 旋转层的布局框必须先**横向摆**（宽 > 高）；
-     *   · rotation 必须正好是 90°，且只在旋转层上，窗口根本身不转。
-     * 少了任一条，画面就会歪 —— 而这在截图里极难一眼看出来。
+     * 5.3.6 让竖条窗口也转 90°，本想给竖屏一个「正立且完整」的画面，真机上却
+     * 变成「画面不完整」。用户的判断很直接：竖屏以前是好的，别动；要改只改横屏。
+     *
+     * 所以这条测试锁住：竖条窗口下，哪怕方向算出来是 90°，旋转层也必须保持
+     * 「与窗口同尺寸、rotation=0、缩放=1」—— 也就是完全等于 4.8.0 那条铺满路径。
      */
     @Test
-    public void rotationIsAppliedToRotLayerNotToWindowRoot() throws Exception {
+    public void portraitWindowIsNeverRotated() throws Exception {
         build();
         // 模拟 openCamera 里 resolveOrientation 的结果：竖握 + 传感器 90°
         java.lang.reflect.Field f = RearCameraOverlay.class.getDeclaredField("appliedRotDeg");
@@ -303,10 +301,15 @@ public class PreviewWindowTest {
         assertTrue("窗口根至少要有画面层 + HUD 层", root.getChildCount() >= 2);
 
         View rot = root.getChildAt(0);
-        assertEquals("旋转层必须转 90°", 90.0f, rot.getRotation(), 0.001f);
+        assertEquals("竖条窗口必须不转", 0.0f, rot.getRotation(), 0.001f);
         ViewGroup.LayoutParams lp = rot.getLayoutParams();
-        assertEquals("旋转前布局框的宽 = 窗口高", recorder.params.height, lp.width);
-        assertEquals("旋转前布局框的高 = 窗口宽", recorder.params.width, lp.height);
-        assertTrue("旋转后必须正好是竖条窗口", lp.width > lp.height);
+        assertEquals("旋转层宽 = 窗口宽", recorder.params.width, lp.width);
+        assertEquals("旋转层高 = 窗口高", recorder.params.height, lp.height);
+        assertTrue("小窗在竖屏下必须是竖条", recorder.params.height > recorder.params.width);
+
+        // 画面层不能有缩放残渣：4.8.0 就是 scale=1 直接铺满
+        View texture = recorder.renderLayer();
+        assertEquals(1.0f, texture.getScaleX(), 0.001f);
+        assertEquals(1.0f, texture.getScaleY(), 0.001f);
     }
 }
