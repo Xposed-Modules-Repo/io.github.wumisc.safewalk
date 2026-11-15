@@ -41,16 +41,29 @@ public class PreviewWindowTest {
 
         /**
          * 【增强对比度容器化后】addView 挂的是 FrameLayout 容器（alpha 恒 1），
-         * 透明度只作用在容器内第 0 个子层（相机画面 TextureView），
-         * 第 1 个子层 HUD 文字层 alpha 也恒 1。测试断言必须针对画面层，
-         * 而不是容器本身 —— 否则会把「容器 alpha=1」误判成透明度没生效。
+         * 透明度只作用在容器内的相机画面层（TextureView），HUD 文字层 alpha 恒 1。
+         * 测试断言必须针对画面层，而不是容器本身 —— 否则会把「容器 alpha=1」
+         * 误判成透明度没生效。
+         *
+         * 【5.3.6 旋转层】容器里多了一层 rotLayer（负责 View.rotation），
+         * 画面层从「第 0 个子层」变成「第 0 个子层的第 0 个子层」。这里改成
+         * 按类型深度优先查找 TextureView，结构再怎么套都不会再错位。
          */
         View renderLayer() {
-            if (view instanceof ViewGroup) {
-                ViewGroup g = (ViewGroup) view;
-                if (g.getChildCount() > 0) return g.getChildAt(0);
+            View found = findTextureView(view);
+            return found != null ? found : view;
+        }
+
+        private static View findTextureView(View v) {
+            if (v instanceof android.view.TextureView) return v;
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    View hit = findTextureView(g.getChildAt(i));
+                    if (hit != null) return hit;
+                }
             }
-            return view;
+            return null;
         }
 
         @Override
@@ -171,7 +184,7 @@ public class PreviewWindowTest {
         assertEquals("有文案且对比度开启时 HUD 层应可见",
                 View.VISIBLE, root2.getChildAt(1).getVisibility());
         assertEquals("画面层透明度不受 HUD 影响",
-                0.50f, root2.getChildAt(0).getAlpha(), 0.01f);
+                0.50f, recorder.renderLayer().getAlpha(), 0.01f);
 
         // 有文案 + 对比度关：仍显示，只是不加修饰
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
@@ -262,5 +275,38 @@ public class PreviewWindowTest {
                 false, false, 50, null, 13, 150, 12, -80, -5, true);
         assertNotNull("负值同样不能崩", recorder.params);
         assertNull("负描边按 0 处理，不应有前景", recorder.view.getForeground());
+    }
+
+    /**
+     * 【5.3.6】画面旋转必须落在 View 层，不能再靠 setTransform 矩阵。
+     *
+     * 真机把矩阵这条路走死了两次（5.3.3 缩成四成、5.3.5 视野只剩中间一条），
+     * 同一个公式两种结果，说明「系统拉伸 buffer 之后 transform 作用在哪套坐标」
+     * 在这台 ROM 上不可预期。现在旋转交给旋转层（root 的第 0 个子 View），
+     * 这个测试锁住它的两条不变量：
+     *   · 竖条窗口 + 90° → 旋转层的布局框必须先**横向摆**（宽 > 高）；
+     *   · rotation 必须正好是 90°，且只在旋转层上，窗口根本身不转。
+     * 少了任一条，画面就会歪 —— 而这在截图里极难一眼看出来。
+     */
+    @Test
+    public void rotationIsAppliedToRotLayerNotToWindowRoot() throws Exception {
+        build();
+        // 模拟 openCamera 里 resolveOrientation 的结果：竖握 + 传感器 90°
+        java.lang.reflect.Field f = RearCameraOverlay.class.getDeclaredField("appliedRotDeg");
+        f.setAccessible(true);
+        f.setInt(overlay, 90);
+
+        overlay.show(RearCameraOverlay.MODE_SMALLWINDOW, 50, RearCameraOverlay.CORNER_BR);
+
+        ViewGroup root = (ViewGroup) recorder.view;
+        assertEquals("窗口根自身不能旋转", 0.0f, root.getRotation(), 0.001f);
+        assertTrue("窗口根至少要有画面层 + HUD 层", root.getChildCount() >= 2);
+
+        View rot = root.getChildAt(0);
+        assertEquals("旋转层必须转 90°", 90.0f, rot.getRotation(), 0.001f);
+        ViewGroup.LayoutParams lp = rot.getLayoutParams();
+        assertEquals("旋转前布局框的宽 = 窗口高", recorder.params.height, lp.width);
+        assertEquals("旋转前布局框的高 = 窗口宽", recorder.params.width, lp.height);
+        assertTrue("旋转后必须正好是竖条窗口", lp.width > lp.height);
     }
 }

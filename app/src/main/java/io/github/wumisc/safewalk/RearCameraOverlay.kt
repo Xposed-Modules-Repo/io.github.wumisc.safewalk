@@ -287,6 +287,31 @@ class RearCameraOverlay(
      * 只用一个窗口，不新增 overlay 数量，避免额外触发 HyperOS 的悬浮窗后台限制。
      */
     private var rootView: FrameLayout? = null
+
+    /**
+     * 【5.3.6】旋转层：专门负责「把画面转到正立」。
+     *
+     * 之前旋转是算一个 3×3 矩阵交给 [TextureView.setTransform]，但那条路的坐标
+     * 语义在真机上始终对不上：5.3.3 不加逆拉伸 → 画面缩成四成贴左上；5.3.4/5.3.5
+     * 加了逆拉伸 → 视野被横向放大近 4 倍，只剩中间一条。同一个公式两种结果，
+     * 说明「系统把 buffer 拉伸到 View 之后，transform 到底作用在哪套坐标」在
+     * 这个 ROM 上不可预期 —— 继续猜没有意义。
+     *
+     * 现在改成：布局框按「旋转前」的长宽摆好（长边为宽），再用 [View.setRotation]
+     * 转 90°。旋转后正好等于窗口尺寸，是纯 View 层行为，没有任何坐标歧义。
+     * 矩阵彻底退出（[TextureView.setTransform] 传 null），系统默认的「buffer 铺满
+     * 布局框」就是我们要的效果。
+     */
+    private var rotLayer: FrameLayout? = null
+    /**
+     * 【5.3.6】上一次算对的「窗口」尺寸（不是旋转层尺寸）。
+     *
+     * 旋转之后 TextureView 自身的宽高是**交换过**的，直接拿它当窗口尺寸会再交换
+     * 一次，画面就转回去了。布局完成前 rootView 的宽高可能还是 0，这里留一份
+     * 最后一次可信的窗口尺寸兜底。
+     */
+    private var lastWindowW = 0
+    private var lastWindowH = 0
     /** 增强对比度开启时显示的 HUD 文字层；关闭时置 GONE，不移除（避免频繁重建） */
     private var hudView: HudTextView? = null
 
@@ -554,10 +579,16 @@ class RearCameraOverlay(
     private fun orientationSummary(): String {
         val w = tv?.width ?: 0
         val h = tv?.height ?: 0
+        val layer = rotLayer
         return "窗口=" + (if (w > h) "横条" else "竖条") + " " + w + "x" + h +
             " 传感器=" + sensorOrientation + "°" +
             " 姿态=" + (if (poseDeg == DevicePosePolicy.NO_SAMPLE) "无" else poseDeg.toString() + "°") +
             " 实转=" + appliedRotDeg + "°" +
+            // 【5.3.6】新增：旋转层的布局框与 View 旋转角。
+            // 这是「画面到底转没转」最直接的自证 —— 矩阵那套再也看不出来了。
+            " 旋转层=" + (layer?.width ?: 0) + "x" + (layer?.height ?: 0) +
+            "@" + (layer?.rotation?.toInt() ?: 0) + "°" +
+            " 放大=" + "%.2f".format(tv?.scaleX ?: 1f) + "x" +
             " 缓冲=" + previewSrcW + "x" + previewSrcH
     }
 
@@ -794,6 +825,7 @@ class RearCameraOverlay(
             }
         }
         rootView = null
+        rotLayer = null
         hudView = null
         tv = null
         surfaceTexture = null
@@ -815,11 +847,21 @@ class RearCameraOverlay(
             // 直接 addView 会抛 "already has a parent"。先安全摘除，再挂新容器。
             (texture.parent as? ViewGroup)?.removeView(texture)
             rootView = FrameLayout(ctx.applicationContext).apply {
-                // 画面层铺满容器；MATCH_PARENT 但窗口尺寸由 buildParams 用真实像素给定，
-                // 所以 TextureView 一定能布局出正数尺寸（沿用原全屏不黑屏的结论）。
-                addView(texture, FrameLayout.LayoutParams(
+                // 【5.3.6】画面放进「旋转层」，旋转层再放进窗口根。
+                // 旋转层的布局框是「旋转前」的尺寸（长边当宽），View.rotation 一转，
+                // 投影正好是窗口大小；root 不裁子 View，圆角仍由 clipToOutline 负责。
+                clipChildren = false
+                clipToPadding = false
+                rotLayer = FrameLayout(ctx.applicationContext).apply {
+                    clipChildren = false
+                    addView(texture, FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT))
+                }
+                addView(rotLayer, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT))
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.CENTER))
                 // HUD 文字层：底部居中，带描边/阴影/半透明深色衬底
                 hudView = buildHudView()
                 val hudLp = FrameLayout.LayoutParams(
@@ -855,12 +897,14 @@ class RearCameraOverlay(
         // 【5.1.0】画面增强：作用在 tv 上，与 HUD 层互不影响。
         // 必须放在窗口挂载之前 —— 否则第一帧会先以原始画质闪一下再变成增强画质。
         applyScreenEnhance()
-        // 取景与描边都在 View 层：drawable / 矩阵独立于相机，重复调用是幂等的。
+        // 取景与描边都在 View 层：drawable / 变换独立于相机，重复调用是幂等的。
         // 复用旧窗口时宽高已经就绪，这里能立刻生效；新建窗口则在 Surface 就绪时再算一次。
-        applyFraming()
         applyBorder()
 
         val lp = buildParams()
+        // 【5.3.6】把即将挂上去的窗口尺寸显式传进去：挂载前 rootView/texture 的
+        // width/height 都还是 0，读它们会直接 return，旋转层就一直停在 MATCH_PARENT。
+        applyFraming(lp.width, lp.height)
         try {
             if (root.parent == null) {
                 wm.addView(root, lp)
@@ -877,6 +921,7 @@ class RearCameraOverlay(
             // 没挂上去的 View 必须丢掉：留着它，下一轮 show 会发现
             // 「tv 非空但 parent 为空」又去重建，每 2 秒抖一次，白折腾
             rootView = null
+            rotLayer = null
             tv = null
             hudView = null
             surfaceTexture = null
@@ -1002,35 +1047,90 @@ class RearCameraOverlay(
      * 竖屏时靠窗口比例勉强凑合，一横过来就侧躺 —— 用户看到的就是「方向不对」。
      * 现在旋转、铺满、取景三件事一起算，见 [PreviewOrientationPolicy.transform]。
      */
-    private fun applyFraming() {
+    private fun applyFraming(windowW: Int = 0, windowH: Int = 0) {
         val view = tv ?: return
-        val w = view.width
-        val h = view.height
-        // 还没布局完（宽高为 0）时算不出矩阵，onSurfaceTextureAvailable/
-        // SizeChanged 里会再来一次；此时 setTransform 也会被系统忽略。
+        val layer = rotLayer ?: return
+        // 窗口尺寸的三个来源，按可信度排序：
+        //   1) 调用方显式传进来的（apply() 里刚从 buildParams 算出来，挂载前唯一可信值）
+        //   2) 已经布局完成的 rootView
+        //   3) 视图自身
+        val w = when {
+            windowW > 0 -> windowW
+            (rootView?.width ?: 0) > 0 -> rootView!!.width
+            lastWindowW > 0 -> lastWindowW
+            view.width > 0 -> view.width
+            else -> 0
+        }
+        val h = when {
+            windowH > 0 -> windowH
+            (rootView?.height ?: 0) > 0 -> rootView!!.height
+            lastWindowH > 0 -> lastWindowH
+            view.height > 0 -> view.height
+            else -> 0
+        }
         if (w <= 0 || h <= 0) return
+        lastWindowW = w
+        lastWindowH = h
 
-        val srcW = if (previewSrcW > 0) previewSrcW else w
-        val srcH = if (previewSrcH > 0) previewSrcH else h
-        // 【5.3.4】落到矩阵前的最后一道闸：旋转角必须与**此刻真实的窗口宽高**自洽。
-        // 姿态回调、窗口重排、Surface 尺寸变化是三个不同线程/时序的事件，中间任何
-        // 一处用旧值，画面就差 90°。这里不看任何缓存，直接拿 w/h 与传感器角度复核。
-        // -1 表示方向还没算过（openCamera 之前的那次布局），此时不旋转：
-        // 拿窗口尺寸冒充缓冲尺寸去算旋转矩阵，只会得到一张变形的图。
+        // 方向还没算过（openCamera 之前那次布局）就不转：拿窗口尺寸冒充画面朝向，
+        // 只会转出一张歪图，等 resolveOrientation 之后会再算一次。
         val deg = if (appliedRotDeg < 0) 0
         else PreviewOrientationPolicy.alignToWindow(appliedRotDeg, w > h)
-        // 三项都「不需要处理」时清空矩阵，走回旧版那条最简路径：
-        // 少一层合成开销，也避免在某些 ROM 上 setTransform 与硬件叠层互相干扰。
-        if (deg <= 0 && style.framingPct <= 0 && srcW == w && srcH == h) {
-            view.setTransform(null)
+
+        // 【5.3.6】旋转层用「旋转前」的长宽摆：90/270 时长边当宽。
+        // 这样 View.rotation 转 90° 之后的投影，正好是 w×h 的窗口。
+        val swap = deg == 90 || deg == 270
+        val boxW = if (swap) h else w
+        val boxH = if (swap) w else h
+
+        val cur = layer.layoutParams as? FrameLayout.LayoutParams
+        if (cur == null || cur.width != boxW || cur.height != boxH) {
+            layer.layoutParams = FrameLayout.LayoutParams(boxW, boxH, Gravity.CENTER)
+            rootView?.requestLayout()
+        }
+        layer.rotation = deg.toFloat()
+        // 矩阵一律不碰。系统把 buffer 拉伸铺满布局框，铺满比例由
+        // (boxW/srcW, boxH/srcH) 决定；源与框的比例本来就接近（1920:1080 对 845:488），
+        // 2~3% 的非等比拉伸肉眼看不出来，换来的是一条没有任何坐标歧义的渲染路径。
+        view.setTransform(null)
+        applyFramingZoom(view, boxW, boxH, deg)
+    }
+
+    /**
+     * 取景（[Style.framingPct]）：只保留画面「靠近脚下」的那一段，放大铺满。
+     *
+     * 在 5.3.6 之前这一步是混在旋转矩阵里算的，现在旋转归 View，它退化成一次
+     * 纯缩放 + 换支点。难点在支点：View 的 pivot 同时被 rotation 和 scale 使用，
+     * 但**旋转只作用在 [rotLayer] 上、缩放只作用在 [TextureView] 上**，两者不在
+     * 同一层，所以可以各用各的支点，互不干扰。
+     *
+     * 方向换算（布局框是未旋转坐标系，y 向下）：
+     *   · 0°   屏幕上边 = 框上边   → 保留下半 → 支点靠下
+     *   · 180° 屏幕上下颠倒        → 保留屏幕下半 = 框上半 → 支点靠上
+     *   · 90°  x' = -y，屏幕下方 = 框右侧 → 支点靠右
+     *   · 270° x' = y， 屏幕下方 = 框左侧 → 支点靠左
+     */
+    private fun applyFramingZoom(view: TextureView, boxW: Int, boxH: Int, deg: Int) {
+        val f = style.framingPct.coerceIn(0, 100)
+        if (f <= 0) {
+            view.scaleX = 1f
+            view.scaleY = 1f
+            view.pivotX = boxW / 2f
+            view.pivotY = boxH / 2f
             return
         }
-        val values = PreviewOrientationPolicy.transform(
-            w, h, srcW, srcH, deg, style.framingPct
-        )
-        val m = Matrix()
-        m.setValues(values)
-        view.setTransform(m)
+        val k = f / 200f                  // 裁掉的比例：0 → 不裁，0.5 → 只留下半
+        val zoom = 1f / (1f - k)          // 裁完再放大才能铺满
+        view.pivotX = boxW / 2f
+        view.pivotY = boxH / 2f
+        when (((deg % 360) + 360) % 360) {
+            90 -> view.pivotX = boxW * (1f - k / 2f)
+            270 -> view.pivotX = boxW * (k / 2f)
+            180 -> view.pivotY = boxH * (k / 2f)
+            else -> view.pivotY = boxH * (1f - k / 2f)
+        }
+        view.scaleX = zoom
+        view.scaleY = zoom
     }
 
     /**
@@ -1394,6 +1494,7 @@ class RearCameraOverlay(
             }
         }
         rootView = null
+        rotLayer = null
         hudView = null
         tv = null
         surfaceTexture = null
