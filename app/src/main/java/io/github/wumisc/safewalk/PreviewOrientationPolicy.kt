@@ -93,6 +93,51 @@ object PreviewOrientationPolicy {
     }
 
     /**
+     * 把旋转角校正到与**窗口形状**自洽。
+     *
+     * ## 为什么会有这一步
+     *
+     * 小窗的形状（竖条 150×260 / 横条 260×150）由**重力姿态**决定，用的是
+     * [DevicePosePolicy]；画面转多少度却是另一套公式：[rotationDegrees] 用
+     * 「传感器方向 − 屏幕方向」算。两条链路各自都对，合起来仍可能差 90°——
+     * 5.3.3 真机就是：竖着拿窗口是竖条（形状对了），画面却横躺，走路时
+     * 得歪着头看路（用户原话「竖屏看的是横屏的内容」）。
+     *
+     * ## 判据从物理来，不靠自证
+     *
+     * 后摄传感器绝大多数**横装**（SENSOR_ORIENTATION = 90 或 270，见
+     * [rotationDegrees] 的表格）。横装意味着：
+     *
+     * · 窗口竖条 → 画面宽高**必须交换**，旋转只能是 90 / 270；
+     * · 窗口横条 → 画面宽高**不能交换**，旋转只能是 0 / 180。
+     *
+     * 一旦算出矛盾，就以**窗口形状为准**补 90°。理由很实际：窗口形状是用户
+     * 眼睛直接看到、并且已经确认「形状没问题」的那一项，而传感器方向是读出来
+     * 的整数，读错了没人能发现。
+     *
+     * 传感器竖装（0 或 180，少见但真实存在，多见于前摄与少数后摄）不参与校正：
+     * 那种机型竖条窗口本来就该转 0°，硬补 90° 会把原本正确的画面弄歪。
+     *
+     * @param deg 已叠加用户模式的旋转角
+     * @param landscapeWindow 当前窗口是否为横条（与 [DevicePosePolicy.isLandscapeWindow] 同源）
+     * @param sensorOrientation `CameraCharacteristics.SENSOR_ORIENTATION`
+     * @return 0 / 90 / 180 / 270，与窗口形状自洽
+     */
+    @JvmStatic
+    fun alignToWindow(deg: Int, landscapeWindow: Boolean, sensorOrientation: Int): Int {
+        // -1 是「还没算过」的哨兵值（调用方用它走「不设矩阵」的最简路径）。
+        // 归一化会把它变成 359，再把 359 校正成 89 —— 一个凭空冒出来的旋转角。
+        if (deg == -1) return deg
+        val normalized = ((deg % 360) + 360) % 360
+        val sensorCrossMounted = ((sensorOrientation % 180) + 180) % 180 != 0
+        if (!sensorCrossMounted) return normalized
+        val swapped = normalized == 90 || normalized == 270
+        // 竖条窗口要交换，横条窗口不要交换
+        val needSwap = !landscapeWindow
+        return if (swapped == needSwap) normalized else (normalized + 90) % 360
+    }
+
+    /**
      * 从相机支持的输出尺寸里挑一个给预览用。
      *
      * 判据：**长宽比最接近「转正后的窗口」**，其次分辨率大的优先。

@@ -241,4 +241,86 @@ public class PreviewOrientationPolicyTest {
         float[] m = PreviewOrientationPolicy.transform(0, 400, 400, 300, 90, 50);
         assertPoint("宽为 0 时原样返回", 12, 34, map(m, 12, 34), 0.001);
     }
+
+    // ==================== 【5.3.4】旋转角与窗口形状自洽 ====================
+
+    /**
+     * 真机复现：竖条窗口、后摄横装（90°）、公式算出 0° —— 画面没转，
+     * 于是 1920×1080 的横向画面被塞进 150:260 的竖条，用户「竖屏看到横屏内容」。
+     * 校正后必须是 90°，画面宽高交换。
+     */
+    @Test
+    public void portraitWindowWithCrossMountedSensorGetsQuarterTurn() {
+        assertEquals("竖条 + 横装 + 原始 0° → 90°",
+                90, PreviewOrientationPolicy.alignToWindow(0, false, 90));
+        assertEquals("竖条 + 横装 + 原始 180° → 270°",
+                270, PreviewOrientationPolicy.alignToWindow(180, false, 90));
+    }
+
+    @Test
+    public void alreadyConsistentRotationIsLeftAlone() {
+        assertEquals("竖条 + 90° 本来就对",
+                90, PreviewOrientationPolicy.alignToWindow(90, false, 90));
+        assertEquals("竖条 + 270° 本来就对",
+                270, PreviewOrientationPolicy.alignToWindow(270, false, 270));
+        assertEquals("横条 + 0° 本来就对",
+                0, PreviewOrientationPolicy.alignToWindow(0, true, 90));
+        assertEquals("横条 + 180° 本来就对",
+                180, PreviewOrientationPolicy.alignToWindow(180, true, 270));
+    }
+
+    @Test
+    public void landscapeWindowWithQuarterTurnIsCorrected() {
+        // 横条窗口里放「交换过宽高」的画面 = 横屏看到竖屏内容，是这次的另一半现象
+        assertEquals("横条 + 90° → 180°",
+                180, PreviewOrientationPolicy.alignToWindow(90, true, 90));
+        assertEquals("横条 + 270° → 0°",
+                0, PreviewOrientationPolicy.alignToWindow(270, true, 90));
+    }
+
+    @Test
+    public void portraitMountedSensorIsNeverCorrected() {
+        // 传感器竖装（0/180）的机型竖屏本来就该转 0°，强行补 90° 会把它弄坏
+        assertEquals(0, PreviewOrientationPolicy.alignToWindow(0, false, 0));
+        assertEquals(180, PreviewOrientationPolicy.alignToWindow(180, false, 0));
+        assertEquals(0, PreviewOrientationPolicy.alignToWindow(0, true, 180));
+    }
+
+    @Test
+    public void alignToWindowNormalizesDirtyAngles() {
+        // -90 先归一到 270，再按「横条不该交换宽高」校正成 0
+        assertEquals("负数先归一再校正", 0, PreviewOrientationPolicy.alignToWindow(-90, true, 90));
+        assertEquals("超范围归一", 90, PreviewOrientationPolicy.alignToWindow(450, false, 90));
+        // -1 是「方向还没算过」的哨兵，必须原样透传，不能被归一成 359 再校正成 89
+        assertEquals("哨兵值原样返回", -1, PreviewOrientationPolicy.alignToWindow(-1, false, 90));
+    }
+
+    /**
+     * 穷举「传感器 × 原始角 × 窗口形状」24 种组合，锁住唯一的不变量：
+     * 横装传感器时，竖条窗口必须交换宽高、横条窗口必须不交换。
+     * 这条一旦破了，画面就是歪着头才能看的路况 —— 恰恰最难在截图里发现。
+     */
+    @Test
+    public void everyCombinationKeepsWindowShapeAndRotationInSync() {
+        int[] sensors = {0, 90, 180, 270};
+        int[] degs = {0, 90, 180, 270};
+        boolean[] landscapes = {true, false};
+        for (int sensor : sensors) {
+            for (int deg : degs) {
+                for (boolean landscape : landscapes) {
+                    int out = PreviewOrientationPolicy.alignToWindow(deg, landscape, sensor);
+                    String tag = "传感器=" + sensor + " 原始=" + deg + " 横条=" + landscape;
+                    assertTrue("结果必须是 0/90/180/270: " + tag + " → " + out,
+                            out == 0 || out == 90 || out == 180 || out == 270);
+                    boolean swapped = out == 90 || out == 270;
+                    if (((sensor % 180) + 180) % 180 == 0) {
+                        int normalized = ((deg % 360) + 360) % 360;
+                        assertEquals("竖装传感器原样返回: " + tag, normalized, out);
+                    } else {
+                        assertEquals("交换位必须与窗口形状一致: " + tag, !landscape, swapped);
+                    }
+                }
+            }
+        }
+    }
 }

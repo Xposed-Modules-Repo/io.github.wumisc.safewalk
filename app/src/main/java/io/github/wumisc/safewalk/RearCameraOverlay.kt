@@ -996,14 +996,21 @@ class RearCameraOverlay(
 
         val srcW = if (previewSrcW > 0) previewSrcW else w
         val srcH = if (previewSrcH > 0) previewSrcH else h
+        // 【5.3.4】落到矩阵前的最后一道闸：旋转角必须与**此刻真实的窗口宽高**自洽。
+        // 姿态回调、窗口重排、Surface 尺寸变化是三个不同线程/时序的事件，中间任何
+        // 一处用旧值，画面就差 90°。这里不看任何缓存，直接拿 w/h 与传感器角度复核。
+        // -1 表示方向还没算过（openCamera 之前的那次布局），此时不旋转：
+        // 拿窗口尺寸冒充缓冲尺寸去算旋转矩阵，只会得到一张变形的图。
+        val deg = if (appliedRotDeg < 0) 0
+        else PreviewOrientationPolicy.alignToWindow(appliedRotDeg, w > h, sensorOrientation)
         // 三项都「不需要处理」时清空矩阵，走回旧版那条最简路径：
         // 少一层合成开销，也避免在某些 ROM 上 setTransform 与硬件叠层互相干扰。
-        if (appliedRotDeg <= 0 && style.framingPct <= 0 && srcW == w && srcH == h) {
+        if (deg <= 0 && style.framingPct <= 0 && srcW == w && srcH == h) {
             view.setTransform(null)
             return
         }
         val values = PreviewOrientationPolicy.transform(
-            w, h, srcW, srcH, appliedRotDeg, style.framingPct
+            w, h, srcW, srcH, deg, style.framingPct
         )
         val m = Matrix()
         m.setValues(values)
@@ -1028,6 +1035,16 @@ class RearCameraOverlay(
     }
 
     /**
+     * 当前窗口是不是横条。
+     *
+     * 窗口形状与画面旋转**必须用同一个判定结果**：一个来自姿态、一个来自
+     * 传感器方向公式，两处各调一次，中间姿态一变就会各说各话，画面就差 90°。
+     * 所以只留这一个入口，[buildParams] 与 [refreshRotation] 都调它。
+     */
+    private fun isLandscapeWindowNow(): Boolean =
+        DevicePosePolicy.isLandscapeWindow(currentDisplayDegrees(), style.rotationMode)
+
+    /**
      * 算旋转角时用的「参考朝向」。
      *
      * 「锁定竖屏」档要把它钉死成 0：此时窗口不跟着转，画面也应当按竖屏姿势摆，
@@ -1045,15 +1062,21 @@ class RearCameraOverlay(
      */
     private fun refreshRotation() {
         val refDeg = referenceDegrees()
-        val autoDeg = PreviewOrientationPolicy.rotationDegrees(
-            sensorOrientation, refDeg, false
+        val landscape = isLandscapeWindowNow()
+        val rawDeg = PreviewOrientationPolicy.applyMode(
+            PreviewOrientationPolicy.rotationDegrees(sensorOrientation, refDeg, false),
+            style.rotationMode
         )
-        val newDeg = PreviewOrientationPolicy.applyMode(autoDeg, style.rotationMode)
+        // 【5.3.4】原始值与窗口形状对齐。窗口竖条却算出「不交换宽高」（0/180），
+        // 就是「竖着拿、画面横躺」——真机上用户得歪头看路。见 alignToWindow 注释。
+        val newDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, landscape, sensorOrientation)
         if (newDeg == appliedRotDeg) return
         appliedRotDeg = newDeg
         diag(
             "方向切换 → 实转 " + newDeg + "°（传感器 " + sensorOrientation
-                + "° 姿态 " + refDeg + "° 模式 " + style.rotationMode + "）"
+                + "° 姿态 " + refDeg + "° 模式 " + style.rotationMode
+                + " 窗口=" + (if (landscape) "横条" else "竖条")
+                + (if (rawDeg != newDeg) " 校正=${rawDeg}°→${newDeg}°" else "") + "）"
         )
     }
 
@@ -1285,7 +1308,7 @@ class RearCameraOverlay(
             // 【5.3.1 姿态】窗口形状跟着手机拿法走：竖着拿是 150×260 的竖条，
             // 横着拿是 260×150 的横条。以前窗口永远竖着，横向画面塞进去只剩中间
             // 一条，两侧大片空 —— 用户说的「一小块，空余很大」就是这件事。
-            val landscape = DevicePosePolicy.isLandscapeWindow(currentDisplayDegrees(), style.rotationMode)
+            val landscape = isLandscapeWindowNow()
             val size = DevicePosePolicy.windowSize(style.smallWidthDp, SMALL_ASPECT, landscape)
             val w = dp(size[0])
             var h = dp(size[1])
@@ -1600,6 +1623,11 @@ class RearCameraOverlay(
             // 中途改只能重建会话（画面黑一下），而横屏时用户往往正在走路。
             val id = backCameraId()
             resolveOrientation(id, view.width, view.height)
+            // 方向刚算出来，立刻把矩阵落下去。
+            // 上面 onSurfaceTextureAvailable 里那次 applyFraming 跑在 openCamera 之前，
+            // 当时 appliedRotDeg 还是 -1（不旋转）；此后尺寸不变就不会再触发回调，
+            // 于是「会转但没转」会一直挂到下次窗口 resize —— 正是「改了方向没反应」。
+            applyFraming()
             st.setDefaultBufferSize(
                 if (previewSrcW > 0) previewSrcW else view.width,
                 if (previewSrcH > 0) previewSrcH else view.height
@@ -1861,7 +1889,10 @@ class RearCameraOverlay(
         val displayDeg = referenceDegrees()
         val autoDeg = PreviewOrientationPolicy.rotationDegrees(sensor, displayDeg, front)
         val mode = PreviewOrientationPolicy.normalizeMode(style.rotationMode)
-        appliedRotDeg = PreviewOrientationPolicy.applyMode(autoDeg, mode)
+        val rawDeg = PreviewOrientationPolicy.applyMode(autoDeg, mode)
+        // 窗口形状就用**已经量出来的视图尺寸**判断，不回头问传感器：
+        // 这里拿到的是真实宽高，是整条链路里唯一不需要推导的事实。
+        appliedRotDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, viewW > viewH, sensor)
 
         val picked = PreviewOrientationPolicy.pickPreviewSize(sizes, viewW, viewH, appliedRotDeg)
         if (picked != null && picked.size >= 2) {
@@ -1878,6 +1909,13 @@ class RearCameraOverlay(
             PreviewOrientationPolicy.describe(
                 sensor, displayDeg, mode, autoDeg, appliedRotDeg, previewSrcW, previewSrcH
             )
+        )
+        diag(
+            "方向自洽 | 窗口=" + (if (viewW > viewH) "横条" else "竖条")
+                + " " + viewW + "x" + viewH
+                + " 传感器=" + sensor + "°"
+                + " 原始=" + rawDeg + "° 实转=" + appliedRotDeg + "°"
+                + (if (rawDeg != appliedRotDeg) "（已按窗口形状校正）" else "（无需校正）")
         )
     }
 
