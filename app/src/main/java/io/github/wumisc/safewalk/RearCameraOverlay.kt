@@ -13,6 +13,10 @@ import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -24,6 +28,7 @@ import android.hardware.camera2.params.SessionConfiguration
 import java.util.concurrent.Executor
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -341,6 +346,101 @@ class RearCameraOverlay(
      */
     private var appliedRotDeg = -1
 
+    // ==================== 【5.3.1 姿态】====================
+
+    /**
+     * 重力姿态跟踪器。见 [DevicePosePolicy]。
+     *
+     * 为什么不再用 `Display.getRotation()`：用户手机开着旋转锁定，那个值恒为 0，
+     * 横过来也不变 —— 真机日志 2.5 小时里只有 SCREEN_ON/OFF，一次方向变化都没有。
+     */
+    private val poseTracker = DevicePosePolicy.PoseTracker()
+
+    /** 当前窗口朝向（0/90/180/270），由重力样本驱动，与系统旋转开关无关 */
+    private var poseDeg = DevicePosePolicy.NO_SAMPLE
+
+    private val sensorManager: SensorManager? by lazy {
+        try {
+            ctx.applicationContext.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private var poseTracking = false
+
+    private val poseListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val deg = poseTracker.update(
+                event.values[0], event.values[1], event.values[2],
+                SystemClock.elapsedRealtime()
+            )
+            if (deg == DevicePosePolicy.NO_SAMPLE || deg == poseDeg) return
+            poseDeg = deg
+            val landscape = DevicePosePolicy.isLandscapeWindow(deg, style.rotationMode)
+            diag(
+                "手机姿态 → " + deg + "°" + (if (landscape) "（横条）" else "（竖条）")
+            )
+            // 传感器回调在别的线程，窗口操作必须回主线程
+            mainHandler.post { applyPoseChange() }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
+    private fun startPoseTracking() {
+        if (poseTracking) return
+        val sm = sensorManager ?: run {
+            diag("⚠️ 没有传感器服务，方向退化为按屏幕旋转判断")
+            return
+        }
+        val accel = try {
+            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        } catch (_: Throwable) {
+            null
+        }
+        if (accel == null) {
+            diag("⚠️ 本机没有加速度计，方向退化为按屏幕旋转判断")
+            return
+        }
+        try {
+            // SENSOR_DELAY_UI≈60ms：姿态判定只需要「横还是竖」，不需要高精度；
+            // 用 GAME 档在行走时白耗电。迟滞与驻留在策略层做，不靠采样率。
+            sm.registerListener(poseListener, accel, SensorManager.SENSOR_DELAY_UI)
+            poseTracking = true
+        } catch (t: Throwable) {
+            diag("⚠️ 注册加速度计失败: " + t.message)
+        }
+    }
+
+    private fun stopPoseTracking() {
+        if (!poseTracking) return
+        try {
+            sensorManager?.unregisterListener(poseListener)
+        } catch (_: Throwable) {
+        }
+        poseTracking = false
+        poseTracker.reset()
+        poseDeg = DevicePosePolicy.NO_SAMPLE
+    }
+
+    /**
+     * 姿态变化后重排窗口。
+     *
+     * 顺序：先换窗口宽高（横条 ↔ 竖条），布局完成后 SizeChanged 会再算一次矩阵，
+     * 这里先算一版避免旋转瞬间闪一帧拉伸画面。
+     */
+    private fun applyPoseChange() {
+        if (!isShowing) return
+        val view = tv ?: return
+        if (view.width <= 0 || view.height <= 0) return
+        rootView?.let {
+            try { wm.updateViewLayout(it, buildParams()) } catch (_: Throwable) {}
+        }
+        refreshRotation()
+        applyFraming()
+    }
+
     /**
      * 相机「代号」。每次 [closeCamera] 递增一次，[openCamera] 把当时的值
      * 带进 StateCallback；回调回来时代号对不上就说明这是上一轮的设备，立刻关掉。
@@ -585,6 +685,7 @@ class RearCameraOverlay(
 
     private fun releaseView() {
         closeCamera()
+        stopPoseTracking()
         // 【新增对比度 UI】窗口根是容器，removeView 要移除容器而不是 tv。
         rootView?.let {
             if (it.parent != null) {
@@ -679,6 +780,9 @@ class RearCameraOverlay(
             hudView = null
             surfaceTexture = null
         }
+        // 【5.3.1 姿态】窗口挂上之后才开始测姿态：挂之前测出来也改不了形状，
+        // 只是让传感器白开一段时间。
+        if (isShowing) startPoseTracking()
     }
 
     /**
@@ -821,13 +925,33 @@ class RearCameraOverlay(
         view.setTransform(m)
     }
 
-    /** 当前屏幕旋转角度（0/90/180/270）。取不到时按 0 处理，等价于「跟着竖屏」 */
-    private fun currentDisplayDegrees(): Int = try {
-        @Suppress("DEPRECATION")
-        PreviewOrientationPolicy.displayDegrees(wm.defaultDisplay.rotation)
-    } catch (_: Throwable) {
-        0
+    /**
+     * 当前朝向（0/90/180/270）。
+     *
+     * **优先取重力姿态**：用户开着旋转锁定时 `Display.getRotation()` 恒为 0，
+     * 手机横过来系统不转、预览也不转，画面就侧躺。只有拿不到传感器样本时
+     * （首帧、没有加速度计、一直平放）才退回屏幕旋转，那只是「比没有强」的兜底。
+     */
+    private fun currentDisplayDegrees(): Int {
+        if (poseDeg != DevicePosePolicy.NO_SAMPLE) return poseDeg
+        return try {
+            @Suppress("DEPRECATION")
+            PreviewOrientationPolicy.displayDegrees(wm.defaultDisplay.rotation)
+        } catch (_: Throwable) {
+            0
+        }
     }
+
+    /**
+     * 算旋转角时用的「参考朝向」。
+     *
+     * 「锁定竖屏」档要把它钉死成 0：此时窗口不跟着转，画面也应当按竖屏姿势摆，
+     * 否则横着拿会出现「竖条窗口里放一张横图」。
+     */
+    private fun referenceDegrees(): Int =
+        if (PreviewOrientationPolicy.normalizeMode(style.rotationMode)
+            == PreviewOrientationPolicy.MODE_FIXED
+        ) 0 else currentDisplayDegrees()
 
     /**
      * 只重算「该转多少度」，不动缓冲、不重建会话。
@@ -835,15 +959,16 @@ class RearCameraOverlay(
      * 屏幕旋转与用户切换方向模式都走这里：源画面没变，只是摆法变了。
      */
     private fun refreshRotation() {
+        val refDeg = referenceDegrees()
         val autoDeg = PreviewOrientationPolicy.rotationDegrees(
-            sensorOrientation, currentDisplayDegrees(), false
+            sensorOrientation, refDeg, false
         )
         val newDeg = PreviewOrientationPolicy.applyMode(autoDeg, style.rotationMode)
         if (newDeg == appliedRotDeg) return
         appliedRotDeg = newDeg
         diag(
             "方向切换 → 实转 " + newDeg + "°（传感器 " + sensorOrientation
-                + "° 屏幕 " + currentDisplayDegrees() + "° 模式 " + style.rotationMode + "）"
+                + "° 姿态 " + refDeg + "° 模式 " + style.rotationMode + "）"
         )
     }
 
@@ -1068,14 +1193,16 @@ class RearCameraOverlay(
             }
             // 【4.9.0】尺寸与边距改为用户可调。高度按 SMALL_ASPECT 换算而不是
             // 单独给一个值：宽高比固定，画面才不会在任意尺寸下被拉变形。
-            val w = dp(style.smallWidthDp)
-            // 先按比例四舍五入再转像素：`.toInt()` 是截断，180dp×1.7333 会算成 311 而不是 312，
-            // 每次换算都少 1dp，调大宽度时能明显看出比例在飘。
-            var h = dp(Math.round(style.smallWidthDp * SMALL_ASPECT))
-            // 【5.3.0 横屏】横过来之后屏幕高度只剩竖屏的一半多（约 411dp 变成 200dp 出头
-            // 的可用高度），200dp 宽的小窗换算出来 346dp 高，会直接顶出屏幕外。
-            // 宽度不动（用户调的是宽度），只压高度，上限取屏高的 62%：
-            // 留出状态栏与一点余量，画面本身是等比铺满，压扁一点只会多裁上下，不变形。
+            //
+            // 【5.3.1 姿态】窗口形状跟着手机拿法走：竖着拿是 150×260 的竖条，
+            // 横着拿是 260×150 的横条。以前窗口永远竖着，横向画面塞进去只剩中间
+            // 一条，两侧大片空 —— 用户说的「一小块，空余很大」就是这件事。
+            val landscape = DevicePosePolicy.isLandscapeWindow(currentDisplayDegrees(), style.rotationMode)
+            val size = DevicePosePolicy.windowSize(style.smallWidthDp, SMALL_ASPECT, landscape)
+            val w = dp(size[0])
+            var h = dp(size[1])
+            // 高度上限：横条在矮屏（横屏可用高度约 411dp）上仍然可能顶出去，
+            // 宽度不动（用户调的是短边），只压高度。
             val (_, screenH) = screenSize()
             val maxH = (screenH * 0.62f).toInt()
             if (maxH > 0 && h > maxH) h = maxH
@@ -1631,7 +1758,7 @@ class RearCameraOverlay(
             }
         }
         sensorOrientation = sensor
-        val displayDeg = currentDisplayDegrees()
+        val displayDeg = referenceDegrees()
         val autoDeg = PreviewOrientationPolicy.rotationDegrees(sensor, displayDeg, front)
         val mode = PreviewOrientationPolicy.normalizeMode(style.rotationMode)
         appliedRotDeg = PreviewOrientationPolicy.applyMode(autoDeg, mode)

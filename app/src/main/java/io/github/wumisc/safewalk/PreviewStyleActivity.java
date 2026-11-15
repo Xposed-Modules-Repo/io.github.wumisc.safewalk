@@ -56,7 +56,7 @@ public final class PreviewStyleActivity extends Activity {
     private static final String[] PRESET_KEYS = {"day", "night", "plain"};
 
     /**
-     * 【5.3.0 画面方向】三档：自动 / 固定竖屏 / 翻转 180°。
+     * 【5.3.0 画面方向】三档：跟随手机 / 锁定竖屏 / 翻转 180°。
      *
      * 下标与 {@link #rotChips}、布局里的 chip_rot_* 一一对应。
      * 抽成常量而不是在两处各写一遍：漏改一处就会出现「点了自动、高亮翻转」
@@ -613,7 +613,7 @@ public final class PreviewStyleActivity extends Activity {
      *
      * 刻意**不**调 [takeOverFromAuto]：方向不属于「白天/夜间」那套方案参数
      * （PresetResolve.Params 里没有它），改方向不该顺手把智能方案关掉。
-     * 一个装在车载支架上横放的手机，用户需要的是「固定竖屏」+ 智能方案继续跟随，
+     * 一个装在车载支架上横放的手机，用户需要的是「锁定竖屏」+ 智能方案继续跟随，
      * 而不是二选一。
      */
     private void selectRotation(String mode) {
@@ -824,7 +824,7 @@ public final class PreviewStyleActivity extends Activity {
                 SafePrefs.getString(sp, SafeWalkPrefKey.previewRotationMode,
                         PreviewOrientationPolicy.MODE_AUTO));
         if (PreviewOrientationPolicy.MODE_FIXED.equals(rot)) {
-            base += " · 方向固定竖屏";
+            base += " · 方向锁定竖屏";
         } else if (PreviewOrientationPolicy.MODE_FLIP.equals(rot)) {
             base += " · 方向翻转 180°";
         }

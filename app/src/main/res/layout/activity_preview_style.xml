@@ -558,7 +558,7 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
-                        android:text="自动"
+                        android:text="跟随手机"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
@@ -570,7 +570,7 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
-                        android:text="固定竖屏"
+                        android:text="锁定竖屏"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
@@ -592,7 +592,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:lineSpacingExtra="2dp"
-                    android:text="横屏时画面会自动转正，一般不用改。若画面侧躺或倒置：选「固定竖屏」不跟随屏幕旋转；选「翻转 180°」在自动结果上再转半圈"
+                    android:text="竖着拿是竖条、横着拿是横条，按重力判断，系统开不开旋转锁定都生效。夹在支架上固定横放时选「锁定竖屏」；画面倒置时选「翻转 180°」"
                     android:textColor="@color/text_hint"
                     android:textSize="12sp" />
             </LinearLayout>
