@@ -545,6 +545,22 @@ class RearCameraOverlay(
     @Volatile
     private var cameraBusyUntil = 0L
 
+    /**
+     * 方向链路摘要：一行说清「窗口形状 / 传感器读数 / 姿态 / 实转角 / 缓冲尺寸」。
+     *
+     * 这五个数是判断画面朝向所需的全部输入。有了它，「画面侧躺」到底是
+     * 传感器读歪了、姿态没样本、还是矩阵没跟上，一眼分得出来，不必再靠截图反推。
+     */
+    private fun orientationSummary(): String {
+        val w = tv?.width ?: 0
+        val h = tv?.height ?: 0
+        return "窗口=" + (if (w > h) "横条" else "竖条") + " " + w + "x" + h +
+            " 传感器=" + sensorOrientation + "°" +
+            " 姿态=" + (if (poseDeg == DevicePosePolicy.NO_SAMPLE) "无" else poseDeg.toString() + "°") +
+            " 实转=" + appliedRotDeg + "°" +
+            " 缓冲=" + previewSrcW + "x" + previewSrcH
+    }
+
     /** 统一走 SafeWalkLSPHook 的日志出口（logcat + SystemUI 私有目录） */
     private fun diag(msg: String) {
         try {
@@ -1002,7 +1018,7 @@ class RearCameraOverlay(
         // -1 表示方向还没算过（openCamera 之前的那次布局），此时不旋转：
         // 拿窗口尺寸冒充缓冲尺寸去算旋转矩阵，只会得到一张变形的图。
         val deg = if (appliedRotDeg < 0) 0
-        else PreviewOrientationPolicy.alignToWindow(appliedRotDeg, w > h, sensorOrientation)
+        else PreviewOrientationPolicy.alignToWindow(appliedRotDeg, w > h)
         // 三项都「不需要处理」时清空矩阵，走回旧版那条最简路径：
         // 少一层合成开销，也避免在某些 ROM 上 setTransform 与硬件叠层互相干扰。
         if (deg <= 0 && style.framingPct <= 0 && srcW == w && srcH == h) {
@@ -1069,7 +1085,7 @@ class RearCameraOverlay(
         )
         // 【5.3.4】原始值与窗口形状对齐。窗口竖条却算出「不交换宽高」（0/180），
         // 就是「竖着拿、画面横躺」——真机上用户得歪头看路。见 alignToWindow 注释。
-        val newDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, landscape, sensorOrientation)
+        val newDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, landscape)
         if (newDeg == appliedRotDeg) return
         appliedRotDeg = newDeg
         diag(
@@ -1234,7 +1250,12 @@ class RearCameraOverlay(
                     retryCount = 0
                     if (!firstFrameReported) {
                         firstFrameReported = true
-                        stage("✅ 已收到画面")
+                        // 【5.3.5】方向摘要必须和「已收到画面」同一行落盘。
+                        // 上一版把它单独打一行（`方向自洽 | …`），真机日志里
+                        // 一次都没出现过 —— 那一行和窗口挂载在同一时刻，赶上
+                        // 日志文件被轮转/截断就整段没了。这一行是用户回传时
+                        // 一定看得到的锚点，把方向参数挂上去，下次不用再猜。
+                        stage("✅ 已收到画面 | " + orientationSummary())
                     }
                 }
             }
@@ -1892,7 +1913,7 @@ class RearCameraOverlay(
         val rawDeg = PreviewOrientationPolicy.applyMode(autoDeg, mode)
         // 窗口形状就用**已经量出来的视图尺寸**判断，不回头问传感器：
         // 这里拿到的是真实宽高，是整条链路里唯一不需要推导的事实。
-        appliedRotDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, viewW > viewH, sensor)
+        appliedRotDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, viewW > viewH)
 
         val picked = PreviewOrientationPolicy.pickPreviewSize(sizes, viewW, viewH, appliedRotDeg)
         if (picked != null && picked.size >= 2) {

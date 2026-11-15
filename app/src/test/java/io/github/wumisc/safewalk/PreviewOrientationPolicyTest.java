@@ -242,84 +242,94 @@ public class PreviewOrientationPolicyTest {
         assertPoint("宽为 0 时原样返回", 12, 34, map(m, 12, 34), 0.001);
     }
 
-    // ==================== 【5.3.4】旋转角与窗口形状自洽 ====================
+    // ==================== 【5.3.4/5.3.5】旋转角与窗口形状自洽 ====================
 
     /**
-     * 真机复现：竖条窗口、后摄横装（90°）、公式算出 0° —— 画面没转，
-     * 于是 1920×1080 的横向画面被塞进 150:260 的竖条，用户「竖屏看到横屏内容」。
-     * 校正后必须是 90°，画面宽高交换。
+     * 真机复现：竖条窗口、公式算出 0° —— 画面没转，1920×1080 的横向画面
+     * 被塞进 150:260 的竖条，用户「竖屏看到横屏内容」。校正后必须是 90°。
      */
     @Test
-    public void portraitWindowWithCrossMountedSensorGetsQuarterTurn() {
-        assertEquals("竖条 + 横装 + 原始 0° → 90°",
-                90, PreviewOrientationPolicy.alignToWindow(0, false, 90));
-        assertEquals("竖条 + 横装 + 原始 180° → 270°",
-                270, PreviewOrientationPolicy.alignToWindow(180, false, 90));
+    public void portraitWindowWithUnswappedRotationGetsQuarterTurn() {
+        assertEquals("竖条 + 原始 0° → 90°",
+                90, PreviewOrientationPolicy.alignToWindow(0, false));
+        assertEquals("竖条 + 原始 180° → 270°",
+                270, PreviewOrientationPolicy.alignToWindow(180, false));
     }
 
     @Test
     public void alreadyConsistentRotationIsLeftAlone() {
         assertEquals("竖条 + 90° 本来就对",
-                90, PreviewOrientationPolicy.alignToWindow(90, false, 90));
+                90, PreviewOrientationPolicy.alignToWindow(90, false));
         assertEquals("竖条 + 270° 本来就对",
-                270, PreviewOrientationPolicy.alignToWindow(270, false, 270));
+                270, PreviewOrientationPolicy.alignToWindow(270, false));
         assertEquals("横条 + 0° 本来就对",
-                0, PreviewOrientationPolicy.alignToWindow(0, true, 90));
+                0, PreviewOrientationPolicy.alignToWindow(0, true));
         assertEquals("横条 + 180° 本来就对",
-                180, PreviewOrientationPolicy.alignToWindow(180, true, 270));
+                180, PreviewOrientationPolicy.alignToWindow(180, true));
     }
 
     @Test
     public void landscapeWindowWithQuarterTurnIsCorrected() {
-        // 横条窗口里放「交换过宽高」的画面 = 横屏看到竖屏内容，是这次的另一半现象
+        // 横条窗口里放「交换过宽高」的画面 = 横屏看到竖屏内容，是这次真机的另一半
         assertEquals("横条 + 90° → 180°",
-                180, PreviewOrientationPolicy.alignToWindow(90, true, 90));
+                180, PreviewOrientationPolicy.alignToWindow(90, true));
         assertEquals("横条 + 270° → 0°",
-                0, PreviewOrientationPolicy.alignToWindow(270, true, 90));
+                0, PreviewOrientationPolicy.alignToWindow(270, true));
     }
 
+    /**
+     * 【5.3.5】真机把 SENSOR_ORIENTATION 读成 0 的场景。
+     *
+     * 5.3.4 第一版对「传感器竖装（0/180）」做了豁免，结果这台机器正好踩中：
+     * 竖握窗口竖条、原始 0° 原样透传 → 画面横躺；横握窗口横条、原始 270°
+     * 也原样透传 → 画面竖躺。两轮截图把两种情况都拍下来了。
+     *
+     * 现在不再看传感器读数：窗口形状是唯一判据，同样的输入必须被校正。
+     */
     @Test
-    public void portraitMountedSensorIsNeverCorrected() {
-        // 传感器竖装（0/180）的机型竖屏本来就该转 0°，强行补 90° 会把它弄坏
-        assertEquals(0, PreviewOrientationPolicy.alignToWindow(0, false, 0));
-        assertEquals(180, PreviewOrientationPolicy.alignToWindow(180, false, 0));
-        assertEquals(0, PreviewOrientationPolicy.alignToWindow(0, true, 180));
+    public void sensorReadingZeroNoLongerSkipsCorrection() {
+        // sensor=0、竖握 pose=0 → 原始 = 0-0 = 0；竖条窗口下必须变 90
+        assertEquals("竖握 sensor=0 → 90", 90, PreviewOrientationPolicy.alignToWindow(0, false));
+        // 横握 pose=90 → 原始 = 0-90 = 270；横条窗口下必须变 0
+        assertEquals("横握 sensor=0 → 0", 0, PreviewOrientationPolicy.alignToWindow(270, true));
     }
 
     @Test
     public void alignToWindowNormalizesDirtyAngles() {
         // -90 先归一到 270，再按「横条不该交换宽高」校正成 0
-        assertEquals("负数先归一再校正", 0, PreviewOrientationPolicy.alignToWindow(-90, true, 90));
-        assertEquals("超范围归一", 90, PreviewOrientationPolicy.alignToWindow(450, false, 90));
+        assertEquals("负数先归一再校正", 0, PreviewOrientationPolicy.alignToWindow(-90, true));
+        assertEquals("超范围归一", 90, PreviewOrientationPolicy.alignToWindow(450, false));
         // -1 是「方向还没算过」的哨兵，必须原样透传，不能被归一成 359 再校正成 89
-        assertEquals("哨兵值原样返回", -1, PreviewOrientationPolicy.alignToWindow(-1, false, 90));
+        assertEquals("哨兵值原样返回", -1, PreviewOrientationPolicy.alignToWindow(-1, false));
     }
 
     /**
-     * 穷举「传感器 × 原始角 × 窗口形状」24 种组合，锁住唯一的不变量：
-     * 横装传感器时，竖条窗口必须交换宽高、横条窗口必须不交换。
+     * 穷举「原始角 × 窗口形状」8 种组合，锁住唯一的不变量：
+     * 竖条窗口必须交换宽高、横条窗口必须不交换。
      * 这条一旦破了，画面就是歪着头才能看的路况 —— 恰恰最难在截图里发现。
      */
     @Test
     public void everyCombinationKeepsWindowShapeAndRotationInSync() {
-        int[] sensors = {0, 90, 180, 270};
         int[] degs = {0, 90, 180, 270};
         boolean[] landscapes = {true, false};
-        for (int sensor : sensors) {
-            for (int deg : degs) {
-                for (boolean landscape : landscapes) {
-                    int out = PreviewOrientationPolicy.alignToWindow(deg, landscape, sensor);
-                    String tag = "传感器=" + sensor + " 原始=" + deg + " 横条=" + landscape;
-                    assertTrue("结果必须是 0/90/180/270: " + tag + " → " + out,
-                            out == 0 || out == 90 || out == 180 || out == 270);
-                    boolean swapped = out == 90 || out == 270;
-                    if (((sensor % 180) + 180) % 180 == 0) {
-                        int normalized = ((deg % 360) + 360) % 360;
-                        assertEquals("竖装传感器原样返回: " + tag, normalized, out);
-                    } else {
-                        assertEquals("交换位必须与窗口形状一致: " + tag, !landscape, swapped);
-                    }
-                }
+        for (int deg : degs) {
+            for (boolean landscape : landscapes) {
+                int out = PreviewOrientationPolicy.alignToWindow(deg, landscape);
+                String tag = "原始=" + deg + " 横条=" + landscape;
+                assertTrue("结果必须是 0/90/180/270: " + tag + " → " + out,
+                        out == 0 || out == 90 || out == 180 || out == 270);
+                boolean swapped = out == 90 || out == 270;
+                assertEquals("交换位必须与窗口形状一致: " + tag, !landscape, swapped);
+            }
+        }
+        // 相位不能被抹掉：同一窗口形状下，互差 180° 的两个输入，输出也必须互差 180°。
+        // 否则「翻转 180°」这一档会被校正吃掉，用户选了翻转却看不到倒过来的画面。
+        for (int deg : new int[]{0, 90}) {
+            for (boolean landscape : landscapes) {
+                int a = PreviewOrientationPolicy.alignToWindow(deg, landscape);
+                int b = PreviewOrientationPolicy.alignToWindow(deg + 180, landscape);
+                assertEquals("相位必须保住: 原始=" + deg + " 横条=" + landscape,
+                        180, (((b - a) % 360) + 360) % 360);
             }
         }
     }

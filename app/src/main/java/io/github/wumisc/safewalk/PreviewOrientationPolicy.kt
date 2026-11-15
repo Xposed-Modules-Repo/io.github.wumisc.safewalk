@@ -105,32 +105,40 @@ object PreviewOrientationPolicy {
      *
      * ## 判据从物理来，不靠自证
      *
-     * 后摄传感器绝大多数**横装**（SENSOR_ORIENTATION = 90 或 270，见
-     * [rotationDegrees] 的表格）。横装意味着：
+     * 一只相机要怎么摆才能让画面正立，只有两种可能：交换宽高（转 90 / 270）
+     * 或者不交换（转 0 / 180）。而窗口形状是**用户肉眼已经确认过**的：
+     * 竖条窗口里必须放竖画面，横条窗口里必须放横画面。于是：
      *
      * · 窗口竖条 → 画面宽高**必须交换**，旋转只能是 90 / 270；
      * · 窗口横条 → 画面宽高**不能交换**，旋转只能是 0 / 180。
      *
-     * 一旦算出矛盾，就以**窗口形状为准**补 90°。理由很实际：窗口形状是用户
-     * 眼睛直接看到、并且已经确认「形状没问题」的那一项，而传感器方向是读出来
-     * 的整数，读错了没人能发现。
+     * 一旦算出矛盾，就以**窗口形状为准**补 90°。
      *
-     * 传感器竖装（0 或 180，少见但真实存在，多见于前摄与少数后摄）不参与校正：
-     * 那种机型竖条窗口本来就该转 0°，硬补 90° 会把原本正确的画面弄歪。
+     * ## 为什么不再看 `SENSOR_ORIENTATION`（5.3.4 的教训）
+     *
+     * 5.3.4 第一版留了一个口子：传感器「竖装」（读数为 0 / 180）时跳过校正。
+     * 真机（Redmi M332BF / HyperOS 4）恰好把后摄读成 **0**，于是校正被整条跳过，
+     * 现象原样保留：
+     *
+     * | 姿势 | 窗口 | 原始旋转 | 实际看到 |
+     * | --- | --- | --- | --- |
+     * | 竖握 pose=0 | 竖条 | 0−0 = 0° | 横向路面，歪头看 |
+     * | 横握 pose=90 | 横条 | 0−90 = 270° | 竖向路面，同样歪头看 |
+     *
+     * 两轮截图刚好把这两种情况都拍下来了。结论：这个字段在某些 ROM / 多摄模组上
+     * 会报 0（表示"未知"），**不能作为豁免条件**。窗口形状不需要任何传感器读数，
+     * 是整条链路里唯一不可辩驳的事实，就以它为准。
      *
      * @param deg 已叠加用户模式的旋转角
      * @param landscapeWindow 当前窗口是否为横条（与 [DevicePosePolicy.isLandscapeWindow] 同源）
-     * @param sensorOrientation `CameraCharacteristics.SENSOR_ORIENTATION`
      * @return 0 / 90 / 180 / 270，与窗口形状自洽
      */
     @JvmStatic
-    fun alignToWindow(deg: Int, landscapeWindow: Boolean, sensorOrientation: Int): Int {
+    fun alignToWindow(deg: Int, landscapeWindow: Boolean): Int {
         // -1 是「还没算过」的哨兵值（调用方用它走「不设矩阵」的最简路径）。
         // 归一化会把它变成 359，再把 359 校正成 89 —— 一个凭空冒出来的旋转角。
         if (deg == -1) return deg
         val normalized = ((deg % 360) + 360) % 360
-        val sensorCrossMounted = ((sensorOrientation % 180) + 180) % 180 != 0
-        if (!sensorCrossMounted) return normalized
         val swapped = normalized == 90 || normalized == 270
         // 竖条窗口要交换，横条窗口不要交换
         val needSwap = !landscapeWindow
