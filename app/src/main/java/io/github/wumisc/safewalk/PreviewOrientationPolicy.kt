@@ -180,6 +180,23 @@ object PreviewOrientationPolicy {
      * 为什么取景放在最后、按窗口坐标算：用户拖的是「屏幕上看到的那一段」，
      * 而不是源图坐标。放最后，竖屏横屏、转 90° 还是 180°，行为都一致：
      * 永远只留下屏幕下半部分。
+     *
+     * ## 【5.3.3】为什么要多乘一个「逆拉伸」
+     *
+     * 上面 1~5 步算的是**源像素 → 窗口像素**的绝对映射。但
+     * `TextureView.setTransform()` 收的矩阵不是这个语义：绘制时系统**已经**
+     * 把相机缓冲按 `(viewW/srcW, viewH/srcH)` 非等比拉伸铺满整个 View，
+     * setTransform 再在这个「已拉伸的 View 坐标」上叠加变换。
+     *
+     * 把绝对映射直接交给它，等于把「已经铺满的画面」再按 `scale` 缩一次：
+     * 1920×1080 缓冲、488×845 窗口、实转 90° 时 scale≈0.45，画面被缩成
+     * 窗口的四成多一点、贴在左上角，右侧与下方大片留白 —— 真机截图里
+     * 那个「一小块，空余很大」就是它。
+     *
+     * 正确做法是先把输入坐标**逆拉伸回源像素空间**（乘以 `srcW/viewW`、
+     * `srcH/viewH`），再接 1~5 步。这样 setTransform 的输入点先被还原成
+     * 「它实际采样的那个源像素」，后面的旋转与铺满才有意义。
+     * 取景那一步作用在窗口坐标上，不参与逆拉伸。
      */
     @JvmStatic
     fun transform(
@@ -239,9 +256,20 @@ object PreviewOrientationPolicy {
         // ch + zoom*(k*H - ch)，再上移这么多，正好让它贴住屏幕上边。
         val shiftY = -(ch + zoom * (k * viewH - ch))
 
+        // ---- 逆拉伸：把 setTransform 的输入坐标从「窗口像素」还原成「源像素」----
+        //
+        // 系统绘制时已经按 (viewW/srcW, viewH/srcH) 把缓冲非等比铺满了 View，
+        // 所以 View 坐标下的 1 像素 = 源图的 srcW/viewW 像素。乘回去，
+        // 后面的旋转与铺满才是按真实源尺寸算的。
+        // srcW == viewW 时它是 1，不影响「缓冲与窗口同尺寸」这条最简路径。
+        val invX = srcW.toDouble() / viewW
+        val invY = srcH.toDouble() / viewH
+
         return floatArrayOf(
-            (zoom * m00).toFloat(), (zoom * m01).toFloat(), (zoom * tx + anchorX).toFloat(),
-            (zoom * m10).toFloat(), (zoom * m11).toFloat(),
+            // 线性部分乘逆拉伸；平移部分（tx/ty、取景锚点）已经在窗口坐标里，不乘
+            (zoom * m00 * invX).toFloat(), (zoom * m01 * invY).toFloat(),
+            (zoom * tx + anchorX).toFloat(),
+            (zoom * m10 * invX).toFloat(), (zoom * m11 * invY).toFloat(),
             (zoom * ty + anchorY + shiftY).toFloat(),
             0f, 0f, 1f
         )

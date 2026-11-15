@@ -25,6 +25,19 @@ public class PreviewOrientationPolicyTest {
         };
     }
 
+    /**
+     * 把「源图上的一个点」按新语义送进矩阵。
+     *
+     * 【5.3.3】`setTransform` 收的矩阵作用在**窗口坐标**上：系统绘制前已经
+     * 把源画面非等比拉伸铺满了整个 View，矩阵只是在它之上再叠一层。
+     * 所以要把源坐标换算成「它落在窗口的哪个像素」，再喂进去。
+     * 换算式就是系统那一步拉伸：(sx * viewW/srcW, sy * viewH/srcH)。
+     */
+    private static double[] mapSrc(float[] m, double sx, double sy,
+                                   int srcW, int srcH, int viewW, int viewH) {
+        return map(m, sx * viewW / (double) srcW, sy * viewH / (double) srcH);
+    }
+
     private static void assertPoint(String why, double ex, double ey, double[] got, double tol) {
         assertEquals(why + " x", ex, got[0], tol);
         assertEquals(why + " y", ey, got[1], tol);
@@ -146,7 +159,7 @@ public class PreviewOrientationPolicyTest {
         int[][] cases = {{0, 400, 300}, {90, 400, 300}, {180, 400, 300}, {270, 400, 300}};
         for (int[] c : cases) {
             float[] m = PreviewOrientationPolicy.transform(300, 400, c[1], c[2], c[0], 0);
-            double[] got = map(m, c[1] / 2.0, c[2] / 2.0);
+            double[] got = mapSrc(m, c[1] / 2.0, c[2] / 2.0, c[1], c[2], 300, 400);
             assertPoint("rot=" + c[0] + " 中心", 150, 200, got, 0.5);
         }
     }
@@ -155,31 +168,31 @@ public class PreviewOrientationPolicyTest {
     public void rotate90MapsTopLeftToTopRight() {
         // 源 400×300 转 90° 到 300×400 窗口：cover 恰好为 1，四个角应当严丝合缝
         float[] m = PreviewOrientationPolicy.transform(300, 400, 400, 300, 90, 0);
-        assertPoint("源左上 → 屏幕右上", 300, 0, map(m, 0, 0), 0.5);
-        assertPoint("源右上 → 屏幕右下", 300, 400, map(m, 400, 0), 0.5);
-        assertPoint("源左下 → 屏幕左上", 0, 0, map(m, 0, 300), 0.5);
+        assertPoint("源左上 → 屏幕右上", 300, 0, mapSrc(m, 0, 0, 400, 300, 300, 400), 0.5);
+        assertPoint("源右上 → 屏幕右下", 300, 400, mapSrc(m, 400, 0, 400, 300, 300, 400), 0.5);
+        assertPoint("源左下 → 屏幕左上", 0, 0, mapSrc(m, 0, 300, 400, 300, 300, 400), 0.5);
     }
 
     @Test
     public void rotate270MapsTopLeftToBottomLeft() {
         float[] m = PreviewOrientationPolicy.transform(300, 400, 400, 300, 270, 0);
-        assertPoint("源左上 → 屏幕左下", 0, 400, map(m, 0, 0), 0.5);
-        assertPoint("源右下 → 屏幕右上", 300, 0, map(m, 400, 300), 0.5);
+        assertPoint("源左上 → 屏幕左下", 0, 400, mapSrc(m, 0, 0, 400, 300, 300, 400), 0.5);
+        assertPoint("源右下 → 屏幕右上", 300, 0, mapSrc(m, 400, 300, 400, 300, 300, 400), 0.5);
     }
 
     @Test
     public void rotate180FlipsBothAxes() {
         float[] m = PreviewOrientationPolicy.transform(400, 300, 400, 300, 180, 0);
-        assertPoint("源左上 → 屏幕右下", 400, 300, map(m, 0, 0), 0.5);
-        assertPoint("源中心不动", 200, 150, map(m, 200, 150), 0.5);
+        assertPoint("源左上 → 屏幕右下", 400, 300, mapSrc(m, 0, 0, 400, 300, 400, 300), 0.5);
+        assertPoint("源中心不动", 200, 150, mapSrc(m, 200, 150, 400, 300, 400, 300), 0.5);
     }
 
     @Test
     public void coverFillsWindowWithoutBlackBars() {
         // 4:3 源放进 3:4 窗口（不旋转）：必须放大到铺满，两侧被裁
         float[] m = PreviewOrientationPolicy.transform(300, 400, 400, 300, 0, 0);
-        double[] tl = map(m, 0, 0);
-        double[] br = map(m, 400, 300);
+        double[] tl = mapSrc(m, 0, 0, 400, 300, 300, 400);
+        double[] br = mapSrc(m, 400, 300, 400, 300, 300, 400);
         assertTrue("左边必须被裁到屏幕外", tl[0] <= 0.5);
         assertTrue("右边必须被裁到屏幕外", br[0] >= 299.5);
         assertEquals("上下应刚好铺满", 0, tl[1], 0.5);
@@ -190,15 +203,37 @@ public class PreviewOrientationPolicyTest {
     public void framingKeepsLowerHalfOnScreen() {
         // 取景拉满：源图下半部分铺满窗口，中心正好落在屏幕上边缘
         float[] m = PreviewOrientationPolicy.transform(300, 400, 300, 400, 0, 100);
-        assertPoint("源中心 → 屏幕上边中点", 150, 0, map(m, 150, 200), 0.5);
-        assertPoint("源底边中点 → 屏幕下边中点", 150, 400, map(m, 150, 400), 0.5);
+        assertPoint("源中心 → 屏幕上边中点", 150, 0, mapSrc(m, 150, 200, 300, 400, 300, 400), 0.5);
+        assertPoint("源底边中点 → 屏幕下边中点", 150, 400, mapSrc(m, 150, 400, 300, 400, 300, 400), 0.5);
     }
 
     @Test
     public void framingIsAppliedOnScreenAxisAfterRotation() {
         // 横屏（不旋转）+ 取景拉满：仍然只留下半部分，不能变成「留右半」
         float[] m = PreviewOrientationPolicy.transform(400, 200, 400, 200, 0, 100);
-        assertPoint("源中心 → 上边", 200, 0, map(m, 200, 100), 0.5);
+        assertPoint("源中心 → 上边", 200, 0, mapSrc(m, 200, 100, 400, 200, 400, 200), 0.5);
+    }
+
+    @Test
+    public void rotatedBufferStillCoversWholeWindow() {
+        // 【5.3.3】真机回归：1920×1080 缓冲 → 488×845 竖窗、转 90°。
+        // 修复前 scale 被当成「源像素 → 窗口像素」的绝对比例（≈0.45），
+        // setTransform 又在这之上再缩一次，画面只剩窗口四成、贴在左上角。
+        // 修复后：源图四角换算到窗口坐标，包围盒必须完整包住 0..488 × 0..845。
+        int vw = 488, vh = 845, sw = 1920, sh = 1080;
+        float[] m = PreviewOrientationPolicy.transform(vw, vh, sw, sh, 90, 0);
+        double[] a = mapSrc(m, 0, 0, sw, sh, vw, vh);
+        double[] b = mapSrc(m, sw, 0, sw, sh, vw, vh);
+        double[] c = mapSrc(m, 0, sh, sw, sh, vw, vh);
+        double[] d = mapSrc(m, sw, sh, sw, sh, vw, vh);
+        double minX = Math.min(Math.min(a[0], b[0]), Math.min(c[0], d[0]));
+        double maxX = Math.max(Math.max(a[0], b[0]), Math.max(c[0], d[0]));
+        double minY = Math.min(Math.min(a[1], b[1]), Math.min(c[1], d[1]));
+        double maxY = Math.max(Math.max(a[1], b[1]), Math.max(c[1], d[1]));
+        assertTrue("左边不应留白: minX=" + minX, minX <= 0.5);
+        assertTrue("右边不应留白: maxX=" + maxX, maxX >= vw - 0.5);
+        assertTrue("上边不应留白: minY=" + minY, minY <= 0.5);
+        assertTrue("下边不应留白: maxY=" + maxY, maxY >= vh - 0.5);
     }
 
     @Test

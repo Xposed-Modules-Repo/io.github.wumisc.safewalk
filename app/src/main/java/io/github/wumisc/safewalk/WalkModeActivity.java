@@ -181,9 +181,12 @@ public final class WalkModeActivity extends Activity {
 
         // 默认从 10 秒提到 15 秒（v5.1.0）：等红灯、低头看手机再走，
         // 中间停 10~15 秒是常态，10 秒会让小窗在正常停顿里反复收起又弹出。
+        // 【5.3.3】下限从 5 秒提到 12 秒：步态回调本身 10 秒一次，门槛低于
+        // 回调周期时，每两个回调之间必然出现「按时间算早该停了」的窗口，
+        // 于是 8 秒设置下每 20 秒就收起再弹出一次（真机 13:30 实证）。
         int stopSec = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, 15);
-        stopSec = Math.max(5, Math.min(30, stopSec));
-        seekGaitStop.setProgress(stopSec - 5);
+        stopSec = Math.max(12, Math.min(30, stopSec));
+        seekGaitStop.setProgress(stopSec - 12);
         tvGaitStop.setText("停下后 " + stopSec + " 秒收起预览");
     }
 
@@ -287,11 +290,11 @@ public final class WalkModeActivity extends Activity {
         seekGaitStop.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override
             public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                tvGaitStop.setText("停下后 " + (progress + 5) + " 秒收起预览");
+                tvGaitStop.setText("停下后 " + (progress + 12) + " 秒收起预览");
             }
             @Override
             public void onStopTrackingTouch(SeekBar sb) {
-                sp.edit().putInt(SafeWalkPrefKey.gaitStopSec, sb.getProgress() + 5).commit();
+                sp.edit().putInt(SafeWalkPrefKey.gaitStopSec, sb.getProgress() + 12).commit();
                 SafeWalkConfig.exportConfig(WalkModeActivity.this);
                 if (swRearCam.isChecked()) WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);
             }

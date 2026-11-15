@@ -190,6 +190,19 @@ class RearCameraOverlay(
          * 已改由 handlePolicyDisabled 静默处理，绝不能进这个静默期。
          */
         private const val HARD_FAILURE_BACKOFF_MS = 5 * 60 * 1000L
+
+        /**
+         * 相机遇忙（被别的应用占着 / 连续几轮开不出来）后的短静默期。
+         *
+         * 真机日志 2026-11-15 12:37 一分钟里窗口被重挂了 25 次，每一次都是
+         * 「打开相机被拒(4) → 重试 → 被拒(4) → 6 秒看门狗收窗 → 回执 false →
+         * 步态仍判走在走 → 立刻再 show」——用户看到的就是「一个大框来回变」。
+         *
+         * 15 秒而不是 5 分钟：相机被占用通常几十秒就结束（用户切走那个应用），
+         * 静默太久会把「正常走路该显示」也一起拖住。静默期内 show() 直接返回，
+         * 窗口保持未显示，回执稳定为 false，乒乓自然消失。
+         */
+        private const val CAMERA_BUSY_BACKOFF_MS = 15_000L
     }
 
     /**
@@ -369,8 +382,21 @@ class RearCameraOverlay(
 
     private var poseTracking = false
 
+    /** 已收到的重力样本数：用来区分「注册了但 ROM 不给数据」和「数据正常」 */
+    private var poseSamples = 0
+
     private val poseListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
+            // 首个样本单独回执。5.3.1 只在朝向**变化**时打日志，竖着拿时
+            // 首样本就是 0°、与初值相同，于是整个日志里一条姿态记录都没有 ——
+            // 「没注册上」和「注册好了但一直竖着」看起来完全一样。
+            poseSamples++
+            if (poseSamples == 1) {
+                diag(
+                    "姿态首个样本 ax=${fmt(event.values[0])} ay=${fmt(event.values[1])}" +
+                        " az=${fmt(event.values[2])} 传感器=${event.sensor?.name}"
+                )
+            }
             val deg = poseTracker.update(
                 event.values[0], event.values[1], event.values[2],
                 SystemClock.elapsedRealtime()
@@ -380,6 +406,7 @@ class RearCameraOverlay(
             val landscape = DevicePosePolicy.isLandscapeWindow(deg, style.rotationMode)
             diag(
                 "手机姿态 → " + deg + "°" + (if (landscape) "（横条）" else "（竖条）")
+                + " 样本=$poseSamples"
             )
             // 传感器回调在别的线程，窗口操作必须回主线程
             mainHandler.post { applyPoseChange() }
@@ -388,36 +415,61 @@ class RearCameraOverlay(
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
 
+    private fun fmt(v: Float): String = String.format(java.util.Locale.US, "%.1f", v)
+
     private fun startPoseTracking() {
         if (poseTracking) return
         val sm = sensorManager ?: run {
             diag("⚠️ 没有传感器服务，方向退化为按屏幕旋转判断")
             return
         }
+        // 【5.3.3】优先用 TYPE_GRAVITY。
+        //
+        // 真机日志（2026-11-15，HyperOS 4 / Redmi）里 5.3.1 的姿态监听从未
+        // 产出过一个样本：没有「手机姿态 →」，也没有任何注册失败的告警 ——
+        // 说明 registerListener 返回了 true，但 ROM 一帧都没回调。
+        // 加速度计在这些 ROM 上会被按进程限流（SystemUI 属于低优先级后台），
+        // 而 TYPE_GRAVITY 是系统融合出来的虚拟传感器，不直接排他的硬件通道，
+        // 拿到的同样是重力向量（世界坐标下的 g），语义与 ACCELEROMETER 一致。
+        // 拿不到再退回 ACCELEROMETER，两级都失败才降级为屏幕旋转。
+        val gravity = try {
+            sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
+        } catch (_: Throwable) {
+            null
+        }
         val accel = try {
             sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         } catch (_: Throwable) {
             null
         }
-        if (accel == null) {
-            diag("⚠️ 本机没有加速度计，方向退化为按屏幕旋转判断")
+        val sensor = gravity ?: accel
+        if (sensor == null) {
+            diag("⚠️ 本机没有重力/加速度计，方向退化为按屏幕旋转判断")
             return
         }
         try {
             // SENSOR_DELAY_UI≈60ms：姿态判定只需要「横还是竖」，不需要高精度；
             // 用 GAME 档在行走时白耗电。迟滞与驻留在策略层做，不靠采样率。
-            val ok = sm.registerListener(poseListener, accel, SensorManager.SENSOR_DELAY_UI)
+            val ok = sm.registerListener(poseListener, sensor, SensorManager.SENSOR_DELAY_UI)
             poseTracking = ok
             // 注册结果必须回执：只有「注册成功」和「一个样本都没来」分开记，
             // 下次回传日志才能判断是没注册上，还是注册了但 ROM 不给数据。
             // （5.3.1 只打了姿态变化，没打注册结果，真机上一片空白时无从下手。）
             if (ok) {
-                diag("姿态监听已启动（加速度计 ${accel.name}），等待首个样本")
+                diag("姿态监听已启动（${sensor.name} type=${sensor.type}），等待首个样本")
+                // 3 秒还没有一帧就明确告警：这是「注册成功但 ROM 不给数据」，
+                // 与「注册被拒」是两种完全不同的修法，日志里必须分开。
+                mainHandler.postDelayed({
+                    if (poseTracking && poseSamples == 0) {
+                        diag("⚠️ 姿态传感器 3 秒内没有回调（${sensor.name}），" +
+                            "方向暂按屏幕旋转判断；请回传此日志")
+                    }
+                }, 3000L)
             } else {
-                diag("⚠️ 加速度计注册被拒，方向退化为按屏幕旋转判断")
+                diag("⚠️ ${sensor.name} 注册被拒，方向退化为按屏幕旋转判断")
             }
         } catch (t: Throwable) {
-            diag("⚠️ 注册加速度计失败: " + t.message)
+            diag("⚠️ 注册姿态传感器失败: " + t.message)
         }
     }
 
@@ -482,6 +534,16 @@ class RearCameraOverlay(
      */
     @Volatile
     private var hardFailureBackoffUntil = 0L
+
+    /**
+     * 相机遇忙的短静默截止时刻（见 [CAMERA_BUSY_BACKOFF_MS]）。
+     *
+     * 与 [hardFailureBackoffUntil] 分开是有意的：那个是「权限没了，5 分钟别试」，
+     * 这个是「相机被占着，等一会儿再看」。合成一个字段就只能取一种时长，
+     * 要么把偶发占用封 5 分钟，要么让权限缺失每 2 秒重试一次。
+     */
+    @Volatile
+    private var cameraBusyUntil = 0L
 
     /** 统一走 SafeWalkLSPHook 的日志出口（logcat + SystemUI 私有目录） */
     private fun diag(msg: String) {
@@ -559,6 +621,13 @@ class RearCameraOverlay(
             if (isShowing) hide()
             return
         }
+        // 相机遇忙的短静默期：同样是「先别重建窗口」，但只等 15 秒。
+        // 这一条就是 12:37 那个「一分钟 25 次挂载」的直接修复：
+        // 失败后不再每次 show 都 addView，而是在静默期内原地不动。
+        if (System.currentTimeMillis() < cameraBusyUntil) {
+            if (isShowing) hide()
+            return
+        }
         val target = Style(
             if (mode == MODE_SMALLWINDOW) MODE_SMALLWINDOW else MODE_FULLSCREEN,
             opacity.coerceIn(10, 100),
@@ -579,6 +648,14 @@ class RearCameraOverlay(
             screenSaturation.coerceIn(0, 100),
             PreviewOrientationPolicy.normalizeMode(rotationMode)
         )
+        // 【5.3.3】姿态监听提前到「挂窗口之前」。
+        //
+        // 5.3.1 是挂完窗口再注册（见 apply 末尾），结果第一次挂出来的窗口
+        // 必然是按 display.rotation 猜的：竖着拿、系统却报 90° 时，
+        // 窗口直接就是 845×488 的横条（真机 13:37~13:41 连续五次都是横条）。
+        // 传感器样本要几百毫秒才到，而这段空窗期正是用户第一眼看到的画面。
+        // 提前注册不改变「样本到了再改形状」的机制，只是把空窗期挪到挂窗口之前。
+        startPoseTracking()
         // 【原地快刷】只改「对比度强度 / 闪光灯联动」这类不需要重建视图的参数时，
         // 不重建窗口、不重开相机：HUD 层改样式只要 invalidate，闪光灯只要重新下发
         // 一次 repeating request。否则拖一下进度条就「画面黑一下 + 重新握手 400ms」。
@@ -1127,6 +1204,9 @@ class RearCameraOverlay(
                     failureReported = false
                     // 相机能出画面 = 之前若因策略禁用进过静默期，现在已恢复，解除它
                     hardFailureBackoffUntil = 0L
+                    // 真出画面了，说明「相机遇忙」已经过去，静默期立刻作废：
+                    // 否则用户接下来 15 秒里正常走路也不会弹窗。
+                    cameraBusyUntil = 0L
                     // 通了就把失败计数清零：下次再出问题仍然有完整的重试额度
                     retryCount = 0
                     if (!firstFrameReported) {
@@ -1398,6 +1478,10 @@ class RearCameraOverlay(
      */
     fun clearHardFailureBackoff() {
         hardFailureBackoffUntil = 0L
+        // 用户主动点预览 / 重新授权 / 拖滑块时，连「相机遇忙」的等待一起解除：
+        // 这是人的明确意图，比定时器可靠。若相机确实仍被别的应用占着，
+        // 接下来的 open 会再失败一次，重新进入静默期，不会有害。
+        cameraBusyUntil = 0L
         failureReported = false
     }
 
@@ -1462,6 +1546,9 @@ class RearCameraOverlay(
     private fun openCamera() {
         try {
             if (!isShowing) return
+            // 相机遇忙静默期内不要再发起 open：上一次刚被拒(4)，立刻再开只会再被拒，
+            // 然后触发看门狗收窗、再有下一次 show……就是那个 2 秒一轮的闪烁。
+            if (System.currentTimeMillis() < cameraBusyUntil) return
             // 已经在开 / 已经开着，都不要再发起一次。
             //
             // 以前只判断 camera != null，挡不住「第一次 open 的回调还没回来」这段
@@ -1717,6 +1804,11 @@ class RearCameraOverlay(
         if (retryCount >= MAX_CAMERA_RETRY) {
             retryCount = 0
             diag("❌ $why，已重试 $MAX_CAMERA_RETRY 次仍失败，放弃")
+            // 放弃之后必须静默一会儿。不设这段静默的话，下一次 show 会立刻重开，
+            // 又是「拒 → 收窗 → 再挂」的循环（真机 12:37 一分钟 25 次）。
+            cameraBusyUntil = System.currentTimeMillis() + CAMERA_BUSY_BACKOFF_MS
+            diag("⏸ 相机遇忙：${CAMERA_BUSY_BACKOFF_MS / 1000} 秒内不再自动拉起"
+                + "（多半是别的应用占着相机）")
             // 同 armFrameWatchdog：先隐藏再报告，回执才不会把 showing=true 发出去
             hide()
             reportFailure("相机没有返回画面")

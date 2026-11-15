@@ -95,7 +95,27 @@ public final class WalkPreviewService extends Service {
     /** 判定停下（静置超时收起）的时刻，用于「收起后冷却」防秒开死循环 */
     private long lastStopTs = 0L;
     /** 收起后冷却时长：冷却内需更强的持续判走才放行，打断「显示→收起→秒开」 */
-    private static final long STOP_COOLDOWN_MS = 5000L;
+    private static final long STOP_COOLDOWN_MS = 30_000L;
+
+    /**
+     * 【5.3.3】判停门槛的有效下限（秒）。
+     *
+     * 用户可以把「静置多久算停下」滑到 5 秒，但**步态回调本身是 10 秒一次**
+     * （`[STEP] 计步回调` 的固定周期，硬件计步 STALE 时更慢）。门槛低于回调周期，
+     * 等于每两个回调之间必然出现一段「按时间算早就该停了」的窗口：
+     *
+     * ```
+     * 13:29:56  窗口挂载
+     * 13:30:05  计步回调 walking=true（这一步之后用户站着没动）
+     * 13:30:12  静置超时 8s → 收起          ← 8s < 10s，必然触发
+     * 13:30:15  计步回调 walking=false
+     * 13:30:17  冷却 5s 到期 → 再次挂载      ← 用户看到大框「又变回来了」
+     * ```
+     *
+     * 12 秒 = 一个回调周期 + 2 秒余量。低于它的设置一律按 12 秒执行，
+     * 界面上也把滑块下限提到 12 秒（见 WalkModeActivity）。
+     */
+    private static final int MIN_STOP_SEC = 12;
     /**
      * 本服务会话的起始时刻。服务被保活重新拉起 / START_STICKY 重建时刷新，
      * 交给 [StaticStopPolicy] 区分「上一会话残留的 lastStepTs」和本会话的步，
@@ -190,7 +210,7 @@ public final class WalkPreviewService extends Service {
         @Override
         public void run() {
             long now = System.currentTimeMillis();
-            long stopMs = Math.max(5, Math.min(30,
+            long stopMs = Math.max(MIN_STOP_SEC, Math.min(30,
                     SafePrefs.getInt(sp, SafeWalkPrefKey.gaitStopSec, DEFAULT_STOP_SEC))) * 1000L;
             // 会话基线：服务被保活复活 / START_STICKY 重建时，上一会话残留的
             // lastStepTs 会让这里在刚拉起几秒就判「静置超时」把预览收掉
@@ -209,7 +229,10 @@ public final class WalkPreviewService extends Service {
                 lastStopTs = now;
                 DiagLog.log("[walk] 静置超时，判定停下 → 收起预览（静置门槛 "
                         + (stopMs / 1000) + "s）");
-                evaluateShow();
+                // 【5.3.3】这里必须直接收，不能再走 evaluateShow：
+                // 它已经不按 walking 收起了（那是为了避免「一步没踩准就闪一下」），
+                // 走它就等于判停之后窗口永远挂着。
+                hideAfterStopConfirmed();
             }
 
             // 低头提醒：仅在「已确认行走（gaitWalking）+ 亮屏 + 屏幕朝上偏水平」
@@ -642,12 +665,33 @@ public final class WalkPreviewService extends Service {
         }
         if (!SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)) return;
         if (SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)) {
-            // 自动模式：走起来才显示，停下收起
+            // 自动模式：走起来就显示。
+            //
+            // 【5.3.3】这里刻意**不**在 gaitWalking=false 时收起。
+            // evaluateShow 会被每一步回调、每次配置刷新、每次亮屏解锁调用，
+            // 而「收起」的语义应该是「确认停下」——15 秒无新步 + 12 秒显示驻留，
+            // 那套判据在 gaitTick 的 StaticStopPolicy 里，这里看不到 gaitShowTs。
+            // 旧写法一看到 false 就 hide，任何一步没踩准（硬件计步 STALE、
+            // 姿态闸门短暂关闭）都会让窗口消失一次再弹回来。真机 12:37 的
+            // 「一分钟 25 次挂载」里，即时收起贡献了其中一部分。
             if (gaitWalking) doShow();
-            else { overlay.hide(); reportPreviewState(); }
         } else {
             // 手动常显
             doShow();
+        }
+    }
+
+    /**
+     * 确认停下后的收起。
+     *
+     * 只由 gaitTick 里 StaticStopPolicy 判停之后调用：那是「真的停了」，
+     * 不是「这一秒没踩到步」。不再借道 [evaluateShow]，
+     * 因为后者已改成按 walking 只显示、不收起（见那里的注释）。
+     */
+    private void hideAfterStopConfirmed() {
+        if (overlay != null && overlay.getShowing()) {
+            overlay.hide();
+            reportPreviewState();
         }
     }
 
