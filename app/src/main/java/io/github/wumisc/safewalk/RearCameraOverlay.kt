@@ -1113,6 +1113,24 @@ class RearCameraOverlay(
     }
 
     /**
+     * 竖屏「折中填充」缩放系数（5.4.0）：保留约一半水平视野，同时把上下黑边收窄。
+     *
+     * 几何推导（buffer 488×845 竖条槽，横画幅 16:9 等比 letterbox 居中）：
+     *   · 横画幅内容进 488 宽 → 内容高 ≈ 488×9/16 ≈ 274，上下各留 ≈(845−274)/2 ≈ 285 黑边
+     *     —— 这正是当前「放大=1.00x」的大留白（调查报告 A2）。
+     *   · 以中心为支点等比放大 Z：内容高 = 274×Z；水平保留率 = 可见宽 488 / 放大后宽 488Z = 1/Z。
+     *   · Z=2.0 → 水平保留 50% 视野（少裁），上下窄边 (845−274×2)/2 ≈ 148px ≈ 17%，即折中方案。
+     *   · 对照：Z=3.08 才是「铺满裁左右」（水平只剩 32%），Z=1.0 是大留白；折中取中间 2.0。
+     *
+     * 纯函数：只按窗口形状门控（确为竖条才生效），缩放值固定为折中常数，
+     * 不读取 HAL / 传感器等运行时状态，不做猜测。16:9 是相机横画幅输出的实证比例。
+     */
+    private fun portraitCompromiseZoom(boxW: Int, boxH: Int): Float {
+        if (boxH <= boxW) return 1f   // 防御：横屏不会走到这里，保持 1:1
+        return 2.0f
+    }
+
+    /**
      * 取景（[Style.framingPct]）：只保留画面「靠近脚下」的那一段，放大铺满。
      *
      * 在 5.3.6 之前这一步是混在旋转矩阵里算的，现在旋转归 View，它退化成一次
@@ -1129,6 +1147,17 @@ class RearCameraOverlay(
     private fun applyFramingZoom(view: TextureView, boxW: Int, boxH: Int, deg: Int) {
         val f = style.framingPct.coerceIn(0, 100)
         if (f <= 0) {
+            // 【5.4.0 折中填充】竖条窗口 + 未主动取景：横画幅内容等比放大 Z，以中心为支点，
+            // 水平保留约 50% 视野、上下黑边收窄到约 17%（几何推导见 portraitCompromiseZoom）。
+            // 横屏（boxW >= boxH）保持原 1:1；f>0 的主动取景分支在下方，一字未动。
+            if (boxH > boxW) {
+                val z = portraitCompromiseZoom(boxW, boxH)
+                view.pivotX = boxW / 2f
+                view.pivotY = boxH / 2f
+                view.scaleX = z
+                view.scaleY = z
+                return
+            }
             view.scaleX = 1f
             view.scaleY = 1f
             view.pivotX = boxW / 2f

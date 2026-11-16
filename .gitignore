@@ -26,3 +26,4 @@ signing.properties
 # 日志与临时产物
 *.log
 *.zip
+.agent-runs/

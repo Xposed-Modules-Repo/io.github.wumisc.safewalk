@@ -812,7 +812,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 每 15 秒最多打一条，避免每步一行把日志刷爆
         if (now - lastStepLogTs > 15_000L) {
             lastStepLogTs = now
-            diag("🚶 计步中：窗口 ${steps.size}/${stepThreshold()} 步，状态=$state，来源=${if (fallbackActive) "加速度计" else "系统计步器"}")
+            diag("[Hook] 🚶 计步中：窗口 ${steps.size}/${stepThreshold()} 步，状态=$state，来源=${if (fallbackActive) "加速度计" else "系统计步器"}")
         }
     }
 
@@ -1043,7 +1043,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             if (now - lastSummaryTs > 120_000L) {
                 lastSummaryTs = now
                 val gap = if (lastStepTs == 0L) "从未" else "${(now - lastStepTs) / 1000}s 前"
-                diag("📊 状态=$state 窗口步数=${steps.size}/${stepThreshold()} 上一步=$gap 计步来源=${stepSource()} 累计=$stepEventCount")
+                diag("📊 状态=$state 窗口步数=${steps.size}/${stepThreshold()} 上一步(Hook侧)=$gap 计步来源=${stepSource()} 累计=$stepEventCount（Hook侧时钟，与App判停不同源）")
             }
 
             // 静置判定：一段时间没有新步 → 认为停下了。

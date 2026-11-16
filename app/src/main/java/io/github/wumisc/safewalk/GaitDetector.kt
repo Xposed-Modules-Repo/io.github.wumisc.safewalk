@@ -140,6 +140,14 @@ class GaitDetector {
     private var lastSampleTs = 0L
 
     private var lastPeakTime = 0L
+    /**
+     * 【5.3.8 审查返工】判停时钟数据源：最近一次「步频窗口内合格步峰」的单调递增时间戳。
+     *
+     * 与 lastPeakTime 分开维护：后者在「越阈但步频落窗口外」的兜底分支也会被顶新，
+     * 抖动 / 慢走会借此刷新时钟；本字段只在合格步峰入队时推进，静止 / 无峰 / 平放抖动
+     * 一律冻结。它是只读观察值，不参与任何步态判定，判停动作本身也不触碰它。
+     */
+    private var lastStepActivityTs = 0L
     /** 上一帧是否已经在阈值之上：只认「上穿」的那一刻，避免一个波峰算成好几步 */
     private var aboveThreshold = false
     private val peakIntervals = mutableListOf<Long>()
@@ -302,6 +310,11 @@ class GaitDetector {
                                     peakAxes.removeAt(0)
                                 }
                                 lastPeakTime = now
+                                // 【5.3.8 审查返工】判停时钟：本帧是「步频窗口内的合格步峰」，
+                                // 记下它的时间戳。刻意放在 confirmSteps 门槛判断之前 —— 门槛设成 8
+                                // 攒不满也照常推进；静止 / 无峰 / 平放抖动走不到这里，时钟自然冻结。
+                                // 越阈但频率落窗口外的兜底峰（下方 lastPeakTime = now）不写这里。
+                                lastStepActivityTs = now
                                 // 有运动，重置静置计时器
                                 staticDetectTimerStart = null
                                 gaitStateCallback?.onLongStaticDetected(false)
@@ -342,6 +355,22 @@ class GaitDetector {
 
     /** 当前已累计的合格步数（诊断日志用，Java 侧读取） */
     fun confirmedStepCount(): Int = peakIntervals.size
+
+    /**
+     * 【5.3.8 审查返工】判停时钟数据源：最近一次「步频窗口内合格步峰」的时间戳（只读，单调递增）。
+     *
+     * 三条语义，供服务层 StaticStopPolicy 的判停时钟使用：
+     * 1. 走路时每个合格步峰都会把它推进到该帧时间；推进点在 confirmSteps 门槛判断之前，
+     *    因此门槛设成 8 攒不满（步流走了却不合格判停步）也照常推进，判停不会被误关掉。
+     * 2. 静止 / 无峰 / 平放抖动时冻结：越阈但步频落窗口外的兜底峰、纯静止帧都不写它，
+     *    所以真停下后时钟不再被伪增量刷成 now，静置超时能把窗口正常收起。
+     * 3. 与 confirmedStepCount() / qualified / confirmSteps 门槛、以及服务层的
+     *    lastAccelCountSeen 复位完全无关：它只认 GaitDetector 内部的合格步峰，
+     *    不看采集层窗口大小，也不被任何复位分支伪造增量。
+     *
+     * 只在 reset() 里归零；判停动作本身不触碰它。纯观察值，不改动任何既有判定逻辑。
+     */
+    fun stepActivityTs(): Long = lastStepActivityTs
 
     /**
      * 主轴稳定性：最近 confirmSteps 个合格步里，同一个轴的占比 ≥70% 才算稳定。
@@ -397,6 +426,7 @@ class GaitDetector {
         peakIntervals.clear()
         peakAxes.clear()
         lastPeakTime = 0L
+        lastStepActivityTs = 0L
         aboveThreshold = false
         envelope = 0f
         lastSampleTs = 0L

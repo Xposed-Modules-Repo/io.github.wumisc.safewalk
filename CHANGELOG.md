@@ -1,5 +1,138 @@
 # 更新日志
 
+## [5.4.0] - 2026-11-16 稳定版：竖屏折中填充收窄黑边（累积发布 5.3.8 / 5.3.9）
+
+### 现象
+
+竖屏小窗方向已正，但后摄横装画幅（16:9）塞进竖条窗（比例约 0.58）后按 1:1 塞入，
+画面上下留白明显。折中方案：竖屏画面层中心放大 2.0x，水平保留约一半路面视野、
+上下留约 17% 窄边，既不再是 5.3.7 的大留白，也不像硬铺满那样把左右裁掉三分之二。
+
+### 范围
+
+本版为稳定发布，累积提交此前未上线的三版修复：
+- 5.3.8（63）自动跟随判停改用 `GaitDetector.stepActivityTs()` 时钟，修掉伪增量导致判停被关掉的问题。
+- 5.3.9（64）开关由常显切到自动时新增一次性显示权交接 `handoffToAutoMode()`，收起常显窗并复位步态状态，以步态为准显隐。
+- 5.4.0（65）竖屏折中填充：仅改 `applyFramingZoom()` 的 `f<=0` 竖屏分支，引入纯函数 `portraitCompromiseZoom()`。
+
+**方向层、横屏路径、手动取景逻辑、相机 buffer 策略均未改动**（已逐行核实）。
+
+### 测试结论
+
+全量 JVM 单测 **449/449 全过**（43 类，0 失败 / 0 错误 / 0 跳过）。新增
+`PortraitCompromiseZoomTest` 17 例锁住折中缩放真值表；`AutoModeHandoffContractTest` 锁住交接契约。
+APK：`versionCode 65 / versionName 5.4.0`，SHA-256 `24bbf6554f98c28a75f59a2a8d562dda8d622fb81e6cf06f5180a38223cd2202`。
+真机填充比例与自动跟随显隐待首装确认（沙箱无法判定几何画质与步态时序）。
+
+## [5.3.9] - 2026-11-16 自动跟随步行：开关切到「开」后常显窗不消失、步态显示权拿不到
+
+### 现象
+
+反复切换「自动跟随步行」开关，切到「关」时长显小窗正常挂载；再切到「开」后，
+那扇常显小窗一直挂着不消失，步态监听虽注册成功，却不进入走动显示 / 停下收起流程
+（真机日志 2026-11-16 00:28~00:31：切到开后近两分钟无任何窗口挂载 / 收起事件）。
+
+### 根因
+
+模式切换缺少一次性的显示权交接。三个写 `rearCamAuto` 的入口切到「开」时只发
+`ACTION_SHOW`，服务端 `applyFromConfig → startGait()` 把 `gaitWalking` 复位为 false，
+而自动模式下 `evaluateShow` 见 false 时刻意既不显示也不收起（5.3.3 设计），
+`gaitWalking=false` 时判停又永不触发收起——于是切换前的常显窗无人接管、永久悬挂；
+叠加 `lastStopTs` 收起冷却未清，切到开后短时间内即使走了也不显示。
+
+### 修法
+
+在服务端 `applyFromConfig` 检测 `rearCamAuto` 由 false→true 的跃变（非冷启动首帧），
+执行一次性交接：收起常显窗 + 复位 `gaitShowTs/lastStepTs/walkingStreakStartTs`
++ 清零 `lastStopTs` 冷却 + 去重 + 日志自证 + 刷新磁贴。三个入口经 `ACTION_SHOW`
+/ 裸启动全部汇聚 `applyFromConfig`，一处覆盖开关页与磁贴两个坏入口。
+未在 `evaluateShow` 自动分支加 else-hide（严守 5.3.3，避免逐帧误收闪窗）。
+
+**与方向 / 旋转无关**：本轮未改动方向 / 姿态 / 窗口任何代码，未触碰 5.3.8 判停成果。
+
+### 测试结论
+
+`AutoModeHandoffContractTest` 13 例锁住 false→true 跃变真值表与清场契约；
+全量单测 449/449 全过。随 5.4.0(65) 稳定版首次上真机，显隐时序待首装确认。
+
+## [5.3.8] - 2026-11-15 自动跟随步行：走路时被误判停下收起
+
+### 现象
+
+开着「自动跟随步行」正常走路，日志里 `walking=true`、累计步数还在涨，却在第 12 秒
+被一行「静置超时，判定停下 → 收起预览」把预览收掉，走一路收一路。真机日志
+（2026-11-15 16:28:24~16:28:47）：
+
+```
+16:28:25 [STEP] 连续合格步 5/8 最近10s出步=0 ... 姿态=UPRIGHT | walking=true
+16:28:35 [STEP] 连续合格步 2/8 最近10s出步=3 ... 姿态=TILTED | walking=true
+16:28:45 [STEP] 连续合格步 3/8 最近10s出步=0 ... 姿态=TILTED | walking=true
+16:28:46 [walk] 静置超时，判定停下 → 收起预览（静置门槛 12s）
+16:28:47 📊 窗口步数=35/50 上一步=7s 前 计步来源=加速度计兜底 累计=86
+```
+
+矛盾点很刺眼：`上一步=7s 前` 明明小于 `静置门槛 12s`，却判了停。
+
+### 根因
+
+判停时钟 `lastStepTs` 绑错了对象：它只在「凑够 `gaitConfirmSteps` 个合格步」
+（`qualified`）时才刷新，本质是防误触门槛的产物，而不是「最近一次有没有在走」。
+本机把确认步数设成了 8，而 2.5s 峰值窗口物理上最多约 5 个峰，永远攒不满 8 步
+→ `qualified` 恒 false → `lastStepTs` 冻结在激活时刻 → 走路 12s 后
+`now - lastStepTs > stopMs` 成立，被误判停下收起。
+
+日志里的 `上一步=7s 前` 来自 SystemUI 进程的 Hook，是**另一套**计步器和另一份
+`lastStepTs`（Hook 侧 `GaitDetector.confirmSteps` 默认 5，一直在出步），两进程日志汇进同一份 `diag.log`；
+App 判停根本不读它。所以「7 < 12 却判停」不是同一把尺子的比较，不构成矛盾。
+
+**与横屏 / 竖屏适配无关，已证伪**：判停链路只读 `lastStepTs / sessionStartTs /
+gaitShowTs / gaitWalking / stopMs`，`StaticStopPolicy` 是零 `android.*` 依赖的纯逻辑；
+方向 / 姿态 / 窗口代码（`RearCameraOverlay` / `DevicePosePolicy` /
+`PreviewOrientationPolicy`）与判停变量零数据依赖。本轮方向代码一行未动。
+
+### 修法：把判停时钟与合格步门槛解耦
+
+| 编号 | 改动 |
+|---|---|
+| R1 | `StaticStopPolicy.shouldStop` 末尾新增 `observedStepTs: Long = 0L`（保留 `@JvmOverloads`，兼容既有 8 参调用与单测）；函数内算 `effectiveTs = maxOf(lastStepTs, observedStepTs)`，4 处读 `lastStepTs` 的判据改用 `effectiveTs`。walking 闸门 / 显示驻留 / 会话宽限语义一字不改 |
+| R2 | `WalkPreviewService` 新增 `lastObservedStepTs`，在 `recordAccelStep(ts)`（仅在有真实步活动时调用、已过 `feedAcc` 的 LAY_FLAT 门控）里刷新；判停调用补传第 9 个实参；`startGait` / `stopGait` 复位；判停后不清零。用「有效时钟」而非放宽激活闸门，避免复现历史上「床上/沙发抖动弹窗」 |
+| R3 | 判停日志改打六元组 + 生效时钟 + 横竖屏，`getResources()` 用 try/catch 兜底，下一轮真机可一眼定死 |
+| R4 | Hook 侧日志文案消歧：`📊` 行的「上一步」改「上一步(Hook侧)」并注明与 App 判停不同源；`🚶 计步中` 加 `[Hook]` 前缀。纯文案，零行为改动 |
+
+**调研 8 个开源项目后决定不引入任何第三方库**：Hook 跑在 SystemUI 进程、多数 ROM
+上「传感器注册成功但永不回调」，跨进程同步步事件需要新增通道、只会引入新噪声；
+而本次是一处有单测支撑的纯逻辑时钟解耦，不需要外部依赖。不新增依赖、不新增文件。
+
+### 审查返工：判停时钟改用合格步峰时间戳（5.3.8 内修正，不升版）
+
+审查员 Ray 查出上表 R2 的 `lastObservedStepTs` 引入一处 BLOCKER 回归：该字段在
+`recordAccelStep(ts)` 里刷新，而后者的调用条件 `accelCnt > lastAccelCountSeen &&
+accelCnt > 0` 会被服务层「步流中断 3s 复位 `lastAccelCountSeen=0`」与
+`GaitDetector.peakIntervals` 的静止残留（2~5 个峰、只有出现新峰且距上峰 >2.5s 才清空）
+拼成**每帧伪增量循环** —— 静止 / 平放时每帧把观测步时钟刷成 `now`，
+`effectiveTs ≈ now` → `shouldStop` 恒 false → **判停被彻底关掉、真停下窗口永远收不起来**。
+这个循环走路期间同样在跑，所以「走路不再被误收」只是「判停被关掉」的假象。
+全量单测 / lint / 构建都测不到：它要 GaitDetector 状态机 × 服务层时序 × 传感器回调
+三者联动，纯 JVM 单测与静态检查都覆盖不到。
+
+**修法**：删掉 `lastObservedStepTs` 全链路（字段、`recordAccelStep` 刷新、
+`startGait` / `stopGait` 复位），判停第 9 参改传 `GaitDetector.stepActivityTs()` ——
+最近一次「步频窗口内的真实合格步峰」的单调递增时间戳。它只在合格步峰入队时推进，
+且推进点在 `confirmSteps` 门槛判断之前（门槛设成 8、2.5s 窗口攒不满也照常推进）；
+静止 / 无峰 / 平放抖动走不到那个分支，越阈但步频落窗口外的兜底峰也不写它，时钟于是
+天然冻结。`StaticStopPolicy` 的 9 参 `shouldStop` 一行未改，只换了第 9 个实参的数据源；
+`accelStepTs` 队列与 `lastAccelCountSeen` 复位保持原样（它们服务 `WalkConfirmPolicy`
+的形态判定，伪增量对它们是既有行为，本轮不碰，只是不再拿它当判停时钟）。
+
+**两个不变量同时成立**：走路时每个合格步峰持续推进判停时钟 → **不误收**；
+真停下 / 静止时时钟冻结、静置超时后 `shouldStop` 返回 true → **能正常收起**。
+版本仍为 63 / 5.3.8：该版本尚未发布、未交付用户，修复并入不额外升版。
+
+### 测试与验证
+
+全量单测 / lint / 构建均通过；真机端到端「走 → 停 → 继续走」仍待验证
+（返工后由验证阶段重跑复验，以新报告为准）。
+
 ## [5.3.7] - 2026-11-15 竖屏回到没动路况预览之前，只保留横屏适配
 
 用户的判断比我这一路的推导都清楚：**竖屏以前是好的，别动它。** 5.3.0 为了修横屏

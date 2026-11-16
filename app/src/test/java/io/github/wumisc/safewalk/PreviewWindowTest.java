@@ -283,8 +283,9 @@ public class PreviewWindowTest {
      * 5.3.6 让竖条窗口也转 90°，本想给竖屏一个「正立且完整」的画面，真机上却
      * 变成「画面不完整」。用户的判断很直接：竖屏以前是好的，别动；要改只改横屏。
      *
-     * 所以这条测试锁住：竖条窗口下，哪怕方向算出来是 90°，旋转层也必须保持
-     * 「与窗口同尺寸、rotation=0、缩放=1」—— 也就是完全等于 4.8.0 那条铺满路径。
+     * 所以这条测试锁住：竖条窗口下，哪怕方向算出来是 90°，旋转层仍必须与窗口
+     * 同尺寸、rotation=0（方向不回退）；画面层在 5.4.0 起按折中方案中心放大 2.0x
+     * 收窄上下黑边，不再完全等于 4.8.0 的 scale=1 铺满路径。
      */
     @Test
     public void portraitWindowIsNeverRotated() throws Exception {
@@ -307,9 +308,10 @@ public class PreviewWindowTest {
         assertEquals("旋转层高 = 窗口高", recorder.params.height, lp.height);
         assertTrue("小窗在竖屏下必须是竖条", recorder.params.height > recorder.params.width);
 
-        // 画面层不能有缩放残渣：4.8.0 就是 scale=1 直接铺满
+        // 【5.4.0】竖屏折中填充：横画幅进竖条槽，中心放大 Z=2.0 保留约 50% 视野、
+        // 上下留约 17% 窄边（见 portraitCompromiseZoom 几何推导）。不再是 4.8.0 的 scale=1。
         View texture = recorder.renderLayer();
-        assertEquals(1.0f, texture.getScaleX(), 0.001f);
-        assertEquals(1.0f, texture.getScaleY(), 0.001f);
+        assertEquals(2.0f, texture.getScaleX(), 0.001f);
+        assertEquals(2.0f, texture.getScaleY(), 0.001f);
     }
 }

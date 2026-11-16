@@ -25,6 +25,25 @@ package io.github.wumisc.safewalk
  *
  * 防误触判定本身（硬件计步确认 / 姿态节律闸门）**不受影响**：这里只决定
  * 「已经显示着的预览什么时候收起」，不决定「要不要显示」。
+ *
+ * ## 5.3.8 判停时钟解耦（合格步门槛 ≠ 步活动）
+ *
+ * `shouldStop` 的第一个入参 `lastStepTs` 是「凑够 `gaitConfirmSteps` 个合格步」时
+ * 才刷新的时间戳，会被防误触门槛卡住：真机把确认步数设成 8，而 2.5s 峰值窗口
+ * 物理上最多约 5 个峰，永远攒不满 8 步 → `qualified` 恒 false → `lastStepTs`
+ * 冻结在激活时刻。走路 12s 后 `now - lastStepTs > stopMs` 成立，预览被误判停下收起。
+ *
+ * 真机日志 2026-11-15（走路中被收起）：
+ *   16:28:25 [STEP] 连续合格步 5/8 最近10s出步=0 ... walking=true
+ *   16:28:35 [STEP] 连续合格步 2/8 最近10s出步=3 ... walking=true
+ *   16:28:45 [STEP] 连续合格步 3/8 最近10s出步=0 ... walking=true
+ *   16:28:46 [walk] 静置超时，判定停下 → 收起预览（静置门槛 12s）
+ *
+ * 因此新增入参 `observedStepTs`：最近一次「观测到步活动」的时间戳（调用方在
+ * `recordAccelStep` 里刷新，已过 `GaitDetector.feedAcc` 的 LAY_FLAT 门控，不引入
+ * 新算法）。判停依据取 `effectiveTs = maxOf(lastStepTs, observedStepTs)` —— 二者较新者。
+ * 合格步门槛照旧只管激活，不再兼职「最近有没有在走」的时钟；walking 闸门、
+ * 显示驻留 `showStartedTs`、会话宽限 `graceMs` 的语义一个字不改。
  */
 object StaticStopPolicy {
 
@@ -63,27 +82,42 @@ object StaticStopPolicy {
          * 却每秒判一次、每次写一行日志。用户看着像「软件在反复开关小窗」，
          * 实际只是一条毫无意义的判定在空转，还把 512KB 日志文件冲掉一半。
          */
-        walking: Boolean = true
+        walking: Boolean = true,
+        /**
+         * 【5.3.8】最近一次「观测到真实步活动」的时间戳（0 = 尚无观测步）。
+         *
+         * 与 `lastStepTs` 解耦：后者绑在「凑够合格步」的防误触门槛上，门槛调高
+         * 时会永久冻结，导致走路被误判停下；本参数由调用方在 `recordAccelStep`
+         * 里刷新，代表「最近一次确实有步活动」。判停依据取二者较新者
+         * [effectiveTs]，只影响判停时钟，不触碰任何激活闸门。
+         *
+         * 置于末尾并带默认值：兼容既有 8 参调用与 `StaticStopPolicyTest`。
+         */
+        observedStepTs: Long = 0L
     ): Boolean {
+        // 【5.3.8】判停时钟 = 合格步时间戳与「最近观测到步活动」时间戳的较新者。
+        // lastStepTs 会被 confirmSteps 门槛卡住而冻结；observedStepTs 只要有真实步
+        // 活动就会前进。取 maxOf 后，走路时时钟持续推进，不再被误判成静置超时。
+        val effectiveTs = maxOf(lastStepTs, observedStepTs)
         // 没在走：没有「停下」这回事，直接不判停
         if (!walking) return false
-        // 从未有过合格步：不判停（与旧行为一致，避免每秒刷一条收起日志）
-        if (lastStepTs == 0L) return false
+        // 从未有过任何步活动（合格步/观测步都没有）：不判停，避免每秒刷一条收起日志
+        if (effectiveTs == 0L) return false
         // 时钟回拨：一律不判停
-        if (now < lastStepTs || (sessionStartTs > 0L && now < sessionStartTs)) return false
+        if (now < effectiveTs || (sessionStartTs > 0L && now < sessionStartTs)) return false
         // 刚显示出来的画面不给收：这是「闪一下就消失」的唯一来源
         if (showStartedTs > 0L && now >= showStartedTs && now - showStartedTs < minShowMs) {
             return false
         }
 
-        if (sessionStartTs > 0L && lastStepTs < sessionStartTs) {
+        if (sessionStartTs > 0L && effectiveTs < sessionStartTs) {
             // 旧会话残留时间戳：作废。本会话还没走起来，给宽限；
             // 宽限过后允许收起一次空预览，避免复活后永远挂着一个没有画面的窗。
             return now - sessionStartTs > graceMs
         }
         // 刚进入本会话不久：宽限期内不收
         if (sessionStartTs > 0L && now - sessionStartTs < graceMs) return false
-        // 正常静置判停
-        return now - lastStepTs > stopMs
+        // 正常静置判停（用生效时钟：合格步时钟被门槛冻结时，靠观测步时钟续命）
+        return now - effectiveTs > stopMs
     }
 }

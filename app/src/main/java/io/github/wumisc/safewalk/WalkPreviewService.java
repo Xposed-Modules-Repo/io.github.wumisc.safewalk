@@ -96,6 +96,8 @@ public final class WalkPreviewService extends Service {
     private long lastStopTs = 0L;
     /** 收起后冷却时长：冷却内需更强的持续判走才放行，打断「显示→收起→秒开」 */
     private static final long STOP_COOLDOWN_MS = 30_000L;
+    /** 【5.3.9】上一次生效的「自动跟随步行」开关值；null=服务冷启动尚未定，用于识别 false→true 跃变 */
+    private Boolean lastAppliedAuto = null;
 
     /**
      * 【5.3.3】判停门槛的有效下限（秒）。
@@ -220,15 +222,42 @@ public final class WalkPreviewService extends Service {
                     && SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
                     && StaticStopPolicy.shouldStop(lastStepTs, sessionStartTs, now, stopMs,
                             StaticStopPolicy.SESSION_GRACE_MS, gaitShowTs,
-                            StaticStopPolicy.DEFAULT_MIN_SHOW_MS, gaitWalking)) {
+                            StaticStopPolicy.DEFAULT_MIN_SHOW_MS, gaitWalking,
+                            gait != null ? gait.stepActivityTs() : 0L)) {
+                // 【5.3.8】判停诊断快照：下面会把 lastStepTs/gaitShowTs/gaitWalking 复位，
+                // 先留住「决策那一刻」的值，六元组才不会全变成复位后的 0 / false。
+                // 【审查返工 · M-2】观测步时钟也在此一次性快照，日志改用该快照，
+                // 禁止再直接读实时字段，同一行日志的时钟取值才自洽。
+                final long diagObservedStepTs = gait != null ? gait.stepActivityTs() : 0L;
+                // effectiveTs 与 StaticStopPolicy 一致，取两个时钟的较新者。
+                final long diagEffectiveTs = Math.max(lastStepTs, gait != null ? gait.stepActivityTs() : 0L);
+                final long diagQualifiedStepTs = lastStepTs;
+                final long diagShowTs = gaitShowTs;
+                final boolean diagWalking = gaitWalking;   // 能进本分支必然为 true
                 gaitWalking = false;
                 // 清零 lastStepTs：否则「超过 10s 无步」这个条件会一直成立，
                 // 每秒 tick 都重复打一条「判定停下」日志刷屏。下次真走会重新置位。
+                // 【审查返工】判停时钟来自 GaitDetector 的合格步峰时间戳，只有 gait.reset()
+                // 才归零；判停动作本身不触碰它，下次激活由 maxOf 取更新值。
                 lastStepTs = 0L;
                 gaitShowTs = 0L;
                 lastStopTs = now;
-                DiagLog.log("[walk] 静置超时，判定停下 → 收起预览（静置门槛 "
-                        + (stopMs / 1000) + "s）");
+                // 六元组 + 生效时钟 + 横竖屏：字段名保持一致便于下轮真机 grep 定位。
+                // getResources() 用 try/catch 兜底；整段吞异常，日志绝不影响判停与收起。
+                try {
+                    boolean portrait = getResources().getConfiguration().orientation
+                            == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+                    DiagLog.log("[walk] 静置超时判停 | 生效上一步="
+                            + ((now - diagEffectiveTs) / 1000) + "s前"
+                            + " 合格步时钟=" + diagQualifiedStepTs
+                            + " 观测步时钟=" + diagObservedStepTs
+                            + " 显示驻留=" + ((now - diagShowTs) / 1000) + "s前"
+                            + " 门槛=" + (stopMs / 1000) + "s"
+                            + " walking=" + diagWalking
+                            + " 竖屏=" + portrait + " | 收起预览");
+                } catch (Throwable ignored) {
+                    // 日志取值/输出异常一律吞掉：判停已决策，收起与 1s 巡检循环照常进行
+                }
                 // 【5.3.3】这里必须直接收，不能再走 evaluateShow：
                 // 它已经不按 walking 收起了（那是为了避免「一步没踩准就闪一下」），
                 // 走它就等于判停之后窗口永远挂着。
@@ -629,12 +658,47 @@ public final class WalkPreviewService extends Service {
             return;
         }
         // 自动跟随步行：开步态监听；手动常显：关监听（不需要检测走停）
-        if (SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)) {
+        boolean newAuto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false);
+        // 【5.3.9】自动跟随步行 false→true 跃变：一次性显示权交接。
+        // 三个入口都汇聚 applyFromConfig，这里一处覆盖；冷启动首帧 lastAppliedAuto==null 不交接
+        // （无旧常显窗可收，也不该无谓清冷却）。高频 ACTION_SHOW 因 lastAppliedAuto 已置 true 不会重复。
+        if (lastAppliedAuto != null && !lastAppliedAuto && newAuto) {
+            handoffToAutoMode();
+        }
+        lastAppliedAuto = newAuto;
+        if (newAuto) {
             startGait();
         } else {
             stopGait();
         }
         evaluateShow();
+    }
+
+    /**
+     * 【5.3.9】自动跟随步行 false→true 的一次性显示权交接。
+     * 只做「清场交接」：收起切换前的常显窗 + 复位判停 / 显示基线与收起冷却，
+     * 让后续 startGait() + evaluateShow() 从干净状态开始。
+     * 刻意不在这里调 startGait() / evaluateShow() / doShow()：步态未激活时 evaluateShow
+     * 不显示正是期望，等真实步态命中由 onSensorChanged 激活分支经 evaluateShow 拉起。
+     */
+    private void handoffToAutoMode() {
+        // 1. 收起切换前的常显窗，夺回显示权（本 bug 核心：旧窗因 gaitWalking=false 永不判停而永久悬挂）
+        if (overlay != null && overlay.getShowing()) {
+            overlay.hide();
+            reportPreviewState();
+        }
+        // 2. 复位显示驻留基线，让步态从干净时刻开始计时
+        gaitShowTs = 0L;
+        // 3. 复位合格步时钟，即使 startGait 幂等 return 也保证干净
+        lastStepTs = 0L;
+        // 4. 复位连续步行起点
+        walkingStreakStartTs = 0L;
+        // 5. 解除 30s 收起冷却，否则切到开后短时间走了也不显示
+        lastStopTs = 0L;
+        // 6. 真机 grep 自证：交接确实发生
+        DiagLog.log("[walk] 自动模式交接 | 收起常显窗 → 显示权交步态 | 已清 gaitShowTs/lastStepTs/lastStopTs，等真实步态拉起");
+        // 7. 保持磁贴 UI 一致
+        WalkTileService.refresh(this);
     }
 
     /**
