@@ -16,13 +16,13 @@ import android.service.quicksettings.TileService
  * 行走模式有两个独立配置：
  *  - `enableRearCamera`：路况预览总开关（有画面 / 没画面）
  *  - `rearCamAuto`：自动跟随步行（走起来自动显示、停下收起；关 = 常显）
- * 磁贴管的是**自动跟随步行**：点亮 = 走起来才弹小窗，再点 = 关掉自动跟随。
- * 所以点亮时两个配置都要写成 true（没有总开关就没有画面），熄灭时两个都写 false ——
- * 只把 auto 写成 false 会留下「总开关还是开、档位是常显」的状态，下次开机
- * `AutoStartActivity` 一启动服务就会常显小窗，等于关不干净。
+ * 磁贴管的是**自动跟随步行**，和 App 里那个 swAuto 开关同一个语义：
+ * 点亮 = 开自动跟随并拉起预览（两个配置都要写成 true，没有总开关就没有画面）；
+ * 熄灭 = 只关自动跟随（rearCamAuto=false），总开关不动、服务不停，
+ * 画面转为常显继续留在屏幕上，跟 App 内关掉「自动跟随步行」的表现完全一致。
  *
  * 【为什么关不需要中转页，开需要】
- * 关：写配置 + 发 STOP 给服务即可，不启动任何组件。
+ * 关：写配置 + 发 SHOW 给服务即可（服务据此停掉步态监听、画面转常显），不启动任何组件。
  * 开：如果服务已在跑（原本是常显档），只改配置 + 发 SHOW，不用中转页；
  * 如果服务没跑，`WalkPreviewService` 是 `camera` 类型前台服务，QS 面板展开时
  * 应用在后台，Android 14+ 直接 `startForegroundService` 会抛
@@ -75,27 +75,31 @@ class WalkTileService : TileService() {
         refreshTile()
     }
 
-    /** 关：自动跟随 + 路况预览一起关，服务停止。全程不需要可见界面。 */
+    /** 关：只关自动跟随（rearCamAuto=false），画面转常显、服务继续跑；不动总开关。全程不需要可见界面。 */
     private fun turnOff() {
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
         sp.edit()
-            .putBoolean(SafeWalkPrefKey.enableRearCamera, false)
             .putBoolean(SafeWalkPrefKey.rearCamAuto, false)
             .commit()
         SafeWalkConfig.exportConfig(this)
-        WalkPreviewService.send(this, WalkPreviewService.ACTION_STOP, null)
-        DiagLog.log("[tile] 磁贴 → 关闭自动跟随步行（同时停掉预览服务）")
-        toast("已关闭自动跟随步行")
+        WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, null)
+        DiagLog.log("[tile] 磁贴 → 关闭自动跟随（画面转常显，服务继续运行）")
+        toast("已关闭自动跟随（画面保持常显）")
     }
 
     /**
-     * 开：优先走「服务已在跑」的轻量路径，只切档位、不闪中转页。
+     * 开：开自动跟随并拉起预览，两个配置都写成 true（没有总开关就没有画面）。
+     * 优先走「服务已在跑」的轻量路径，只切档位、不闪中转页；
      * 服务没跑才需要可见 Activity 去拉起 camera 前台服务。
      */
     private fun turnOn(walkOn: Boolean) {
         if (walkOn && WalkPreviewService.isAlive()) {
             val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
-            sp.edit().putBoolean(SafeWalkPrefKey.rearCamAuto, true).commit()
+            sp.edit()
+                // 防历史残留：服务在跑但 enableRearCamera 可能被别处写过 false
+                .putBoolean(SafeWalkPrefKey.enableRearCamera, true)
+                .putBoolean(SafeWalkPrefKey.rearCamAuto, true)
+                .commit()
             SafeWalkConfig.exportConfig(this)
             WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, null)
             DiagLog.log("[tile] 磁贴 → 服务已在跑，切到自动跟随档（走起来显示/停下收起）")

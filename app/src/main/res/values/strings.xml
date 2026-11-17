@@ -14,4 +14,13 @@
     <string name="a11y_service_desc">可选。开启后本应用只读取当前前台应用的包名，在打开相机 / 录像 / 视频通话类应用时自动收起角落小窗，避免遮挡取景或与相机抢占摄像头；不读取任何屏幕文字，不联网上传。</string>
     <!-- 控制中心磁贴：下拉通知栏 / 控制中心一键开关「自动跟随步行」 -->
     <string name="tile_walk_label">自动跟随</string>
+
+    <!-- 5.4.15 手动方向：三组新选择的标题与说明。
+         「横放/竖放」= 窗口框横条/竖条，不是画面朝向；后摄方向才是画面最终朝向。 -->
+    <string name="orient_land_title">横屏窗口形状</string>
+    <string name="orient_land_hint">系统横着拿时，小窗窗口框做成横条还是竖条。「跟随系统」保持现状；这只是窗口框形状，画面朝哪边请到「后摄转正方向」里选。</string>
+    <string name="orient_port_title">竖屏窗口形状</string>
+    <string name="orient_port_hint">系统竖着拿时，小窗窗口框做成横条还是竖条。注意竖条窗口的画面永远不旋转，这是写死的规则。</string>
+    <string name="orient_facing_title">后摄转正方向</string>
+    <string name="orient_facing_hint">直接指定画面最终朝哪边，目测哪边朝上就选哪边。只在横条小窗生效；竖条窗口画面恒不转。选「自动」恢复原来的自动推断。</string>
 </resources>

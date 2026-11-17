@@ -266,7 +266,7 @@ public class PortraitCompromiseZoomTest {
     public void testCombo1PortraitFZeroUsesCompromise() {
         String nonActive = nonActivePart();
         assertTrue("组合1 竖屏+f=0：须有 boxH>boxW 门控 + 折中调用 + scale=z（中心支点）",
-                nonActive.contains("if (boxH > boxW)")
+                nonActive.contains("if (!landscapeWindow && boxH > boxW)")
                         && nonActive.contains("val z = portraitCompromiseZoom(boxW, boxH)")
                         && nonActive.contains("view.scaleX = z")
                         && nonActive.contains("view.scaleY = z")
@@ -290,7 +290,7 @@ public class PortraitCompromiseZoomTest {
     public void testCombo3LandscapeFZeroStaysOneToOne() {
         String nonActive = nonActivePart();
         assertTrue("组合3 横屏+f=0：boxH>boxW 为假，必须落到 scale=1f 的原 1:1 分支",
-                nonActive.contains("if (boxH > boxW)")
+                nonActive.contains("if (!landscapeWindow && boxH > boxW)")
                         && nonActive.contains("view.scaleX = 1f")
                         && nonActive.contains("view.scaleY = 1f"));
     }

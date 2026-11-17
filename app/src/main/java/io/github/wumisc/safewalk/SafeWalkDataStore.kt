@@ -327,6 +327,33 @@ object SafeWalkPrefKey {
      */
     const val previewRotationMode = "previewRotationMode"
 
+    // ==================================================================================
+    // 【5.4.15 手动方向】三项用户显式选择，默认一律 "auto"（未配置 = 不覆盖，行为与 5.4.14 一致）。
+    //
+    // 与 [previewRotationMode] 的三档是**两个维度**：那三档仍管「自动怎么算」，这三项只管
+    // 「用户看不惯时就按我说的摆」。任一值拼错/来自旧版本，归一后都落回 auto，画面不会被卡死。
+    // 取值与角度映射集中在 [ManualOrientation]，App 写、服务传、渲染层读，三处同一份定义。
+    // ==================================================================================
+
+    /**
+     * 【5.4.15】系统横屏时，小窗窗口框是横条还是竖条。
+     * `auto`（默认）= 跟随系统/姿态；`landscape` = 横条；`portrait` = 竖条。
+     * 只改窗口形状，不改画面朝向；「横着放/竖着放」说的是窗口框，不是内容转多少度。
+     */
+    const val landscapeWindowShape = "landscapeWindowShape"
+
+    /**
+     * 【5.4.15】系统竖屏时，小窗窗口框是横条还是竖条。取值同上，默认 `auto`。
+     */
+    const val portraitWindowShape = "portraitWindowShape"
+
+    /**
+     * 【5.4.15】后置摄像头画面转正方向：`auto`（默认）/ `up` / `right` / `down` / `left`。
+     * 角度 up=0° / right=90° / down=180° / left=270°，是「画面最终朝向」，不是叠加补偿角。
+     * 仅在横条小窗生效；竖条窗口画面恒不转（写死契约）。
+     */
+    const val rearCameraFacing = "rearCameraFacing"
+
     /** [previewHudText] 为空时的兜底文案。短、中性、不解释实现。 */
     const val PREVIEW_HUD_TEXT_DEFAULT = "路况预览"
 
@@ -378,6 +405,71 @@ object SafeWalkPrefKey {
      */
     const val EXTRA_BROADCAST_TOKEN = "token"
     const val BROADCAST_TOKEN = "safewalk-bc-2.5"
+}
+
+/**
+ * 【5.4.15 手动方向】三项新选择的取值、归一与角度映射。
+ *
+ * 这是纯值工具：不碰 SharedPreferences、不读配置、更不参与
+ * [PreviewOrientationPolicy] 的 rotationDegrees/applyMode/alignToWindow 四函数（那些被
+ * 675 条契约锁死）。默认哨兵一律 "auto"，保证未配置时整条方向链路与 5.4.14 逐字节一致。
+ *
+ * App 端（写）、服务（传）、渲染层（读）都引用这里，避免同一个字符串在三处各写一遍、
+ * 改一处漏两处 —— 这正是 4.9.0 描边 chip「点了自动、高亮翻转」踩过的坑。
+ */
+object ManualOrientation {
+    /** 窗口形状取值；auto = 不覆盖，交给系统/姿态判据 */
+    const val SHAPE_AUTO = "auto"
+    const val SHAPE_LANDSCAPE = "landscape"
+    const val SHAPE_PORTRAIT = "portrait"
+
+    /** 后摄转正方向取值；auto = 不覆盖，沿用 5.4.14 的 deg when 结果 */
+    const val FACING_AUTO = "auto"
+    const val FACING_UP = "up"
+    const val FACING_RIGHT = "right"
+    const val FACING_DOWN = "down"
+    const val FACING_LEFT = "left"
+
+    /** 窗口形状归一：拼错/旧配置一律按 auto（不覆盖），不让一个错字把画面锁死。 */
+    @JvmStatic
+    fun normalizeShape(v: String?): String = when (v) {
+        SHAPE_LANDSCAPE -> SHAPE_LANDSCAPE
+        SHAPE_PORTRAIT -> SHAPE_PORTRAIT
+        else -> SHAPE_AUTO
+    }
+
+    /** 转正方向归一：拼错/旧配置一律按 auto（不覆盖）。 */
+    @JvmStatic
+    fun normalizeFacing(v: String?): String = when (v) {
+        FACING_UP -> FACING_UP
+        FACING_RIGHT -> FACING_RIGHT
+        FACING_DOWN -> FACING_DOWN
+        FACING_LEFT -> FACING_LEFT
+        else -> FACING_AUTO
+    }
+
+    /**
+     * 转正方向 → 画面最终朝向角（度）：up=0 / right=90 / down=180 / left=270，auto=0。
+     * 调用方须自己判「是否 auto 才用」，本函数对 auto 返回 0 只是给个无害默认值。
+     */
+    @JvmStatic
+    fun facingDegrees(v: String?): Int = when (normalizeFacing(v)) {
+        FACING_RIGHT -> 90
+        FACING_DOWN -> 180
+        FACING_LEFT -> 270
+        else -> 0
+    }
+
+    /**
+     * 窗口形状 → 是否横条；auto 返回 null 表示「不覆盖」，让调用方继续走系统/姿态判据。
+     * 用可空布尔而不是布尔，是为了让「没配置」与「明确选了竖条」在调用点一眼可分。
+     */
+    @JvmStatic
+    fun shapeIsLandscape(v: String?): Boolean? = when (normalizeShape(v)) {
+        SHAPE_LANDSCAPE -> true
+        SHAPE_PORTRAIT -> false
+        else -> null
+    }
 }
 
 /**

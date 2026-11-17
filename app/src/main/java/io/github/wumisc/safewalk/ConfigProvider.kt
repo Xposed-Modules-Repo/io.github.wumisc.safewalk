@@ -100,7 +100,12 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.previewScreenSaturation,
             // 5.3.0 画面方向：字符串档位（auto/fixed/flip），
             // 进白名单既是为了导出配置带全，也是为了 Hook 侧切换形态时能读到当前档位。
-            SafeWalkPrefKey.previewRotationMode
+            SafeWalkPrefKey.previewRotationMode,
+            // 5.4.15 手动方向：三项纯显示参数（窗口形状 ×2 + 后摄转正方向），
+            // 不含任何隐私字段；进白名单只为「导出配置带全」与跨进程读到当前档位。
+            SafeWalkPrefKey.landscapeWindowShape,
+            SafeWalkPrefKey.portraitWindowShape,
+            SafeWalkPrefKey.rearCameraFacing
         )
     }
 

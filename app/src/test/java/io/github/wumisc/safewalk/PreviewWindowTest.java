@@ -66,6 +66,23 @@ public class PreviewWindowTest {
             return null;
         }
 
+        /**
+         * 【5.4.2 Bug B】HUD 已移入 rotLayer 跟随画面旋转，不再是 root 直属子节点，
+         * 旧的 root.getChildAt(1) 取不到它。HudTextView 是私有内部类，Java 侧无法
+         * 直接引用其类型，故按 TextView 子类深度优先定位（画面层是 TextureView，不会命中）。
+         */
+        View findHudView(View v) {
+            if (v instanceof android.widget.TextView) return v;
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    View hit = findHudView(g.getChildAt(i));
+                    if (hit != null) return hit;
+                }
+            }
+            return null;
+        }
+
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) {
             switch (method.getName()) {
@@ -166,14 +183,21 @@ public class PreviewWindowTest {
         //  1) 没文案 → 即使对比度开着也不显示（默认状态，画面上一个字都没有）；
         //  2) 有文案 + 对比度开 → 可见；
         //  3) 有文案 + 对比度关 → 仍然可见，但退化成纯白字（level=0，无描边无衬底）。
+        // 【5.4.2 Bug B】HUD 已从 root 直属层移入 rotLayer（跟随画面旋转），
+        // 定位改走 findHudView 深度查找，结构断言按新层级更新，可见性契约不变。
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
                 true, false, 85, null, 13, 150, 12);
         assertNotNull(recorder.params);
         assertTrue("窗口根必须是 FrameLayout 容器", recorder.view instanceof ViewGroup);
         ViewGroup root = (ViewGroup) recorder.view;
-        assertTrue("容器应含画面层 + HUD 文字层", root.getChildCount() >= 2);
+        // 【5.4.2】root 直属只剩 rotLayer 一个子节点，rotLayer 内含画面层 + HUD 文字层。
+        assertEquals("root 直属只有 rotLayer 一个子节点", 1, root.getChildCount());
+        assertTrue("rotLayer 内应含画面层 + HUD 文字层",
+                ((ViewGroup) root.getChildAt(0)).getChildCount() >= 2);
+        View hud = recorder.findHudView(root);
+        assertNotNull("应能在 rotLayer 内定位到 HUD 文字层", hud);
         assertEquals("没有文案时 HUD 层不应显示（哪怕对比度开着）",
-                View.GONE, root.getChildAt(1).getVisibility());
+                View.GONE, hud.getVisibility());
         assertEquals("容器 alpha 恒为 1（文字层永不被调淡）",
                 1.0f, root.getAlpha(), 0.001f);
 
@@ -181,8 +205,10 @@ public class PreviewWindowTest {
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
                 true, false, 85, "路况预览", 13, 150, 12);
         ViewGroup root2 = (ViewGroup) recorder.view;
+        View hud2 = recorder.findHudView(root2);
+        assertNotNull("应能在 rotLayer 内定位到 HUD 文字层", hud2);
         assertEquals("有文案且对比度开启时 HUD 层应可见",
-                View.VISIBLE, root2.getChildAt(1).getVisibility());
+                View.VISIBLE, hud2.getVisibility());
         assertEquals("画面层透明度不受 HUD 影响",
                 0.50f, recorder.renderLayer().getAlpha(), 0.01f);
 
@@ -190,8 +216,10 @@ public class PreviewWindowTest {
         overlay.show(RearCameraOverlay.MODE_FULLSCREEN, 50, RearCameraOverlay.CORNER_BR,
                 false, false, 85, "路况预览", 13, 150, 12);
         ViewGroup root3 = (ViewGroup) recorder.view;
+        View hud3 = recorder.findHudView(root3);
+        assertNotNull("应能在 rotLayer 内定位到 HUD 文字层", hud3);
         assertEquals("文案开关与对比度解耦：关掉对比度文字仍在",
-                View.VISIBLE, root3.getChildAt(1).getVisibility());
+                View.VISIBLE, hud3.getVisibility());
     }
 
     @Test
@@ -299,7 +327,11 @@ public class PreviewWindowTest {
 
         ViewGroup root = (ViewGroup) recorder.view;
         assertEquals("窗口根自身不能旋转", 0.0f, root.getRotation(), 0.001f);
-        assertTrue("窗口根至少要有画面层 + HUD 层", root.getChildCount() >= 2);
+        // 【5.4.2 Bug B】HUD 已移入 rotLayer：root 直属只剩 rotLayer 一个子节点，
+        // rotLayer 内含画面层 + HUD 两层。下方 rot 仍是 root.getChildAt(0) 即 rotLayer。
+        assertEquals("root 直属只有 rotLayer 一个子节点", 1, root.getChildCount());
+        assertTrue("rotLayer 内应含画面层 + HUD 文字层",
+                ((ViewGroup) root.getChildAt(0)).getChildCount() >= 2);
 
         View rot = root.getChildAt(0);
         assertEquals("竖条窗口必须不转", 0.0f, rot.getRotation(), 0.001f);

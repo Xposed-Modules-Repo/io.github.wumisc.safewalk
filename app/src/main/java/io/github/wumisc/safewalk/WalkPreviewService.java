@@ -889,9 +889,23 @@ public final class WalkPreviewService extends Service {
                 PreviewOrientationPolicy.MODE_AUTO);
         rotationMode = PreviewOrientationPolicy.normalizeMode(rotationMode);
 
+        // 【5.4.15 手动方向 / 5.4.16 起】三项新选择。两项窗口形状刷不到值按 auto
+        // （保持 5.4.14 行为）；后摄转正方向 5.4.16 起默认 left/270°，开箱即正、无需手选。
+        // 归一也放在这里做一次，渲染层只读到合法档位，不必每个分支再兜底错字。
+        String landscapeWindowShape = ManualOrientation.normalizeShape(
+                SafePrefs.getString(sp, SafeWalkPrefKey.landscapeWindowShape,
+                        ManualOrientation.SHAPE_AUTO));
+        String portraitWindowShape = ManualOrientation.normalizeShape(
+                SafePrefs.getString(sp, SafeWalkPrefKey.portraitWindowShape,
+                        ManualOrientation.SHAPE_AUTO));
+        String rearCameraFacing = ManualOrientation.normalizeFacing(
+                SafePrefs.getString(sp, SafeWalkPrefKey.rearCameraFacing,
+                        ManualOrientation.FACING_LEFT));
+
         overlay.show(mode, opacity, corner, contrast, torchWithPreview, contrastLevel,
                 hudText, hudSize, smallWidth, smallMargin, framing, border, lowLight,
-                screenEnhance, screenContrast, screenShadow, screenSat, rotationMode);
+                screenEnhance, screenContrast, screenShadow, screenSat, rotationMode,
+                landscapeWindowShape, portraitWindowShape, rearCameraFacing);
         DiagLog.log("[torch:overlay] 小窗联动闪光灯 | 开关=" + linkEnabled
                 + " 夜间区间=" + night + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
                 + " | 生命周期=小窗显示即亮、收起即灭（预览会话内 FLASH_MODE_TORCH）");
@@ -902,7 +916,9 @@ public final class WalkPreviewService extends Service {
                 + " 取景=" + framing + "% 描边=" + border + "dp 低光增强=" + lowLight
                 + " | 画面增强=" + screenEnhance + "(对比 " + screenContrast
                 + "% 暗部 " + screenShadow + "% 饱和 " + screenSat + "%)"
-                + " | 方向=" + rotationMode);
+                + " | 方向=" + rotationMode
+                + " 手动[横窗=" + landscapeWindowShape + " 竖窗=" + portraitWindowShape
+                + " 后摄=" + rearCameraFacing + "]");
         reportPreviewState();
     }
 
@@ -950,7 +966,7 @@ public final class WalkPreviewService extends Service {
             DiagLog.log("[style] 屏幕方向变化 → " + (landscape ? "横屏" : "竖屏")
                     + "，重排窗口并重算画面方向");
             try {
-                overlay.onDisplayChanged();
+                overlay.onDisplayChanged(landscape);
             } catch (Throwable t) {
                 DiagLog.log("[style] 方向重排失败: " + t.getMessage());
             }

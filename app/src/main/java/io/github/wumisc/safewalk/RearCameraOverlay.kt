@@ -72,6 +72,22 @@ class RearCameraOverlay(
         const val MODE_FULLSCREEN = "fullscreen"
         const val MODE_SMALLWINDOW = "smallwindow"
 
+        /**
+         * 【5.4.6 方案B · 横屏正立方向校准（单一取值点，单位：度）】
+         *
+         * 方案B在系统方向翻转时走「整条放开重算」：窗口变横条 845x488，角度由
+         * PreviewOrientationPolicy.alignToWindow 重算。历史正立帧（日志2560）为
+         * 横条845x488 + appliedRotDeg 0 + deg 0 + 缓冲488x845 —— 竖条横躺画面变成
+         * 横条正立画面，用户肉眼所见正是「逆时针转正90°」。故默认 0 = 额外补偿 0，
+         * 即完全采用 alignToWindow 的历史正立帧，与 plan.md 拍板一致。
+         *
+         * ⚠️ 真机校准（唯一取值点）：若横屏画面上下颠倒，把本值改为 90 或 180。
+         * 它会在横条窗重算后叠加到 appliedRotDeg；alignToWindow(x, 横条=true) 再把
+         * 0/90/180/270 归一成 deg∈{0,180}（横条窗不交换宽高），从而翻回正立。
+         * 只改这一处即可，不碰任何公式、alignToWindow 原文与硬边界。
+         */
+        private const val LANDSCAPE_UPRIGHT_ROT_DEG = 0
+
         /** 画面增强实际生效路径（仅用于日志与诊断，不参与判定） */
         private const val PATH_AGSL = "AGSL"
         private const val PATH_MATRIX = "COLOR_MATRIX"
@@ -142,13 +158,16 @@ class RearCameraOverlay(
                 half4 src = content.eval(xy);
                 half3 c = src.rgb;
 
-                // ① 以 0.5 为支点拉伸：k 最大 1.2 倍，够明显但不会一开就成黑白照
-                half3 s = half3(0.5) + (c - half3(0.5)) * half(1.0 + contrast * 1.2);
+                // ① gamma 提亮：g 由 contrast 驱动（沿用原 1.2 增益），保端点 c=0→0 / c=1→1，
+                //    幂律天然不吹高光，取代原来把 c<0.5 全部压死的「以 0.5 为支点拉伸」
+                half  g = half(1.0 + contrast * 1.2);
+                half3 s = pow(c, half3(half(1.0) / g));
 
-                // ② 暗部回抬：权重在中灰处最大、纯黑纯白处为 0，
-                //    所以高光不会被压平（那是「发白」的来源），暗部也不会被抬成灰雾
-                half3 w = half3(1.0) - abs(s * half3(2.0) - half3(1.0));
-                s = s + (half3(0.5) - s) * w * half(lift * 0.45);
+                // ② 暗部回抬：权重改为「越黑越大」pow(1-s,2)，高光处≈0 不动；
+                //    B_CONST 统一 0.30（白天系数 0.12 / 夜间 0.21），lift 驱动，不新增 uniform
+                const half B_CONST = half(0.30);
+                half3 w = pow(half3(1.0) - s, half3(2.0));
+                s = s + (half3(1.0) - s) * w * half(lift * B_CONST);
 
                 // ③ 饱和度：夜间噪点在灰度里更不显眼，降饱和等于免费降噪
                 half l = dot(s, half3(0.299, 0.587, 0.114));
@@ -262,7 +281,19 @@ class RearCameraOverlay(
          * SystemUI 进程，读不到 App 的私有 SharedPreferences。所有用户设置
          * 都是 WalkPreviewService 读完再当参数传下来的，这里保持同一条路。
          */
-        val rotationMode: String
+        val rotationMode: String,
+        /**
+         * 【5.4.15 手动方向】系统横屏时用户指定的窗口形状（auto/landscape/portrait）。
+         * auto = 不覆盖，窗口形状继续由 [isLandscapeWindowNow] 的系统/姿态判据决定。
+         */
+        val landscapeWindowShape: String = ManualOrientation.SHAPE_AUTO,
+        /** 【5.4.15】系统竖屏时的窗口形状，取值同上，默认 auto（不覆盖）。 */
+        val portraitWindowShape: String = ManualOrientation.SHAPE_AUTO,
+        /**
+         * 【5.4.15】后摄画面转正方向（auto/up/right/down/left）。
+         * auto = 沿用 5.4.14 的 deg when 结果；显式选择只在横条小窗生效，竖条恒 0、全屏不套用。
+         */
+        val rearCameraFacing: String = ManualOrientation.FACING_AUTO
     )
 
     private val wm = wmOverride
@@ -386,6 +417,72 @@ class RearCameraOverlay(
      * 存下来才能判断「这次到底变没变」，避免每帧重复写日志。
      */
     private var appliedRotDeg = -1
+
+    // ==================== 【5.4.5 方向锁定】====================
+
+    /**
+     * 小窗首帧构图快照。
+     *
+     * 【5.4.5 方向锁定】小窗第一次真正把方向算出来之后（openCamera 内 applyFraming
+     * 已落盘、setDefaultBufferSize 之前），把这一帧的构图成组冻结下来；此后小窗
+     * 无论姿态/系统方向/framing 怎么变，都幂等重放这份快照，绝不重新推导。
+     *
+     * 必须**成组**冻结：只锁角度不锁窗口 W/H，回小窗时会出现「竖条却转 90°」；
+     * 只锁角度不锁 HUD，HUD 会歪（5.4.2 回退）；只锁角度不锁 zoom/pivot，深色模式
+     * 一切换 framing 0↔55 又会「变样」。所以下述 9 组字段缺一不可。
+     */
+    private data class LockedComposition(
+        /** 旋转角真值（appliedRotDeg），小窗冻结后 refreshRotation 直接取它 */
+        val rotDeg: Int,
+        /** 窗口宽高（lastWindowW/H），buildParams 小窗分支用它替代实时姿态尺寸 */
+        val winW: Int, val winH: Int,
+        /** applyFraming 判定出来的展示角（竖屏恒 0） */
+        val deg: Int,
+        /** 旋转层布局框：旋转前长宽摆法 */
+        val boxW: Int, val boxH: Int,
+        /** 旋转层角度与 HUD 反向角（layer.rotation / hudView.rotation） */
+        val layerRot: Float, val hudRot: Float,
+        /** 取景锚点（view.pivotX/Y） */
+        val pivotX: Float, val pivotY: Float,
+        /** 取景缩放（view.scaleX/Y） */
+        val scaleX: Float, val scaleY: Float,
+        /** 相机 buffer（actualBufferW/H），回小窗重开时钉死首帧值 */
+        val bufferW: Int, val bufferH: Int,
+        /** 构图参数快照：判断是否为用户主动改设置的依据（本版小窗一律忽略） */
+        val framingPct: Int, val rotationMode: String
+    )
+
+    /**
+     * 小窗锁定构图。null = 还没建锁（首帧未定型 / 一直全屏）。
+     *
+     * 【Q-A】跨 hide/show 保留：teardown() 刻意不清本字段，只有进程重启（对象重建）
+     * 才回到 null 重新建锁——用户诉求是「小窗永远一个样」。
+     */
+    private var smallLock: LockedComposition? = null
+
+    /**
+     * 【5.4.6 方案B】系统方向切换「放行一次 + 重锁一次」的防重布尔标志。
+     *
+     * onConfigurationChanged 同一轮翻转会先调 onDisplayChanged()、尾部 doShow() 再走 show() 快路径；
+     * 姿态传感器回调也会并发推进 poseDeg。三者都必须只认这「一次」系统方向翻转，
+     * 不能被重复放行重算、更不能重复建锁/漏建锁（否则退回「转一次缺一行」）。
+     * 本标志在 onDisplayChanged 检测到真翻转时置位，本轮重算+重锁完成后复位。
+     */
+    private var orientationSwitchInProgress = false
+
+    /**
+     * 【5.4.6 方案B】建锁时记录的系统屏幕朝向（true=横屏）。
+     * 用作「真翻转」判据：只有 newConfig 朝向与建锁时不同，才算系统横竖屏真变了，
+     * 才放行整条重算；同一朝向内的重复回调（姿态晃动 / 深色模式 / 宽度变更）一律维持锁定。
+     */
+    private var lockScreenLandscape: Boolean? = null
+
+    /**
+     * 【5.4.7 真机修复】最近一次由系统方向回调下传的可靠屏幕朝向（true=横屏）。
+     * 每次方向回调开头刷新，专供重锁基准使用——杜绝再依赖 Service Context 下
+     * 不随 configuration 更新的 ctx.resources 判据。null = 进程启动后尚未收到方向回调。
+     */
+    private var lastKnownScreenLandscape: Boolean? = null
 
     // ==================== 【5.3.1 姿态】====================
 
@@ -520,10 +617,16 @@ class RearCameraOverlay(
      */
     private fun applyPoseChange() {
         if (!isShowing) return
+        // 【5.4.5 方向锁定】小窗已锁定构图：忽略传感器姿态变化，窗口形状/角度/取景一律不动。
+        // 短路只在这一行——下方的窗口重排、圆角轮廓失效、refreshRotation、applyFraming
+        // 全部保留原文，供全屏路径照常执行（契约测试按源码文本断言，故一行都不删）。
+        if (style.mode == MODE_SMALLWINDOW && smallLock != null) return
         val view = tv ?: return
         if (view.width <= 0 || view.height <= 0) return
-        rootView?.let {
-            try { wm.updateViewLayout(it, buildParams()) } catch (_: Throwable) {}
+        rootView?.let { root ->
+            try { wm.updateViewLayout(root, buildParams()) } catch (_: Throwable) {}
+            // 5.4.3 旋转重建后重算圆角轮廓：post 等 updateViewLayout 的异步布局完成、view 宽高刷新
+            root.post { root.invalidateOutline() }
         }
         refreshRotation()
         applyFraming()
@@ -596,7 +699,14 @@ class RearCameraOverlay(
             " 旋转层=" + (layer?.width ?: 0) + "x" + (layer?.height ?: 0) +
             "@" + (layer?.rotation?.toInt() ?: 0) + "°" +
             " 放大=" + "%.2f".format(tv?.scaleX ?: 1f) + "x" +
-            " 缓冲=" + (if (actualBufferW > 0) actualBufferW else previewSrcW) + "x" + (if (actualBufferH > 0) actualBufferH else previewSrcH)
+            " 缓冲=" + (if (actualBufferW > 0) actualBufferW else previewSrcW) + "x" + (if (actualBufferH > 0) actualBufferH else previewSrcH) +
+            // 【5.4.5 方向锁定】真机日志直接看出锁定是否生效、锁的是横条还是竖条
+            (if (smallLock != null) {
+                val lk = smallLock!!
+                " 🔒锁定=" + (if (lk.winW > lk.winH) "横条" else "竖条") +
+                    " ${lk.winW}x${lk.winH} deg=${lk.deg}" +
+                    " 缓冲=${lk.bufferW}x${lk.bufferH}"
+            } else "")
     }
 
     /** 统一走 SafeWalkLSPHook 的日志出口（logcat + SystemUI 私有目录） */
@@ -664,7 +774,13 @@ class RearCameraOverlay(
         /** 【5.1.0】饱和度 0~100，50 = 不变 */
         screenSaturation: Int = SCREEN_SATURATION_DEFAULT,
         /** 【5.3.0】画面方向：auto / fixed / flip（见 PreviewOrientationPolicy） */
-        rotationMode: String = PreviewOrientationPolicy.MODE_AUTO
+        rotationMode: String = PreviewOrientationPolicy.MODE_AUTO,
+        /** 【5.4.15】系统横屏时的窗口形状：auto / landscape / portrait */
+        landscapeWindowShape: String = ManualOrientation.SHAPE_AUTO,
+        /** 【5.4.15】系统竖屏时的窗口形状：auto / landscape / portrait */
+        portraitWindowShape: String = ManualOrientation.SHAPE_AUTO,
+        /** 【5.4.15】后摄转正方向：auto / up / right / down / left */
+        rearCameraFacing: String = ManualOrientation.FACING_AUTO
     ) {
         // 硬失败静默期：Hook 每 2s 一次 ACTION_HOOK_SHOW 会不断把我们叫醒，
         // 但「无相机权限」不会自己变好。静默期内直接拒绝拉起，
@@ -700,7 +816,10 @@ class RearCameraOverlay(
             screenContrast.coerceIn(0, 100),
             screenShadowLift.coerceIn(0, 100),
             screenSaturation.coerceIn(0, 100),
-            PreviewOrientationPolicy.normalizeMode(rotationMode)
+            PreviewOrientationPolicy.normalizeMode(rotationMode),
+            ManualOrientation.normalizeShape(landscapeWindowShape),
+            ManualOrientation.normalizeShape(portraitWindowShape),
+            ManualOrientation.normalizeFacing(rearCameraFacing)
         )
         // 【5.3.3】姿态监听提前到「挂窗口之前」。
         //
@@ -738,12 +857,20 @@ class RearCameraOverlay(
         // 【5.3.0 方向】改方向只重算矩阵，不动相机：缓冲尺寸与旋转角解耦，
         // 源画面比例不变，只是「怎么摆」变了。重开相机会黑一下，没必要。
         val rotationChanged = target.rotationMode != style.rotationMode
+        // 【5.4.15 手动方向】三项手动值任一变化都要走「清锁 + 重算 + 重锁」：
+        // 小窗首帧锁（5.4.5）会忽略普通的方向/取景改动，不清锁就会出现「点了不生效」。
+        val manualOrientChanged = target.landscapeWindowShape != style.landscapeWindowShape
+                || target.portraitWindowShape != style.portraitWindowShape
+                || target.rearCameraFacing != style.rearCameraFacing
+        // 预览没开时也会带着旧的 smallLock 回到这里（锁跨 hide/show 保留）。先在这里清掉，
+        // 让「重建路径」按新值实时重算；下方快路径再清一次是幂等的，随后会重新建锁。
+        if (manualOrientChanged) smallLock = null
         if (isShowing && rootView?.parent != null
             && target.mode == style.mode
             && target.opacity == style.opacity
             && target.corner == style.corner
             && (hudChanged || geometryChanged || torchChanged || visualChanged
-                || lowLightChanged || enhanceChanged || rotationChanged)
+                || lowLightChanged || enhanceChanged || rotationChanged || manualOrientChanged)
         ) {
             style = target
             if (hudChanged) applyHudStyle()
@@ -753,12 +880,22 @@ class RearCameraOverlay(
                     try { wm.updateViewLayout(it, buildParams()) } catch (_: Throwable) {}
                 }
             }
+            // 【5.4.15】手动方向改动：清旧锁 → 按新值重算 → 重锁，改完立刻看得见。
+            // 必须在上面 style = target 之后调用，确保重算读到的是新档位。
+            if (manualOrientChanged) reapplyManualOrientation()
             // 窗口尺寸变了，transform 的基准也变了，必须跟着重算
             if (visualChanged || geometryChanged || rotationChanged) {
-                if (rotationChanged) refreshRotation()
-                applyFraming()
-                applyBorder()
+                if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+                    // 【5.4.5 方向锁定】【Q-B】小窗显示期间忽略用户主动改取景/宽度/方向模式：
+                    // 不 refreshRotation、不 applyFraming，构图永远是首帧那一份；只更新描边。
+                    applyBorder()
+                } else {
+                    if (rotationChanged) refreshRotation()
+                    applyFraming()
+                    applyBorder()
+                }
             }
+            diag("[overlay] torchChanged=$torchChanged lowLightChanged=$lowLightChanged → ${if (torchChanged || lowLightChanged) "refresh" else "skip"}")
             if (torchChanged || lowLightChanged) refreshRequestInSession()
             return
         }
@@ -859,16 +996,6 @@ class RearCameraOverlay(
                 // 投影正好是窗口大小；root 不裁子 View，圆角仍由 clipToOutline 负责。
                 clipChildren = false
                 clipToPadding = false
-                rotLayer = FrameLayout(ctx.applicationContext).apply {
-                    clipChildren = false
-                    addView(texture, FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
-                }
-                addView(rotLayer, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    Gravity.CENTER))
                 // HUD 文字层：底部居中，带描边/阴影/半透明深色衬底
                 hudView = buildHudView()
                 val hudLp = FrameLayout.LayoutParams(
@@ -876,7 +1003,18 @@ class RearCameraOverlay(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                 ).apply { bottomMargin = dp(16) }
-                addView(hudView, hudLp)
+                rotLayer = FrameLayout(ctx.applicationContext).apply {
+                    clipChildren = false
+                    addView(texture, FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT))
+                    // HUD 放进旋转层，跟随画面一起转（5.4.2）
+                    addView(hudView, hudLp)
+                }
+                addView(rotLayer, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.CENTER))
             }
         }
 
@@ -1057,25 +1195,46 @@ class RearCameraOverlay(
     private fun applyFraming(windowW: Int = 0, windowH: Int = 0) {
         val view = tv ?: return
         val layer = rotLayer ?: return
-        // 窗口尺寸的三个来源，按可信度排序：
+        // 窗口尺寸的四个来源，按可信度排序：
         //   1) 调用方显式传进来的（apply() 里刚从 buildParams 算出来，挂载前唯一可信值）
         //   2) 已经布局完成的 rootView
-        //   3) 视图自身
-        val w = when {
-            windowW > 0 -> windowW
-            (rootView?.width ?: 0) > 0 -> rootView!!.width
-            lastWindowW > 0 -> lastWindowW
-            view.width > 0 -> view.width
-            else -> 0
-        }
-        val h = when {
-            windowH > 0 -> windowH
-            (rootView?.height ?: 0) > 0 -> rootView!!.height
-            lastWindowH > 0 -> lastWindowH
-            view.height > 0 -> view.height
-            else -> 0
+        //   3) 上一次算对并缓存的 lastWindow
+        //   4) 视图自身
+        // 【5.4.1】宽高同源：原实现 w、h 各走一个独立 when，会出现 w 取自 rootView、
+        // h 回退到 lastWindow 的错配；横竖切换中间态一旦错配出 w==h，就会被判竖屏、
+        // 写回 lastWindow 并固化成正方形。现在选中第一个「宽高都有效」的来源后一并取，
+        // 优先级与 w<=0||h<=0 的防御语义不变。
+        val rv = rootView
+        val (w, h) = when {
+            windowW > 0 && windowH > 0 -> windowW to windowH
+            rv != null && rv.width > 0 && rv.height > 0 -> rv.width to rv.height
+            lastWindowW > 0 && lastWindowH > 0 -> lastWindowW to lastWindowH
+            view.width > 0 && view.height > 0 -> view.width to view.height
+            else -> 0 to 0
         }
         if (w <= 0 || h <= 0) return
+
+        // 【5.4.1 正方形防御】稳态窗口比例固定（小窗 150:260、全屏真实 bounds），
+        // w==h 只可能是切换中间态的伪尺寸。若放它继续：landscapeWindow=w>h 判 false →
+        // deg=0 不交换 → boxW==boxH；openCamera 的 lastWindowH>=lastWindowW（含等号）
+        // 还会把缓冲也设成正方形，写回 lastWindow 后久不自愈。这里直接跳过本帧，
+        // 等下一次带稳定尺寸的回调重算；DiagThrottle 低频日志留痕，真机可确认命中次数。
+        if (w == h) {
+            try {
+                DiagLog.logThrottled("cam.square", "w=h=$w", "[cam] 正方形中间态已拦截 w=h=$w")
+            } catch (_: Throwable) {
+            }
+            return
+        }
+
+        // 【5.4.5 方向锁定】小窗已有锁定构图：成组幂等重放首帧快照（窗口框/角度/HUD/
+        // 锚点/缩放/buffer 一次恢复），跳过下面全部实时推导。正方形防御已在上方通过。
+        // 重放逻辑放在独立方法里，applyFraming 的实时计算路径一字未改。
+        if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+            replayLockedComposition(view, layer)
+            return
+        }
+
         lastWindowW = w
         lastWindowH = h
 
@@ -1086,30 +1245,133 @@ class RearCameraOverlay(
         // 不旋转、不变换，相机缓冲直接按窗口尺寸出，铺满即可。当时用户从没抱怨过
         // 竖屏画面，是 5.3.0 为了修横屏才把整套旋转引进来，结果把竖屏一起带歪了。
         // 现在只有横条窗口才走旋转这条路。
+        //
+        // 【5.4.14】用户以有头尾的鱼给出精确判据：横条小窗画面顺时针转 90°，鱼头朝右。
+        // 5.4.8 的问题不是"转90°"本身错，而是 alignToWindow 把 90 折成 180 导致倒立。
+        // 本轮小窗横条绕过该规整直接给 deg=90；竖条仍 0、全屏横条不受本规则控制。
+        // alignToWindow(x, true) 输出域恒为 {0,180}，此处仅作全屏横条兜底。
         val landscapeWindow = w > h
         val deg = when {
             appliedRotDeg < 0 -> 0
             !landscapeWindow -> 0
+            // 【5.4.14】小窗横条：画面顺时针转90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。
+            // 全屏横条仍走原 alignToWindow，保证"最大化/分屏不受本规则控制"。
+            style.mode == MODE_SMALLWINDOW -> 90
             else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)
         }
 
-        // 旋转层用「旋转前」的长宽摆：90/270 时长边当宽。
-        // 这样 View.rotation 转 90° 之后的投影，正好是 w×h 的窗口。
-        val swap = deg == 90 || deg == 270
-        val boxW = if (swap) h else w
-        val boxH = if (swap) w else h
+        // 【5.4.15 手动转正】用户显式选了方向时，横条小窗直接用该角度作最终展示角；
+        // 竖条窗口恒 0（写死契约）、全屏 modal 不套用，两种情况都沿用什么都不改的 deg。
+        // 注意：上面 deg when 的四分支文本/token 与 5.4.14 注释被契约逐字锁死，一行不动。
+        val manualFacing = ManualOrientation.normalizeFacing(style.rearCameraFacing)
+        val finalDeg = if (style.mode == MODE_SMALLWINDOW && landscapeWindow
+            && manualFacing != ManualOrientation.FACING_AUTO
+        ) ManualOrientation.facingDegrees(manualFacing) else deg
+        // 用局部同名变量遮蔽 when 的 deg：下方既有字面（layer.rotation = deg 等）原样保留，
+        // 实际吃到的是手动覆盖后的 finalDeg；角度靠变量随动，不写死 90/-90。
+        run {
+            val deg = finalDeg
+
+            // 旋转层用「旋转前」的长宽摆：90/270 时长边当宽。
+            // 这样 View.rotation 转 90° 之后的投影，正好是 w×h 的窗口。
+            val swap = deg == 90 || deg == 270
+            val boxW = if (swap) h else w
+            val boxH = if (swap) w else h
+
+            val cur = layer.layoutParams as? FrameLayout.LayoutParams
+            if (cur == null || cur.width != boxW || cur.height != boxH) {
+                layer.layoutParams = FrameLayout.LayoutParams(boxW, boxH, Gravity.CENTER)
+                rootView?.requestLayout()
+            }
+            layer.rotation = deg.toFloat()
+            // 5.4.3 HUD 位置跟随旋转层换边，但文字反向旋转保持正立可读
+            hudView?.rotation = -deg.toFloat()
+            // 矩阵一律不碰。系统把 buffer 拉伸铺满布局框，铺满比例由
+            // (boxW/srcW, boxH/srcH) 决定；源与框的比例本来就接近（1920:1080 对 845:488），
+            // 2~3% 的非等比拉伸肉眼看不出来，换来的是一条没有任何坐标歧义的渲染路径。
+            view.setTransform(null)
+            applyFramingZoom(view, boxW, boxH, deg, landscapeWindow)
+        }
+    }
+
+    /**
+     * 【5.4.5 方向锁定】把首帧快照成组重放回当前 View。
+     *
+     * 只做「赋值恢复」，不重新推导角度/尺寸/取景：这正是幂等的保证——
+     * onSurfaceTextureSizeChanged 等回调每次都调 applyFraming，走到这里
+     * 无论姿态转了几圈，写回去的都是同一份首帧值。
+     *
+     * 9 组字段一次性恢复；HUD 反向角用快照里的 hudRot（= -deg），保证
+     * layer.rotation + hudView.rotation 恒为 0（5.4.3 净朝向不变）。
+     * buffer 只恢复字段值供日志/决策读取，真正的 setDefaultBufferSize 仍在
+     * openCamera 唯一调用点，用锁定值下发（全文仍仅一处）。
+     */
+    private fun replayLockedComposition(view: TextureView, layer: FrameLayout) {
+        val lock = smallLock ?: return
+        lastWindowW = lock.winW
+        lastWindowH = lock.winH
+        appliedRotDeg = lock.rotDeg
 
         val cur = layer.layoutParams as? FrameLayout.LayoutParams
-        if (cur == null || cur.width != boxW || cur.height != boxH) {
-            layer.layoutParams = FrameLayout.LayoutParams(boxW, boxH, Gravity.CENTER)
+        if (cur == null || cur.width != lock.boxW || cur.height != lock.boxH) {
+            layer.layoutParams = FrameLayout.LayoutParams(lock.boxW, lock.boxH, Gravity.CENTER)
             rootView?.requestLayout()
         }
-        layer.rotation = deg.toFloat()
-        // 矩阵一律不碰。系统把 buffer 拉伸铺满布局框，铺满比例由
-        // (boxW/srcW, boxH/srcH) 决定；源与框的比例本来就接近（1920:1080 对 845:488），
-        // 2~3% 的非等比拉伸肉眼看不出来，换来的是一条没有任何坐标歧义的渲染路径。
+        layer.rotation = lock.layerRot
+        hudView?.rotation = lock.hudRot
         view.setTransform(null)
-        applyFramingZoom(view, boxW, boxH, deg)
+        view.pivotX = lock.pivotX
+        view.pivotY = lock.pivotY
+        view.scaleX = lock.scaleX
+        view.scaleY = lock.scaleY
+
+        actualBufferW = lock.bufferW
+        actualBufferH = lock.bufferH
+    }
+
+    /**
+     * 【5.4.5 方向锁定】首帧建锁：在 openCamera 内方向已算真值、构图已落盘、buffer
+     * 已决策之后调用，把这一帧成组冻结为 [smallLock]。
+     *
+     * 捕获时机是唯一正确点：
+     *  · apply():917 那次 applyFraming 跑在 resolveOrientation 之前，appliedRotDeg
+     *    还是 -1，锁的是「未转正」的假构图；
+     *  · 这里 appliedRotDeg 已是真值（>= 0），applyFraming 已按它把角度/框/锚点/缩放
+     *    全部落盘，buffer 也刚算完，读回即可，不重复任何推导。
+     *
+     * 四个守卫缺一不可：已有锁不重建（幂等）、只锁小窗、方向已定型、非正方形。
+     */
+    private fun lockFirstFrame() {
+        if (smallLock != null) return
+        if (style.mode != MODE_SMALLWINDOW) return
+        if (appliedRotDeg < 0) return
+        val w = lastWindowW
+        val h = lastWindowH
+        // 正方形防御之后才建锁：w==h 是切换中间态，锁死会永久不自愈
+        if (w <= 0 || h <= 0 || w == h) return
+        val layer = rotLayer ?: return
+        val view = tv ?: return
+        val lp = layer.layoutParams as? FrameLayout.LayoutParams ?: return
+        smallLock = LockedComposition(
+            rotDeg = appliedRotDeg,
+            winW = w, winH = h,
+            deg = layer.rotation.toInt(),
+            boxW = lp.width, boxH = lp.height,
+            layerRot = layer.rotation,
+            hudRot = hudView?.rotation ?: 0f,
+            pivotX = view.pivotX, pivotY = view.pivotY,
+            scaleX = view.scaleX, scaleY = view.scaleY,
+            bufferW = actualBufferW, bufferH = actualBufferH,
+            framingPct = style.framingPct,
+            rotationMode = style.rotationMode
+        )
+        diag(
+            "🔒 方向锁定已建立 | 窗口=" + (if (w > h) "横条" else "竖条") + " " + w + "x" + h
+                + " 实转=" + appliedRotDeg + "° 缓冲=" + actualBufferW + "x" + actualBufferH
+        )
+        // 【5.4.6 方案B】记录本次建锁时的系统屏幕朝向，作为「横竖屏真翻转」判据基准。
+        // 首帧竖屏建锁记 false；系统切横屏 → onDisplayChanged 比对为 true → 放行一次重算并重锁。
+        lockScreenLandscape = lastKnownScreenLandscape ?: screenIsLandscape()
     }
 
     /**
@@ -1143,14 +1405,20 @@ class RearCameraOverlay(
      *   · 180° 屏幕上下颠倒        → 保留屏幕下半 = 框上半 → 支点靠上
      *   · 90°  x' = -y，屏幕下方 = 框右侧 → 支点靠右
      *   · 270° x' = y， 屏幕下方 = 框左侧 → 支点靠左
+     *
+     * 【5.4.14】未取景（f<=0）的折中填充门控：用窗口真实朝向 [landscapeWindow] 判定，
+     * 而非旋转后的 box 形状（boxH > boxW）。deg=90 会把横条窗的框翻成竖条
+     * （boxH>boxW 成立），只看框形状会误判成竖条窗而放大 2 倍、视野砍半。
+     * 只有真正竖条窗（!landscapeWindow）才保留 2.0 折中填充；横条窗（deg=0/90）一律 1:1。
      */
-    private fun applyFramingZoom(view: TextureView, boxW: Int, boxH: Int, deg: Int) {
+    private fun applyFramingZoom(view: TextureView, boxW: Int, boxH: Int, deg: Int, landscapeWindow: Boolean) {
         val f = style.framingPct.coerceIn(0, 100)
         if (f <= 0) {
             // 【5.4.0 折中填充】竖条窗口 + 未主动取景：横画幅内容等比放大 Z，以中心为支点，
             // 水平保留约 50% 视野、上下黑边收窄到约 17%（几何推导见 portraitCompromiseZoom）。
-            // 横屏（boxW >= boxH）保持原 1:1；f>0 的主动取景分支在下方，一字未动。
-            if (boxH > boxW) {
+            // 【5.4.14】用窗口真实朝向判定，而非旋转后 box 形状：deg=90 翻框后横条窗虽 boxH>boxW，
+            // 仍是横条窗，走 1:1；只有真竖条窗（!landscapeWindow）才折中填充。f>0 分支在下方，未动。
+            if (!landscapeWindow && boxH > boxW) {
                 val z = portraitCompromiseZoom(boxW, boxH)
                 view.pivotX = boxW / 2f
                 view.pivotY = boxH / 2f
@@ -1201,9 +1469,41 @@ class RearCameraOverlay(
      * 窗口形状与画面旋转**必须用同一个判定结果**：一个来自姿态、一个来自
      * 传感器方向公式，两处各调一次，中间姿态一变就会各说各话，画面就差 90°。
      * 所以只留这一个入口，[buildParams] 与 [refreshRotation] 都调它。
+     *
+     * 【5.4.11 姿态滞后修复】系统方向优先：一旦收到可靠系统方向回调，一律以它为准
+     * （横屏→横条 / 竖屏→竖条），滞后姿态不得盖过已明确的竖屏；姿态只在尚无
+     * 回调（首帧）时兜底，与系统方向参考角的判定哲学同源。
      */
-    private fun isLandscapeWindowNow(): Boolean =
-        DevicePosePolicy.isLandscapeWindow(currentDisplayDegrees(), style.rotationMode)
+    private fun isLandscapeWindowNow(): Boolean {
+        // 【5.4.15 手动窗口形状】只作用于小窗：全屏 modal 不套任何手动覆盖。
+        // 按系统当前横/竖屏选对应那一组配置；显式选了横/竖就用它定窗口框形状，
+        // auto 则返回 null 落回下方原判据，行为与 5.4.14 完全一致。
+        if (style.mode == MODE_SMALLWINDOW) {
+            val shapeCfg = if (screenIsLandscape()) {
+                style.landscapeWindowShape
+            } else {
+                style.portraitWindowShape
+            }
+            val manual = ManualOrientation.shapeIsLandscape(shapeCfg)
+            if (manual != null) return manual
+        }
+        return if (PreviewOrientationPolicy.normalizeMode(style.rotationMode)
+            == PreviewOrientationPolicy.MODE_FIXED
+        ) false
+        else lastKnownScreenLandscape
+            ?: DevicePosePolicy.isLandscapePose(currentDisplayDegrees())
+    }
+
+    /**
+     * 【5.4.6 方案B】系统屏幕当前是否横屏。
+     *
+     * 读 Configuration.orientation —— 与 WalkPreviewService.onConfigurationChanged 判 rotated 同源；
+     * 且 onConfigurationChanged 里 super 已先行更新 resources，此处拿到的就是新朝向。
+     * 与 [isLandscapeWindowNow]（姿态/旋转，决定窗口横竖条）刻意分开：
+     * 后者管「窗口形状」，本函数只管「系统有没有真的翻转」，作为放行重算 + 重锁的判据。
+     */
+    private fun screenIsLandscape(): Boolean =
+        ctx.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
     /**
      * 算旋转角时用的「参考朝向」。
@@ -1214,7 +1514,11 @@ class RearCameraOverlay(
     private fun referenceDegrees(): Int =
         if (PreviewOrientationPolicy.normalizeMode(style.rotationMode)
             == PreviewOrientationPolicy.MODE_FIXED
-        ) 0 else currentDisplayDegrees()
+        ) 0
+        else if (lastKnownScreenLandscape != null)
+            (if (lastKnownScreenLandscape == true) 90
+             else DevicePosePolicy.normalize(currentDisplayDegrees()))
+        else currentDisplayDegrees()
 
     /**
      * 只重算「该转多少度」，不动缓冲、不重建会话。
@@ -1222,6 +1526,12 @@ class RearCameraOverlay(
      * 屏幕旋转与用户切换方向模式都走这里：源画面没变，只是摆法变了。
      */
     private fun refreshRotation() {
+        // 【5.4.5 方向锁定】小窗已锁定构图：旋转角冻结为首帧值，不被姿态/模式变化改写。
+        // 进全屏时 show() 已先把 style.mode 切成 FULLSCREEN，守卫自然放行，全屏照旧随方向旋转。
+        if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+            appliedRotDeg = smallLock!!.rotDeg
+            return
+        }
         val refDeg = referenceDegrees()
         val landscape = isLandscapeWindowNow()
         val rawDeg = PreviewOrientationPolicy.applyMode(
@@ -1247,17 +1557,121 @@ class RearCameraOverlay(
      * 刻意不检查任何用户开关：方向错了就是看不了路，不能因为「智能方案没开」
      * 而不处理。全屏窗口要换宽高、小窗高度上限要跟着屏高变、矩阵基准也变了。
      */
-    fun onDisplayChanged() {
+    fun onDisplayChanged(screenLandscape: Boolean) {
+        // 【5.4.7 真机修复】先刷新可靠朝向缓存：判据与重锁基准都改用回调下传的值。
+        lastKnownScreenLandscape = screenLandscape
         if (!isShowing || rootView?.parent == null) return
+        // view 尺寸检查必须在清锁之前：确保能走完整条重算 + 重锁，绝不出现「清了锁却提前 return」。
         val view = tv ?: return
         if (view.width <= 0 || view.height <= 0) return
-        refreshRotation()
-        // 排序不能反：先重排窗口，布局完成后 SizeChanged 会再算一次矩阵；
-        // 这里先按旧尺寸算一版，避免旋转瞬间出现一帧拉伸画面。
-        rootView?.let {
-            try { wm.updateViewLayout(it, buildParams()) } catch (_: Throwable) {}
+
+        // 【5.4.6 方案B】系统横竖屏真翻转时，放开被 5.4.5 一刀切锁死的整条重算链路。
+        // 与「姿态晃动」的关键区分：姿态走 applyPoseChange（:568 仍短路），系统方向走这里。
+        // 判据 = 当前系统朝向 != 建锁时记录的朝向；同一朝向内的重复回调一律维持锁定。
+        // 防重：orientationSwitchInProgress 保证一次翻转只放一次、重锁一次，不缺行。
+        var willRelock = false
+        if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+            val flipped = lockScreenLandscape != null && lockScreenLandscape != screenLandscape
+            if (flipped && !orientationSwitchInProgress) {
+                orientationSwitchInProgress = true
+                willRelock = true
+                // 【5.4.10 诊断 D1】只在真翻转放行路径打，且必须赶在下方清锁之前读旧锁：
+                // 记录入口各字段真值，坐实 flipped 是否放行、判据是否不同源（次因 S）。
+                stage("方向诊断 IN screenLandscape=$screenLandscape lastKnown=$lastKnownScreenLandscape lockSL=$lockScreenLandscape flag=$orientationSwitchInProgress lock=${smallLock?.winW}x${smallLock?.winH}@${smallLock?.deg} root=${rootView?.width}x${rootView?.height} pose=$poseDeg")
+                // 清旧锁：让下方 refreshRotation / buildParams / applyFraming / buffer 的
+                // 5.4.5 守卫（均判 smallLock != null）运行期自然失效，走完整实时重算——
+                // 窗口随方向变横条/竖条、角度按 alignToWindow 重算、buffer 按新窗口重算。
+                smallLock = null
+            }
+            // 同朝向（姿态/深色模式/宽度变更/重复 configuration）时不清锁，落回下方原短路。
         }
-        applyFraming()
+
+        // 【5.4.8 防重标志兜底】：上面一旦放行置位标志，下面整条重算/重锁都必须保证标志复位。
+        // refreshRotation / applyFraming / lockFirstFrame 任一环抛异常，finally 都会清掉标志，
+        // 否则它会永久残留 true，此后所有系统方向翻转被 !orientationSwitchInProgress 吞掉。
+        try {
+            // 5.4.5 原短路文本原样保留：真翻转已清锁 → 穿透到整条重算；同朝向仍有锁 → 维持锁定。
+            if (style.mode == MODE_SMALLWINDOW && smallLock != null) return
+
+            // ↓ 5.4.5 之前的原样整条重算路径，一字未改（全屏每次都走；小窗仅真翻转时走）。
+            refreshRotation()
+            // 【5.4.6 方案B 真机校准】仅横屏、且本次是方向翻转重算时叠加单一常量（默认 0 = 不叠加，
+            // 与历史正立帧一致）。带 MODE_SMALLWINDOW 守卫，全屏路径不触碰。
+            if (willRelock && style.mode == MODE_SMALLWINDOW && LANDSCAPE_UPRIGHT_ROT_DEG != 0
+                && isLandscapeWindowNow()
+            ) {
+                appliedRotDeg = (appliedRotDeg + LANDSCAPE_UPRIGHT_ROT_DEG + 360) % 360
+                diag("🔧 横屏正立方向校准 +" + LANDSCAPE_UPRIGHT_ROT_DEG + "° → appliedRotDeg=" + appliedRotDeg)
+            }
+            // 排序不能反：先重排窗口，布局完成后 SizeChanged 会再算一次矩阵；
+            // 这里先按旧尺寸算一版，避免旋转瞬间出现一帧拉伸画面。
+            // 【5.4.10 修复】用 buildParams() 的「清锁后目标尺寸」喂 framing：updateViewLayout 异步，
+            // 此刻 view/root 宽高仍是旧横条或 w==h 中间态；smallLock 已在本轮翻转分支（上方）清空，
+            // buildParams 走 :1782-1783 返回新朝向目标尺寸，applyFraming 带参优先级 :1174 直接采用，
+            // 绕开陈旧尺寸 → lastWindow 写成目标竖条 → lockFirstFrame 建成竖条锁。
+            // 与 :1014-1017 挂载先例同构；buildParams 为纯函数、空 root 调用也安全，
+            // applyFraming 仍在 let 外无条件执行，保留「空 root 不跳过 framing」原语义。
+            val lp = buildParams()
+            rootView?.let { root ->
+                try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
+                // 5.4.3 旋转重建后重算圆角轮廓：post 等 updateViewLayout 的异步布局完成、view 宽高刷新
+                root.post { root.invalidateOutline() }
+            }
+            applyFraming(lp.width, lp.height)
+            // 【5.4.10 诊断 D2】只在真翻转路径打，坐实 framing 是否读到目标尺寸、是否命中 w==h。
+            if (willRelock) {
+                stage("方向诊断 FRAMED lastWindow=${lastWindowW}x${lastWindowH} appliedRot=$appliedRotDeg layer=${rotLayer?.layoutParams?.width}x${rotLayer?.layoutParams?.height}@${rotLayer?.rotation}")
+            }
+
+            if (willRelock) {
+                // 重算完成后在新朝向下重新建锁：新朝向内的后续姿态晃动仍被 applyPoseChange:568 锁死。
+                // 这是不退回「转一次缺一行」的关键——不能只放角度而不重锁。
+                lockFirstFrame()
+                // 【5.4.10 诊断 D3】只在真翻转路径打，坐实新锁形状（横条/竖条），
+                // 区分「没重锁」与「重锁成横条」。另起诊断文本，不改既有锁定摘要日志 token。
+                stage("方向诊断 LOCKED lock=${smallLock?.winW}x${smallLock?.winH}@${smallLock?.deg} rotDeg=${smallLock?.rotDeg} lockSL=$lockScreenLandscape")
+                orientationSwitchInProgress = false
+                diag("🔄 系统方向翻转已重算并重锁 | 窗口="
+                    + (if ((smallLock?.winW ?: 0) > (smallLock?.winH ?: 0)) "横条" else "竖条")
+                    + " deg=" + (smallLock?.deg ?: -1))
+            }
+        } finally {
+            // 只有本次真正放行过（置位过标志）才复位：同朝向/全屏回调 willRelock=false，
+            // 不能在 finally 里误清掉另一次正在进行的翻转所持有的防重标志。
+            if (willRelock) orientationSwitchInProgress = false
+        }
+    }
+
+    /**
+     * 【5.4.15 手动方向立即生效】清锁 → 重算 → 重锁。
+     *
+     * 复用 onDisplayChanged 真翻转路径的核心顺序：清 smallLock 让 5.4.5 的守卫失效，
+     * 再 refreshRotation → buildParams → applyFraming → lockFirstFrame 走完整实时重算。
+     * 刻意不碰 orientationSwitchInProgress 防重标志与 D1-D3 诊断——手动改值不是系统翻转，
+     * 不该被防重吞掉，也不该伪造方向诊断日志。
+     *
+     * 全屏 modal 不套任何手动覆盖，只补一次角度刷新，不清锁（全屏本就没有小窗锁）。
+     */
+    private fun reapplyManualOrientation() {
+        if (style.mode != MODE_SMALLWINDOW) {
+            refreshRotation()
+            applyFraming()
+            return
+        }
+        val view = tv ?: return
+        // 尺寸检查必须在清锁之前：确保清了锁就能走完整条重算，绝不「清了锁却提前 return」。
+        if (view.width <= 0 || view.height <= 0) return
+        smallLock = null
+        refreshRotation()
+        val lp = buildParams()
+        rootView?.let { root ->
+            try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
+        }
+        applyFraming(lp.width, lp.height)
+        lockFirstFrame()
+        diag("🔄 手动方向已重算并重锁 | 窗口="
+            + (if ((smallLock?.winW ?: 0) > (smallLock?.winH ?: 0)) "横条" else "竖条")
+            + " 转正=" + ManualOrientation.normalizeFacing(style.rearCameraFacing))
     }
 
     /**
@@ -1340,10 +1754,12 @@ class RearCameraOverlay(
             }
         }
 
-        // 兜底：线性对比度 + 饱和度，加一点整体提亮近似「暗部回抬」。
-        // 效果不如 S 曲线（中灰会被一起推亮），但这是能保证不黑屏的最后一道。
-        val s = 1f + k * 0.9f
-        val offset = 127.5f * (1f - s) + lift * 22f
+        // 兜底：高光锚定的线性提亮 out=s*in+offset（in=255 → 255 不吹白、in=0 抬到 offset），
+        // 再叠饱和度。ColorMatrix 只能线性变换，效果不如 AGSL 幂律提亮，
+        // 但这是 AGSL 不可用时能保证不黑屏的最后一道。
+        // 量纲口径：本仓为 0~255（原 offset=127.5f*(1-s)+lift*22f 即 8bit 平移量），故取 255f*(1-s)。
+        val s = (1f - 0.10f * k - 0.23f * lift).coerceIn(0.5f, 1f)
+        val offset = 255f * (1f - s)
         val cm = ColorMatrix()
         cm.setSaturation(1f + sat)
         cm.postConcat(ColorMatrix(floatArrayOf(
@@ -1482,10 +1898,23 @@ class RearCameraOverlay(
             // 宽度不动（用户调的是短边），只压高度。
             val (_, screenH) = screenSize()
             val maxH = (screenH * 0.62f).toInt()
-            if (maxH > 0 && h > maxH) h = maxH
+            // 5.4.3 防止高度裁剪把竖条压成正方形：maxH<=w 时宁可顶到边也不裁
+            if (maxH > 0 && h > maxH && maxH > w) h = maxH
+            // 【5.4.5 方向锁定】小窗已锁定构图：窗口形状/尺寸取首帧锁定值，忽略实时姿态
+            // 与用户改小窗宽度。上面的 landscape/size/maxH 原文全保留供全屏与首帧建锁使用；
+            // 锁定值本身就是首帧裁好的窗口尺寸（来自 lastWindow），不会二次裁剪。
+            val finalW: Int
+            val finalH: Int
+            if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+                finalW = smallLock!!.winW
+                finalH = smallLock!!.winH
+            } else {
+                finalW = w
+                finalH = h
+            }
             val margin = dp(style.smallMarginDp)
             WindowManager.LayoutParams(
-                w, h,
+                finalW, finalH,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -1543,6 +1972,13 @@ class RearCameraOverlay(
         hudView = null
         tv = null
         surfaceTexture = null
+        // 【5.4.1】切断跨会话污染：overlay 在服务里是单例，hide() 只清 View。
+        // 若上一次会话被中间态污染成正方形，lastWindowW/H（及同族的缓冲尺寸）
+        // 会带到下一次 show，让无参 applyFraming 继续采信方尺寸。这里一并清零。
+        lastWindowW = 0
+        lastWindowH = 0
+        actualBufferW = 0
+        actualBufferH = 0
         // 老 View 连同它的 RenderEffect 一起被丢掉，记录也跟着清空，
         // 下一次 apply 会按新 View 重新判断「要不要启用、走哪条路」
         screenEnhancePath = ""
@@ -1698,9 +2134,12 @@ class RearCameraOverlay(
         // 【5.0.0 低光增强】夜间路面几乎没有光，AUTO 曝光会把画面压成一片黑，
         // 看得见轮廓才谈得上「看路」。这里按机型支持范围给正向补偿，不做固定写死：
         // 不同 HAL 的补偿步长不同（1/3 EV 或 1/6 EV），固定值在部分机型上等于没设。
-        if (style.lowLight && aeCompTarget > 0) {
+        if (style.lowLight && aeCompTarget > 0 && !(style.torchWithPreview && flashAvailable)) {
             builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, aeCompTarget)
         }
+        val torchOn = style.torchWithPreview && flashAvailable
+        val aeCompApplied = style.lowLight && aeCompTarget > 0 && !torchOn
+        diag("[cam] preview req | torch=$torchOn flash=${if (torchOn) "TORCH" else "-"} aeComp=${if (aeCompApplied) aeCompTarget else 0} lowLight=${style.lowLight}")
         return builder.build()
     }
 
@@ -1795,14 +2234,23 @@ class RearCameraOverlay(
             // 当时 appliedRotDeg 还是 -1（不旋转）；此后尺寸不变就不会再触发回调，
             // 于是「会转但没转」会一直挂到下次窗口 resize —— 正是「改了方向没反应」。
             applyFraming()
-            // 【5.3.7】竖条窗口回到 4.8.0 的做法：缓冲直接按窗口尺寸出，
-            // 由相机 HAL 负责缩放，铺满即完整 —— 那时用户从没抱怨过竖屏。
-            // 横条窗口仍用相机选中的尺寸，保证旋转后分辨率够。
-            val portraitWindow = lastWindowW > 0 && lastWindowH >= lastWindowW
-            actualBufferW = if (portraitWindow) lastWindowW
-            else if (previewSrcW > 0) previewSrcW else view.width
-            actualBufferH = if (portraitWindow) lastWindowH
-            else if (previewSrcH > 0) previewSrcH else view.height
+            // 【5.4.4】固定 buffer 档位：与首帧窗口形状/姿态解耦，消除"每次打开裁切不一样"。
+            // 取当前窗口尺寸的短边×长边，横竖首帧都得到同一个竖条 buffer（小窗 488×845）。
+            // 若尺寸尚未量出，回退到 view 的短边×长边。
+            val bw0 = if (lastWindowW > 0) lastWindowW else view.width
+            val bh0 = if (lastWindowH > 0) lastWindowH else view.height
+            actualBufferW = minOf(bw0, bh0)
+            actualBufferH = maxOf(bw0, bh0)
+            // 【5.4.5 方向锁定】小窗已有锁定构图：buffer 钉死首帧值，不随本次窗口尺寸重算。
+            // 回小窗会重开相机；此刻 lastWindow 已被重放分支恢复成首帧值，本段 min/max 结果
+            // 与锁定值一致，这里再显式覆盖一层，保证幂等且不依赖重放是否已执行。
+            if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+                actualBufferW = smallLock!!.bufferW
+                actualBufferH = smallLock!!.bufferH
+            }
+            // 【5.4.5 方向锁定】首帧建锁：方向已算真值、构图已由上面的 applyFraming 落盘、
+            // buffer 刚决策完，是唯一正确的捕获点（apply():917 那次太早，deg 还是 0）。
+            lockFirstFrame()
             st.setDefaultBufferSize(actualBufferW, actualBufferH)
             val surface = Surface(st)
             previewSurface = surface
@@ -1841,6 +2289,7 @@ class RearCameraOverlay(
             if (style.lowLight && aeCompTarget <= 0) {
                 diag("⚠️ 本机不支持曝光补偿，低光增强自动降级（预览照常显示）")
             }
+            diag("[cam] 能力探测 | flashAvailable=$flashAvailable aeCompTarget=$aeCompTarget")
             // 捕获发起时的代号：回调回来要是对不上，说明这次请求已经过期
             val gen = cameraGen
             opening = true
@@ -2065,6 +2514,11 @@ class RearCameraOverlay(
         // 窗口形状就用**已经量出来的视图尺寸**判断，不回头问传感器：
         // 这里拿到的是真实宽高，是整条链路里唯一不需要推导的事实。
         appliedRotDeg = PreviewOrientationPolicy.alignToWindow(rawDeg, viewW > viewH)
+        // 【5.4.5 方向锁定】小窗已有锁定构图：方向角钉回首帧值，不让回小窗重开相机
+        // 时的实时姿态覆盖它（上方 alignToWindow 原文保留，全屏照常走实时计算）。
+        if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+            appliedRotDeg = smallLock!!.rotDeg
+        }
 
         val picked = PreviewOrientationPolicy.pickPreviewSize(sizes, viewW, viewH, appliedRotDeg)
         if (picked != null && picked.size >= 2) {

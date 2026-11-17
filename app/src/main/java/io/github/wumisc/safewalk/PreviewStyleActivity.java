@@ -69,6 +69,29 @@ public final class PreviewStyleActivity extends Activity {
     };
     private TextView[] rotChips;
 
+    /**
+     * 【5.4.15 手动方向】窗口形状两档：跟随系统 / 横条 / 竖条。
+     * 系统横屏、系统竖屏各一组，下标与布局里的 chip_land_* / chip_port_* 一一对应。
+     */
+    private static final String[] SHAPE_MODES = {
+            ManualOrientation.SHAPE_AUTO,
+            ManualOrientation.SHAPE_LANDSCAPE,
+            ManualOrientation.SHAPE_PORTRAIT
+    };
+
+    /**
+     * 【5.4.15 手动方向】后摄转正方向五档：跟随自动 + 上/右/下/左。
+     * 角度 up=0 / right=90 / down=180 / left=270，下标与布局 chip_facing_* 一一对应。
+     */
+    private static final String[] FACING_MODES = {
+            ManualOrientation.FACING_AUTO,
+            ManualOrientation.FACING_UP,
+            ManualOrientation.FACING_RIGHT,
+            ManualOrientation.FACING_DOWN,
+            ManualOrientation.FACING_LEFT
+    };
+    private TextView[] landscapeShapeChips, portraitShapeChips, facingChips;
+
     private String rearMode = RearCameraOverlay.MODE_FULLSCREEN;
     private String rearCorner = RearCameraOverlay.CORNER_BR;
 
@@ -125,6 +148,24 @@ public final class PreviewStyleActivity extends Activity {
                 findViewById(R.id.chip_rot_auto),
                 findViewById(R.id.chip_rot_fixed),
                 findViewById(R.id.chip_rot_flip)
+        };
+        // 【5.4.15 手动方向】系统横屏窗口形状 / 系统竖屏窗口形状 / 后摄转正方向
+        landscapeShapeChips = new TextView[]{
+                findViewById(R.id.chip_land_auto),
+                findViewById(R.id.chip_land_landscape),
+                findViewById(R.id.chip_land_portrait)
+        };
+        portraitShapeChips = new TextView[]{
+                findViewById(R.id.chip_port_auto),
+                findViewById(R.id.chip_port_landscape),
+                findViewById(R.id.chip_port_portrait)
+        };
+        facingChips = new TextView[]{
+                findViewById(R.id.chip_facing_auto),
+                findViewById(R.id.chip_facing_up),
+                findViewById(R.id.chip_facing_right),
+                findViewById(R.id.chip_facing_down),
+                findViewById(R.id.chip_facing_left)
         };
 
         tvFraming = findViewById(R.id.tv_framing);
@@ -281,6 +322,18 @@ public final class PreviewStyleActivity extends Activity {
         for (int i = 0; i < ROT_MODES.length; i++) {
             final String mode = ROT_MODES[i];
             rotChips[i].setOnClickListener(v -> selectRotation(mode));
+        }
+        // 【5.4.15 手动方向】三组互斥：两组窗口形状 + 一组后摄转正方向。
+        for (int i = 0; i < SHAPE_MODES.length; i++) {
+            final String shape = SHAPE_MODES[i];
+            landscapeShapeChips[i].setOnClickListener(v ->
+                    selectWindowShape(SafeWalkPrefKey.landscapeWindowShape, shape, "横屏窗口形状"));
+            portraitShapeChips[i].setOnClickListener(v ->
+                    selectWindowShape(SafeWalkPrefKey.portraitWindowShape, shape, "竖屏窗口形状"));
+        }
+        for (int i = 0; i < FACING_MODES.length; i++) {
+            final String facing = FACING_MODES[i];
+            facingChips[i].setOnClickListener(v -> selectFacing(facing));
         }
 
         seekFraming.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -626,6 +679,35 @@ public final class PreviewStyleActivity extends Activity {
     }
 
     /**
+     * 【5.4.15】窗口形状（系统横屏 / 系统竖屏各一组）切档立即生效。
+     *
+     * 与 [selectRotation] 一样刻意**不**调 [takeOverFromAuto]：窗口形状与后摄方向都不属于
+     * 白天/夜间那套方案参数，改它们不该顺手关掉智能方案。
+     *
+     * @param key   [SafeWalkPrefKey.landscapeWindowShape] 或 [SafeWalkPrefKey.portraitWindowShape]
+     * @param shape 归一化后的档位
+     * @param label 只用于日志
+     */
+    private void selectWindowShape(String key, String shape, String label) {
+        String v = ManualOrientation.normalizeShape(shape);
+        sp.edit().putString(key, v).commit();
+        SafeWalkConfig.exportConfig(this);
+        DiagLog.log("[style] " + label + " → " + v);
+        refreshAll();
+        previewIfEnabled();
+    }
+
+    /** 【5.4.15】后摄转正方向切档立即生效：改完服务重读配置，渲染层清锁重算重锁。 */
+    private void selectFacing(String facing) {
+        String v = ManualOrientation.normalizeFacing(facing);
+        sp.edit().putString(SafeWalkPrefKey.rearCameraFacing, v).commit();
+        SafeWalkConfig.exportConfig(this);
+        DiagLog.log("[style] 后摄转正方向 → " + v);
+        refreshAll();
+        previewIfEnabled();
+    }
+
+    /**
      * 【5.1.0】手动调参 → 自动跟随让位。
      *
      * 这是「自动」最容易变成「碍事」的地方：自动跟随开着时，用户拖对比度到 90%，
@@ -667,6 +749,7 @@ public final class PreviewStyleActivity extends Activity {
     private void refreshAll() {
         refreshBorderChips();
         refreshRotationChips();
+        refreshManualOrientationChips();
         refreshPresetChips();
         refreshHudDependencies();
         refreshSummary();
@@ -692,6 +775,29 @@ public final class PreviewStyleActivity extends Activity {
                         PreviewOrientationPolicy.MODE_AUTO));
         for (int i = 0; i < ROT_MODES.length; i++) {
             paintChip(rotChips[i], ROT_MODES[i].equals(cur));
+        }
+    }
+
+    /**
+     * 【5.4.15】三组手动方向 chip 高亮：与 [refreshRotationChips] 同源，直接读真正生效的配置，
+     * 不记「点过哪个」——配置可能来自换机恢复或手动编辑，高亮必须是生效中的那一档。
+     */
+    private void refreshManualOrientationChips() {
+        String land = ManualOrientation.normalizeShape(
+                SafePrefs.getString(sp, SafeWalkPrefKey.landscapeWindowShape,
+                        ManualOrientation.SHAPE_AUTO));
+        String port = ManualOrientation.normalizeShape(
+                SafePrefs.getString(sp, SafeWalkPrefKey.portraitWindowShape,
+                        ManualOrientation.SHAPE_AUTO));
+        String facing = ManualOrientation.normalizeFacing(
+                SafePrefs.getString(sp, SafeWalkPrefKey.rearCameraFacing,
+                        ManualOrientation.FACING_LEFT));
+        for (int i = 0; i < SHAPE_MODES.length; i++) {
+            paintChip(landscapeShapeChips[i], SHAPE_MODES[i].equals(land));
+            paintChip(portraitShapeChips[i], SHAPE_MODES[i].equals(port));
+        }
+        for (int i = 0; i < FACING_MODES.length; i++) {
+            paintChip(facingChips[i], FACING_MODES[i].equals(facing));
         }
     }
 
@@ -828,6 +934,26 @@ public final class PreviewStyleActivity extends Activity {
         } else if (PreviewOrientationPolicy.MODE_FLIP.equals(rot)) {
             base += " · 方向翻转 180°";
         }
+        // 【5.4.15】手动方向三项同样只在非 auto 时留痕：auto 是常态，天天显示是噪音；
+        // 一旦用户动过就必须看得见，否则「上次到底改没改」只能靠猜。
+        String land = ManualOrientation.normalizeShape(
+                SafePrefs.getString(sp, SafeWalkPrefKey.landscapeWindowShape,
+                        ManualOrientation.SHAPE_AUTO));
+        String port = ManualOrientation.normalizeShape(
+                SafePrefs.getString(sp, SafeWalkPrefKey.portraitWindowShape,
+                        ManualOrientation.SHAPE_AUTO));
+        String facing = ManualOrientation.normalizeFacing(
+                SafePrefs.getString(sp, SafeWalkPrefKey.rearCameraFacing,
+                        ManualOrientation.FACING_LEFT));
+        if (!ManualOrientation.SHAPE_AUTO.equals(land)) {
+            base += " · 横屏窗口" + shapeWord(land);
+        }
+        if (!ManualOrientation.SHAPE_AUTO.equals(port)) {
+            base += " · 竖屏窗口" + shapeWord(port);
+        }
+        if (!ManualOrientation.FACING_AUTO.equals(facing)) {
+            base += " · 后摄转正" + facingWord(facing);
+        }
         // 【5.1.0】画面增强在摘要里必须出现，且写明它动的是画面 ——
         // 否则用户会以为「增强」还是指那行文字，改了也没人知道区别在哪。
         if (swScreenEnhance.isChecked()) {
@@ -848,6 +974,20 @@ public final class PreviewStyleActivity extends Activity {
         if (RearCameraOverlay.CORNER_TR.equals(key)) return "右上";
         if (RearCameraOverlay.CORNER_BL.equals(key)) return "左下";
         return "右下";
+    }
+
+    /** 【5.4.15】窗口形状的人话：横条/竖条（说的是窗口框，不是画面朝向） */
+    private String shapeWord(String shape) {
+        return ManualOrientation.SHAPE_LANDSCAPE.equals(shape) ? "横条" : "竖条";
+    }
+
+    /** 【5.4.15】转正方向的人话，带角度，方便用户对照目测结果 */
+    private String facingWord(String facing) {
+        if (ManualOrientation.FACING_UP.equals(facing)) return "上 0°";
+        if (ManualOrientation.FACING_RIGHT.equals(facing)) return "右 90°";
+        if (ManualOrientation.FACING_DOWN.equals(facing)) return "下 180°";
+        if (ManualOrientation.FACING_LEFT.equals(facing)) return "左 270°";
+        return "自动";
     }
 
     private void paintChip(TextView chip, boolean on) {

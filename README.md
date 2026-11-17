@@ -9,7 +9,7 @@
 - 增强方式：**LSPosed 模块**（作用域只需勾选「系统界面（SystemUI）」，不需要系统框架）；
   无障碍相关能力可独立使用，不依赖 root
 - 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**5.3.3**（2026-11-15）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
+- 当前版本：**5.4.16**（2026-11-17）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
 
 ## 📥 安装与更新
 
