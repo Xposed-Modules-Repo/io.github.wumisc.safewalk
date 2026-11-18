@@ -360,6 +360,8 @@ object SafeWalkPrefKey {
      * 选超广角而设备没有时自动回退主摄。纯显示参数，进白名单只为导出配置不丢。
      */
     const val rearCameraLens = "rearCameraLens"
+    /** 兼容别名：预览样式三级页用 cameraLens 指向同一偏好键，两个入口读写同一份配置 */
+    const val cameraLens = rearCameraLens
 
     /** [previewHudText] 为空时的兜底文案。短、中性、不解释实现。 */
     const val PREVIEW_HUD_TEXT_DEFAULT = "路况预览"

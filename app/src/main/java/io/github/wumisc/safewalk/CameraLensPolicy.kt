@@ -36,6 +36,11 @@ object CameraLensPolicy {
     /** 优先超广角，没有则回退主摄 */
     const val MODE_ULTRAWIDE = "ultrawide"
 
+    // 兼容别名：预览样式三级页（PreviewStyleActivity）用 LENS_* 命名同一组档位，
+    // 两个入口写同一个偏好、走同一套策略。值必须与 MODE_* 完全一致。
+    const val LENS_MAIN = MODE_MAIN
+    const val LENS_ULTRAWIDE = MODE_ULTRAWIDE
+
     /**
      * 判定「有超广角」的焦距比阈值：最短焦距 ≤ 最长焦距 × 该值才算广角。
      * 0.75 留足余量（超广角典型 0.5x），又不至于把同焦距的双摄误判成广角。
