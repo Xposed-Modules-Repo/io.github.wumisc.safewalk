@@ -12,6 +12,11 @@
 4. **急救卡字段扩展**：血型(A/B/AB/O/其他/未知)+Rh、年龄/性别、≥3 联系人、医保、器官捐献、隐私开关、医疗 QR；全部 EncryptedSharedPreferences 加密存储（AndroidKeyStore AES256-GCM），旧明文 7 字段幂等迁移。
 5. **AED 导航**：纯本地 GeoJSON（内置示范 + 用户自建）+ Haversine 500m 检索 + `geo:` 步行引导；无数据/无定位 100% 提示拨打 120。
 
+### 隐私开关（本版追加）
+
+- **隐藏桌面图标**：首页「隐私 → 隐藏桌面图标」用 `activity-alias` 双别名原子切换桌面启动图标（隐藏态无 LAUNCHER），切换幂等且 `MainActivity.onCreate` 以偏好校准实际状态；隐藏前强制确认框明示三条恢复路径（系统设置显示图标 / 控制中心磁贴进入 App / `adb shell am start` 显式启动），隐藏态下磁贴即恢复入口，确保不会「隐藏后再也打不开」。
+- **不显示在最近任务**：首页「隐私 → 不显示在最近任务」通过 `ActivityManager.AppTask.setExcludeFromRecents()`（API 21+ public API）运行时切换，新任务再叠加 `FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS`；不影响急救卡等已静态 `excludeFromRecents` 的 Activity。两项均为 App 本地偏好，不进 ConfigProvider 白名单、不导出 JSON。
+
 ### 隐私与安全（受控放宽）
 
 - 医疗字段**源数据**永不跨进程、永不落盘、永不进日志；ConfigProvider 白名单零医疗字段（单测铁律守护）。

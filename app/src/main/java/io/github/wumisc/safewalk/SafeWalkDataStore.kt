@@ -391,6 +391,33 @@ object SafeWalkPrefKey {
     /** 兼容别名：预览样式三级页用 cameraLens 指向同一偏好键，两个入口读写同一份配置 */
     const val cameraLens = rearCameraLens
 
+    // ==================================================================================
+    // 【5.5.0 隐私】桌面图标隐藏 / 最近任务隐藏
+    //
+    // 两项都是**纯 App 本地设置**：只由 App 进程读写 SharedPreferences，
+    // 与 SystemUI 进程里的 Hook 无关，因此**刻意不进** ConfigProvider.WHITELIST，
+    // 也不写进 safewalk_config.json——白名单只解决「Hook 跨进程读不到」，
+    // 往里塞用不上的键只会多一处两进程可能不一致的状态，还平白导出隐私偏好。
+    // ==================================================================================
+    /**
+     * 隐藏桌面启动图标（隐私 / 防查看场景），默认 false。
+     *
+     * 采用 activity-alias 双别名原子切换：隐藏时禁用带 LAUNCHER 的 [LauncherIconPolicy.ALIAS_NORMAL]、启用无
+     * LAUNCHER 的 [LauncherIconPolicy.ALIAS_HIDDEN]，桌面不再出现图标；恢复时反向切换。
+     * 因为隐藏后无法从桌面打开 App，必须保证至少一条 recovery 路径（确认对话框 + 控制中心磁贴 +
+     * 系统设置路径 + adb），见 [LauncherIconPolicy.recoveryMessage]。
+     */
+    const val hideLauncherIcon = "hideLauncherIcon"
+
+    /**
+     * 不出现在系统「最近任务 / 概览」列表（隐私场景），默认 false。
+     *
+     * 静态 android:excludeFromRecents 无法运行时切换，故由 MainActivity 在前台时
+     * 通过 ActivityManager.getAppTasks() → AppTask.setExcludeFromRecents()（API 21+ public API）
+     * 动态设置，新建任务时再叠加 Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS。见 [RecentTaskPolicy]。
+     */
+    const val hideFromRecentTasks = "hideFromRecentTasks"
+
     /** [previewHudText] 为空时的兜底文案。短、中性、不解释实现。 */
     const val PREVIEW_HUD_TEXT_DEFAULT = "路况预览"
 

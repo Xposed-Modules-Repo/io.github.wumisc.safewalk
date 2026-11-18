@@ -57,6 +57,18 @@ class WalkTileService : TileService() {
         super.onClick()
         DiagLog.init(applicationContext)
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
+
+        // 【5.5.0 隐私 · 恢复入口 ②】桌面图标隐藏后用户进不了 App，而磁贴不依赖桌面图标。
+        // 隐藏态下把磁贴临时改成「恢复入口」：点一下直接打开 MainActivity，用户即可关掉隐藏。
+        // 行走切换此时让位给恢复（隐藏态属于隐私优先场景），并在 toast 里说清，避免以为点坏了。
+        if (SafePrefs.getBool(sp, SafeWalkPrefKey.hideLauncherIcon, false)) {
+            DiagLog.log("[tile] 桌面图标处于隐藏态，磁贴作为恢复入口打开 App")
+            toast("已进入安全出行，可在首页恢复桌面图标")
+            startActivityAndCollapseCompat(mainIntent())
+            refreshTile()
+            return
+        }
+
         val master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
         val walk = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
         val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
@@ -122,9 +134,14 @@ class WalkTileService : TileService() {
         }
     }
 
-    private fun mainIntent(): Intent =
-        Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+    private fun mainIntent(): Intent {
+        // 最近任务也隐藏时，新任务从一开始就不进概览，避免恢复入口反而留下痕迹
+        val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
+        val hideRecent = SafePrefs.getBool(sp, SafeWalkPrefKey.hideFromRecentTasks, false)
+        return Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    or RecentTaskPolicy.launchFlags(hideRecent))
+    }
 
     /**
      * Android 14 起 `startActivityAndCollapse(Intent)` 被废弃，必须用 PendingIntent 版本
@@ -151,9 +168,14 @@ class WalkTileService : TileService() {
         val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
         tile.state = WalkTileStatePolicy.resolve(master, walk, auto)
         tile.label = getString(R.string.tile_walk_label)
-        tile.subtitle = WalkTileStatePolicy.subtitle(
-            master, walk, auto, WalkPreviewService.isAlive()
-        )
+        tile.subtitle = if (SafePrefs.getBool(sp, SafeWalkPrefKey.hideLauncherIcon, false)) {
+            // 隐藏态下磁贴就是恢复入口，副标题直接告诉用户「点它能进 App」
+            "图标已隐藏 · 点击进入 App 恢复"
+        } else {
+            WalkTileStatePolicy.subtitle(
+                master, walk, auto, WalkPreviewService.isAlive()
+            )
+        }
         tile.updateTile()
     }
 

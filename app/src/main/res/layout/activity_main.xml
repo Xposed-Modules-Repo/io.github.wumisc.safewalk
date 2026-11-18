@@ -364,6 +364,64 @@
                     </LinearLayout>
                 </LinearLayout>
 
+                <!--
+                    【5.5.0 隐私】两项本地隐私开关：
+                      · 隐藏桌面图标：防他人随手打开，隐藏后靠确认对话框 + 控制中心磁贴恢复；
+                      · 不显示在最近任务：从系统「最近任务」里抹掉本 App。
+                    两项都只改本机 App 行为，与 SystemUI 里的 Hook 无关。
+                -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@color/card_bg"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingLeft="16dp"
+                        android:paddingRight="16dp"
+                        android:paddingTop="12dp"
+                        android:text="隐私"
+                        android:textColor="@color/text_hint"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:id="@+id/btn_hide_launcher"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            android:id="@+id/tv_hide_launcher"
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="隐藏桌面图标" />
+
+                        <TextView
+                            android:id="@+id/tv_hide_launcher_state"
+                            style="@style/RowHint"
+                            android:text="已显示" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/btn_hide_recent"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            android:id="@+id/tv_hide_recent"
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="不显示在最近任务" />
+
+                        <TextView
+                            android:id="@+id/tv_hide_recent_state"
+                            style="@style/RowHint"
+                            android:text="已显示" />
+                    </LinearLayout>
+                </LinearLayout>
+
             </LinearLayout>
         </ScrollView>
 

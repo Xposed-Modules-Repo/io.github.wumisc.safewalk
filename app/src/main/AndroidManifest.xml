@@ -120,6 +120,15 @@
             android:name="android.app.shortcuts"
             android:resource="@xml/shortcuts" />
 
+        <!--
+            【5.5.0 隐私 · 桌面图标隐藏】真实 Activity 本身不再直接带 LAUNCHER。
+            保留 MAIN + INFO：INFO 供系统「应用信息」入口使用，与桌面图标无关。
+            桌面图标改由下面两个 activity-alias 承担，切换时原子 enable/disable：
+              · MainActivityAlias       —— 带 LAUNCHER，默认 enabled（正常有图标）
+              · MainActivityAliasHidden —— 无 LAUNCHER，默认 disabled（隐藏态）
+            两者 targetActivity 都指向本 Activity，所以无论哪个 enabled，点进去都是同一页；
+            且任一时刻恰好一个 enabled，绝不会出现两个图标或零个图标的竞态。
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -127,13 +136,37 @@
             android:theme="@style/Theme.Safewalk">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.INFO" />
             </intent-filter>
         </activity>
+
+        <!-- 正常态：带 LAUNCHER，默认启用，桌面上看到的就是它 -->
+        <activity-alias
+            android:name=".MainActivityAlias"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:label="安全出行">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
+            隐藏态：不声明 LAUNCHER intent-filter，即便 enabled 也不会在桌面生成图标。
+            默认 disabled；与上面那个 alias 始终保持「一开一关」。
+            注意：恢复用的 adb 命令指向真实 .MainActivity（exported=true），不指向本 alias，
+            所以这里 exported=false 不影响兜底恢复。
+        -->
+        <activity-alias
+            android:name=".MainActivityAliasHidden"
+            android:targetActivity=".MainActivity"
+            android:exported="false"
+            android:enabled="false"
+            android:label="安全出行" />
 
         <!--
             【模块4 初始化批量权限申请】首次安装引导页。

@@ -1,9 +1,12 @@
 package io.github.wumisc.safewalk;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ImageView;
@@ -41,6 +44,11 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     /** 升级后的「重启系统界面」提示是否正在显示，防止旋转屏等重建时叠两个框 */
     private boolean restartPromptShowing = false;
+
+    // ========== 【5.5.0 隐私】桌面图标隐藏 / 最近任务隐藏 ==========
+    private boolean hideLauncherIcon;
+    private boolean hideFromRecentTasks;
+    private TextView tvHideLauncherState, tvHideRecentState;
 
     // ========== 【系统 UI 适配 · 首页入口】 ==========
     // 4.3 起取代原来的「HyperOS 版本适配」三芯片。旧版让用户选 HyperOS 3 / 4，
@@ -111,6 +119,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 界面先建起来，权限再异步申请。
         // 之前缺权限直接 return，用户看到的是一整页空白磁贴，像是「App 坏了」。
         initUI();
+        // 【5.5.0 隐私】校准桌面图标 alias：偏好与系统实际状态可能不一致（用户曾在系统设置里
+        // 手动改过组件启用状态），这里以偏好为准恢复，避免「隐藏后图标还在 / 恢复后图标还是没了」。
+        calibrateLauncherIcon();
         // 把 SystemUI 进程（Hook）里攒的日志要过来，和本进程的写进同一个 diag.log：
         // 步态判定、手电、车祸检测都跑在那个进程，只看 App 侧日志等于没看
         requestHookLog();
@@ -466,6 +477,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             android.widget.Toast.makeText(this, nowOn ? "诊断日志已开" : "诊断日志已关",
                     android.widget.Toast.LENGTH_SHORT).show();
         });
+
+        // 【5.5.0 隐私】两项本地隐私开关
+        tvHideLauncherState = findViewById(R.id.tv_hide_launcher_state);
+        tvHideRecentState = findViewById(R.id.tv_hide_recent_state);
+        findViewById(R.id.btn_hide_launcher).setOnClickListener(v -> onToggleHideLauncher());
+        findViewById(R.id.btn_hide_recent).setOnClickListener(v -> onToggleHideRecent());
     }
 
     // ========== 配置读写 ==========
@@ -479,6 +496,11 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         swSocial = SafePrefs.getBool(sp, SafeWalkPrefKey.enableSocialTipCard, true);
         swNightTorch = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorch, true);
         swRearCam = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false);
+        // 【5.5.0 隐私】两项都是纯 App 本地设置，不进白名单、不导出 JSON
+        hideLauncherIcon = SafePrefs.getBool(sp, SafeWalkPrefKey.hideLauncherIcon, false);
+        hideFromRecentTasks = SafePrefs.getBool(sp, SafeWalkPrefKey.hideFromRecentTasks, false);
+        refreshPrivacyUi();
+        applyRecentTasks();
         // 【系统 UI 适配】生效值 = 手动指定优先，否则自动识别。统一走 RomSettings，
         // 不再各处直接调 RomDetector.detectFromBuild()，否则手选之后这页和引导页
         // 会得出两个不同的结论。
@@ -602,6 +624,121 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                 swEnable ? "总开关已开启，提醒恢复生效" : "总开关已关闭，所有提醒暂停",
                 Toast.LENGTH_SHORT).show();
         DiagLog.log("[ui] 总开关 → " + (swEnable ? "开" : "关"));
+    }
+
+    // ========== 【5.5.0 隐私】桌面图标隐藏 / 最近任务隐藏 ==========
+
+    /**
+     * 校准 alias：以 SharedPreferences 偏好为准，把「带 LAUNCHER / 无 LAUNCHER」两个别名
+     * 设到应处的状态。只在状态确实不同时才调用系统 API（[LauncherIconPolicy.needsChange]），
+     * 既满足「重复调用无副作用」，又避免每次进首页都触发桌面图标重建。
+     *
+     * 整个过程包 try/catch：部分 ROM 对 setComponentEnabledSetting 有限制，
+     * 失败不能让首页打不开 —— 而首页打不开恰恰是最严重的「隐藏后再也打不开」。
+     */
+    private void calibrateLauncherIcon() {
+        applyLauncherIcon(SafePrefs.getBool(xsp(), SafeWalkPrefKey.hideLauncherIcon, false));
+    }
+
+    private void applyLauncherIcon(boolean hide) {
+        try {
+            String pkg = getPackageName();
+            ComponentName normal = new ComponentName(pkg, pkg + "." + LauncherIconPolicy.ALIAS_NORMAL);
+            ComponentName hidden = new ComponentName(pkg, pkg + "." + LauncherIconPolicy.ALIAS_HIDDEN);
+            PackageManager pm = getPackageManager();
+            boolean normalShouldEnable = LauncherIconPolicy.normalAliasEnabled(hide);
+            boolean hiddenShouldEnable = LauncherIconPolicy.hiddenAliasEnabled(hide);
+            // 先启用目标、再禁用另一端，且 DONT_KILL_APP：
+            // 任何一步抛错都不会让 App 进程被系统重启，桌面图标最多闪一下。
+            if (LauncherIconPolicy.needsChange(
+                    pm.getComponentEnabledSetting(hidden), hiddenShouldEnable)) {
+                pm.setComponentEnabledSetting(hidden,
+                        LauncherIconPolicy.componentState(hiddenShouldEnable),
+                        PackageManager.DONT_KILL_APP);
+            }
+            if (LauncherIconPolicy.needsChange(
+                    pm.getComponentEnabledSetting(normal), normalShouldEnable)) {
+                pm.setComponentEnabledSetting(normal,
+                        LauncherIconPolicy.componentState(normalShouldEnable),
+                        PackageManager.DONT_KILL_APP);
+            }
+            DiagLog.log("[privacy] 桌面图标 alias 已对齐：hide=" + hide
+                    + " | normal=" + normalShouldEnable + " hidden=" + hiddenShouldEnable);
+        } catch (Throwable t) {
+            DiagLog.log("[privacy] 桌面图标 alias 切换失败: " + t.getMessage());
+        }
+    }
+
+    /** 隐藏前必须弹确认框，把系统级 / 磁贴 / adb 三条恢复路径一次讲清（功能 1 的 ①）。 */
+    private void onToggleHideLauncher() {
+        if (!hideLauncherIcon) {
+            new AlertDialog.Builder(this)
+                    .setTitle("隐藏桌面图标")
+                    .setMessage(LauncherIconPolicy.recoveryMessage(getPackageName()))
+                    .setPositiveButton("确认隐藏", (d, w) -> setHideLauncher(true))
+                    .setNegativeButton("取消", null)
+                    .show();
+        } else {
+            // 恢复是变安全的操作，无需二次确认
+            setHideLauncher(false);
+        }
+    }
+
+    private void setHideLauncher(boolean hide) {
+        hideLauncherIcon = hide;
+        xsp().edit().putBoolean(SafeWalkPrefKey.hideLauncherIcon, hide).commit();
+        applyLauncherIcon(hide);
+        refreshPrivacyUi();
+        // 磁贴是隐藏态下的恢复入口，状态变了让它下一次展开就对齐
+        WalkTileService.refresh(this);
+        Toast.makeText(this, hide ? "桌面图标已隐藏" : "桌面图标已恢复",
+                Toast.LENGTH_SHORT).show();
+        DiagLog.log("[privacy] 桌面图标隐藏 → " + hide);
+    }
+
+    private void onToggleHideRecent() {
+        hideFromRecentTasks = !hideFromRecentTasks;
+        xsp().edit().putBoolean(SafeWalkPrefKey.hideFromRecentTasks, hideFromRecentTasks).commit();
+        applyRecentTasks();
+        refreshPrivacyUi();
+        Toast.makeText(this,
+                hideFromRecentTasks ? "已不在最近任务中显示" : "已恢复显示在最近任务",
+                Toast.LENGTH_SHORT).show();
+        DiagLog.log("[privacy] 最近任务隐藏 → " + hideFromRecentTasks);
+    }
+
+    /**
+     * 运行时把本 App 的任务从「最近任务 / 概览」里抹掉。
+     *
+     * 用 API 21+ 的 public API ActivityManager.getAppTasks() → AppTask.setExcludeFromRecents()，
+     * 不走反射；静态 android:excludeFromRecents 无法运行时切换，所以不能只靠 Manifest。
+     * 另在 Activity 上写一条 TaskDescription，给用户一个可见的隐私提示。
+     * 全部 try/catch：失败只是「隐私开关这一项没生效」，绝不能连累首页打开。
+     */
+    private void applyRecentTasks() {
+        try {
+            setTaskDescription(new ActivityManager.TaskDescription(
+                    RecentTaskPolicy.taskDescriptionLabel("安全出行", hideFromRecentTasks)));
+        } catch (Throwable ignored) {
+        }
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            if (am == null) return;
+            for (ActivityManager.AppTask task : am.getAppTasks()) {
+                task.setExcludeFromRecents(hideFromRecentTasks);
+            }
+            DiagLog.log("[privacy] 最近任务排除 → " + hideFromRecentTasks);
+        } catch (Throwable t) {
+            DiagLog.log("[privacy] 最近任务设置失败: " + t.getMessage());
+        }
+    }
+
+    private void refreshPrivacyUi() {
+        if (tvHideLauncherState == null || tvHideRecentState == null) return;
+        tvHideLauncherState.setText(hideLauncherIcon ? "已隐藏" : "已显示");
+        tvHideLauncherState.setTextColor(hideLauncherIcon ? COLOR_ON : COLOR_OFF);
+        tvHideRecentState.setText(hideFromRecentTasks ? "已隐藏" : "已显示");
+        tvHideRecentState.setTextColor(hideFromRecentTasks ? COLOR_ON : COLOR_OFF);
     }
 
     // ========== 首次启动引导 ==========
