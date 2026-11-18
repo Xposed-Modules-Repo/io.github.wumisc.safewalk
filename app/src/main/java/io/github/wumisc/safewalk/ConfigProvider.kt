@@ -106,8 +106,8 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.landscapeWindowShape,
             SafeWalkPrefKey.portraitWindowShape,
             SafeWalkPrefKey.rearCameraFacing,
-            // 5.4.17 镜头选择（超广角优先 / 主摄），纯显示参数，进白名单只为导出配置带全。
-            SafeWalkPrefKey.cameraLens
+            // 路况预览镜头选择：纯显示参数，进白名单只为「导出配置带全」。
+            SafeWalkPrefKey.rearCameraLens
         )
     }
 

@@ -294,8 +294,11 @@ class RearCameraOverlay(
          * auto = 沿用 5.4.14 的 deg when 结果；显式选择只在横条小窗生效，竖条恒 0、全屏不套用。
          */
         val rearCameraFacing: String = ManualOrientation.FACING_AUTO,
-        /** 【5.4.17】镜头选择：ultrawide（超广角优先，无则主摄）/ main（强制主摄） */
-        val cameraLens: String = CameraLensPolicy.LENS_ULTRAWIDE
+        /**
+         * 【路况预览 · 镜头】用哪颗后置摄像头（auto/main/ultrawide，见 CameraLensPolicy）。
+         * 变化要触发相机重新打开（换 id），不进任何「原地快刷」分支。
+         */
+        val cameraLens: String = CameraLensPolicy.MODE_AUTO
     )
 
     private val wm = wmOverride
@@ -575,10 +578,9 @@ class RearCameraOverlay(
             return
         }
         try {
-            // 【5.4.17 省电】姿态判定只需要「横还是竖」，不需要高精度：从 UI 档(~60ms)
-            // 降到 NORMAL 档(~200ms)，传感器唤醒少约 3 倍。迟滞与驻留本来就在策略层
-            // (DevicePosePolicy) 做，不靠采样率；横竖判定慢这 200ms 用户无感。
-            val ok = sm.registerListener(poseListener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+            // SENSOR_DELAY_UI≈60ms：姿态判定只需要「横还是竖」，不需要高精度；
+            // 用 GAME 档在行走时白耗电。迟滞与驻留在策略层做，不靠采样率。
+            val ok = sm.registerListener(poseListener, sensor, SensorManager.SENSOR_DELAY_UI)
             poseTracking = ok
             // 注册结果必须回执：只有「注册成功」和「一个样本都没来」分开记，
             // 下次回传日志才能判断是没注册上，还是注册了但 ROM 不给数据。
@@ -784,8 +786,8 @@ class RearCameraOverlay(
         portraitWindowShape: String = ManualOrientation.SHAPE_AUTO,
         /** 【5.4.15】后摄转正方向：auto / up / right / down / left */
         rearCameraFacing: String = ManualOrientation.FACING_AUTO,
-        /** 【5.4.17】镜头选择：ultrawide（超广角优先，默认）/ main（强制主摄） */
-        cameraLens: String = CameraLensPolicy.LENS_ULTRAWIDE
+        /** 【路况预览 · 镜头】auto / main / ultrawide（见 CameraLensPolicy） */
+        cameraLens: String = CameraLensPolicy.MODE_AUTO
     ) {
         // 硬失败静默期：Hook 每 2s 一次 ACTION_HOOK_SHOW 会不断把我们叫醒，
         // 但「无相机权限」不会自己变好。静默期内直接拒绝拉起，
@@ -868,27 +870,28 @@ class RearCameraOverlay(
         val manualOrientChanged = target.landscapeWindowShape != style.landscapeWindowShape
                 || target.portraitWindowShape != style.portraitWindowShape
                 || target.rearCameraFacing != style.rearCameraFacing
-        // 【5.4.17 镜头】换镜头必须重开相机：物理镜头绑定在 CameraDevice 上，
-        // 只重算矩阵/曝光是不够的。单独拎出来，且**不能**并入下面的快路径。
+        // 【路况预览 · 镜头】换镜头 = 换相机 id，必须重新 openCamera，不能走任何原地快刷。
+        // 它不触发窗口/视图重建，只需在 style 落盘后主动 close → open（带 HAL 冷却）。
         val lensChanged = target.cameraLens != style.cameraLens
         // 预览没开时也会带着旧的 smallLock 回到这里（锁跨 hide/show 保留）。先在这里清掉，
         // 让「重建路径」按新值实时重算；下方快路径再清一次是幂等的，随后会重新建锁。
         if (manualOrientChanged) smallLock = null
-        // 换镜头：先关掉当前相机（推进代号、释放设备），让后面 openCamera 用新策略重开。
-        // 不在这里直接 open —— 关闭与重开之间要等 HAL 断开（openCamera 内已有冷却）。
-        if (lensChanged && camera != null) {
-            diag("[cam] 镜头档位变化 ${style.cameraLens} → ${target.cameraLens}，关闭当前相机准备重开")
-            closeCamera()
-        }
-        // 换镜头时不走快路径：必须落到下方重建，由 openCamera 按新档位选镜头。
-        if (!lensChanged && isShowing && rootView?.parent != null
+        if (isShowing && rootView?.parent != null
             && target.mode == style.mode
             && target.opacity == style.opacity
             && target.corner == style.corner
             && (hudChanged || geometryChanged || torchChanged || visualChanged
-                || lowLightChanged || enhanceChanged || rotationChanged || manualOrientChanged)
+                || lowLightChanged || enhanceChanged || rotationChanged || manualOrientChanged
+                || lensChanged)
         ) {
             style = target
+            // 【路况预览 · 镜头】换镜头要换相机 id：先关掉旧设备，再走带冷却的重开。
+            // closeCamera 会推进代号、作废在飞的回调，openCamera 内部等 HAL 断开。
+            if (lensChanged && isShowing) {
+                diag("[overlay] 镜头切换 → ${target.cameraLens}，关闭旧相机并重开")
+                closeCamera()
+                openCamera()
+            }
             if (hudChanged) applyHudStyle()
             if (enhanceChanged) applyScreenEnhance()
             if (geometryChanged) {
@@ -960,10 +963,6 @@ class RearCameraOverlay(
             releaseView()
         }
         apply()
-        // 【5.4.17 镜头】换镜头时上面已 closeCamera，但 SurfaceTexture 没重建，
-        // onSurfaceTextureAvailable 不会回调。这里显式重开一次：openCamera 自带
-        // REOPEN_GAP_MS 冷却与 opening/相机非空幂等保护，重复调用无害。
-        if (lensChanged && isShowing) openCamera()
     }
 
     /** 隐藏悬浮窗 */
@@ -2565,26 +2564,60 @@ class RearCameraOverlay(
         )
     }
 
+    /**
+     * 按用户选的镜头挑后置摄像头。
+     *
+     * 旧实现只返回「第一颗后置」，是哪颗全看厂商 id 顺序。现在把每颗后置的
+     * 焦距读出来交给 [CameraLensPolicy]：选超广角就挑焦距最短那颗（短到阈值以下
+     * 才算真有广角），选主摄挑焦距最长那颗，没有焦距信息时退回第一颗后置。
+     * 这样「无超广角自动用主摄代替」是策略层保证的，不会开出黑屏。
+     */
     private fun backCameraId(): String? {
-        return try {
-            // 【5.4.17 镜头选择】把所有相机的 facing + 焦距读出来，交给纯策略类选。
-            // 选不出来（无后置）时回 null，交给调用方的「找不到后置摄像头」分支。
-            val candidates = ArrayList<CameraLensPolicy.Candidate>(cm.cameraIdList.size)
+        try {
+            val candidates = ArrayList<CameraLensPolicy.Candidate>()
             for (id in cm.cameraIdList) {
                 val cc = cm.getCameraCharacteristics(id)
-                val facing = cc.get(CameraCharacteristics.LENS_FACING) ?: continue
-                // 注意 key 是 LENS_INFO_AVAILABLE_FOCAL_LENGTHS（float[]，单位 mm）：
-                // 定焦镜头只有一个值；可变焦镜头给区间，取第一个作为该镜头的代表焦距。
-                val focals = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                val focal = focals?.firstOrNull() ?: 0f
-                candidates.add(CameraLensPolicy.Candidate(id, facing, focal))
+                val back = cc.get(CameraCharacteristics.LENS_FACING) ==
+                        CameraCharacteristics.LENS_FACING_BACK
+                if (!back) {
+                    candidates.add(CameraLensPolicy.Candidate(id, false, null, null))
+                    continue
+                }
+                // 焦距列表：超广角判据。拿不到就留 null，策略层自动回退第一颗后置。
+                val focal = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                var minF: Float? = null
+                var maxF: Float? = null
+                if (focal != null && focal.isNotEmpty()) {
+                    var lo = Float.MAX_VALUE
+                    var hi = -1f
+                    for (f in focal) {
+                        if (f <= 0f) continue
+                        if (f < lo) lo = f
+                        if (f > hi) hi = f
+                    }
+                    if (lo != Float.MAX_VALUE) minF = lo
+                    if (hi > 0f) maxF = hi
+                }
+                candidates.add(CameraLensPolicy.Candidate(id, true, minF, maxF))
             }
-            val chosen = CameraLensPolicy.chooseCameraId(candidates, style.cameraLens)
-            // 一行日志说明这次到底选了哪颗、有没有真超广角，便于真机回传时排查。
-            diag("[cam] " + CameraLensPolicy.describe(candidates, style.cameraLens, chosen))
-            chosen
+            val picked = CameraLensPolicy.select(candidates, style.cameraLens)
+            if (picked != null) {
+                diag("[cam] 镜头选择=${style.cameraLens} → id=$picked"
+                        + " | 候选=" + candidates.filter { it.back }
+                        .joinToString { "${it.id}(${it.minFocalMm ?: "?"}~${it.maxFocalMm ?: "?"}mm)" })
+            }
+            return picked
         } catch (_: Throwable) {
-            null
+            // 任何异常都退回第一颗后置，保证「有摄像头就能出画面」这条底线
+            return try {
+                cm.cameraIdList.firstOrNull { id ->
+                    cm.getCameraCharacteristics(id)
+                        .get(CameraCharacteristics.LENS_FACING) ==
+                            CameraCharacteristics.LENS_FACING_BACK
+                }
+            } catch (_: Throwable) {
+                null
+            }
         }
     }
 }

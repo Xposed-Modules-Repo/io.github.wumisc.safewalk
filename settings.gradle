@@ -1,5 +1,7 @@
 pluginManagement {
     repositories {
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -8,6 +10,9 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // 国内镜像优先：api.xposed.info 在部分网络下不可达，
+        // 阿里云 public 代理了 de.robv.android.xposed:api，作为同一坐标的加速源。
+        maven { url 'https://maven.aliyun.com/repository/public' }
         google()
         mavenCentral()
         maven { url 'https://api.xposed.info/' }

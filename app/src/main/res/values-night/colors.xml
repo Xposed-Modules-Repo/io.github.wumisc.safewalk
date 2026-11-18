@@ -23,11 +23,13 @@
     <color name="primary">#0A84FF</color>
     <color name="on_accent">#FFFFFF</color>
 
-    <color name="golden">#FFD75E</color>
     <color name="accent_warn">#FF9F0A</color>
     <color name="beyond_orange">#FF9F0A</color>
     <color name="accent_green">#30D158</color>
     <color name="seal_red">#FF453A</color>
+
+    <!-- 致敬名单：祖师爷金色。深色底上用亮金，保证可读性 -->
+    <color name="gold">#F5D76E</color>
 
     <color name="chip_solid">#0A84FF</color>
     <color name="chip_stroke">#3A3A3C</color>

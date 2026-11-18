@@ -315,7 +315,7 @@ public class LandscapeNoRotateContractTest {
 
     // ==================== A 组 · 源码文本契约 ====================
 
-    /** A1 意图：版本号已升 5.4.17(82)，旧号 5.4.16/81 彻底清除（用户装新版才看到鱼头朝右）。 */
+    /** A1 意图：版本号已升 5.4.17(82)，旧号 5.4.16/81 彻底清除。 */
     @Test
     public void a1_versionBumpedTo5414Build79() {
         assertTrue("A1 build.gradle 须含 versionCode 82", gradleSrc.contains("versionCode 82"));

@@ -356,9 +356,9 @@ public class LeftDefaultFacingContractTest {
                         "rearCameraFacing: String = ManualOrientation.FACING_AUTO"));
         assertTrue("L3b Style 字段默认值仍是 FACING_AUTO（含 val 前缀）",
                 overlayCode.contains("val rearCameraFacing: String = ManualOrientation.FACING_AUTO"));
-        // 5.4.17 起 show() 在 rearCameraFacing 之后新增了 cameraLens 参数，
-        // 因此它不再是末参数：这里只要求默认值仍是 FACING_AUTO，后面跟逗号(其他参数)或右括号均可。
-        assertTrue("L3b show 参数默认值仍是 FACING_AUTO（后跟逗号或其他参数结束）",
+        // 5.4.17 起 show() 末尾新增 cameraLens 参数，故 FACING_AUTO 后可能是 ',' 而非 ')'。
+        // 契约仍是「show 参数的 rearCameraFacing 默认值保持 FACING_AUTO」。
+        assertTrue("L3b show 参数默认值仍是 FACING_AUTO（其后为 ',' 或 ')' 均可）",
                 countRegex(overlayCode,
                         "rearCameraFacing: String = ManualOrientation\\.FACING_AUTO\\s*[,)]") >= 1);
     }

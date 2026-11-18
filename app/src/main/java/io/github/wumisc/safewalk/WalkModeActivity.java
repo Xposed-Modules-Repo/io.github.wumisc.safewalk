@@ -33,6 +33,12 @@ public final class WalkModeActivity extends Activity {
     private TextView tvGaitDiagnosis;
     private View cardGaitDiagnosis;
     private TextView[] modeChips, posChips;
+    /** 【路况预览 · 镜头】主摄 / 超广角 两个芯片 */
+    private TextView[] lensChips;
+    private static final String[] LENS_KEYS = {
+            CameraLensPolicy.MODE_MAIN, CameraLensPolicy.MODE_ULTRAWIDE
+    };
+    private String rearLens = CameraLensPolicy.MODE_AUTO;
 
     // 【新增对比度 UI 模块】增强对比度独立开关（整卡可点）
     private SwitchCompat swPreviewContrast;
@@ -116,6 +122,10 @@ public final class WalkModeActivity extends Activity {
                 findViewById(R.id.chip_pos_tr),
                 findViewById(R.id.chip_pos_tl)
         };
+        lensChips = new TextView[]{
+                findViewById(R.id.chip_lens_main),
+                findViewById(R.id.chip_lens_ultrawide)
+        };
 
         findViewById(R.id.card_rear_cam).setOnClickListener(v -> swRearCam.toggle());
         // 整卡可点切自动开关；自动开关关 = 手动常显（2.10 的默认行为）
@@ -127,6 +137,10 @@ public final class WalkModeActivity extends Activity {
         for (int i = 0; i < POS_KEYS.length; i++) {
             final String key = POS_KEYS[i];
             posChips[i].setOnClickListener(v -> selectCorner(key));
+        }
+        for (int i = 0; i < LENS_KEYS.length; i++) {
+            final String key = LENS_KEYS[i];
+            lensChips[i].setOnClickListener(v -> selectLens(key));
         }
 
         // 重启系统界面：整卡可点，右侧按钮只是视觉提示（点按钮会冒泡到卡片）
@@ -166,6 +180,10 @@ public final class WalkModeActivity extends Activity {
         if (rearMode == null) rearMode = RearCameraOverlay.MODE_FULLSCREEN;
         rearCorner = SafePrefs.getString(sp, SafeWalkPrefKey.rearCamCorner, "bottom_right");
         if (rearCorner == null) rearCorner = "bottom_right";
+        // 【路况预览 · 镜头】auto 归一到 ultrawide（默认超广角，无则回退主摄）
+        rearLens = CameraLensPolicy.normalize(
+                SafePrefs.getString(sp, SafeWalkPrefKey.rearCameraLens,
+                        CameraLensPolicy.MODE_AUTO));
 
         int opacity = SafePrefs.getInt(sp, SafeWalkPrefKey.rearCamOpacity, 50);
         opacity = Math.max(10, Math.min(100, opacity));
@@ -327,6 +345,19 @@ public final class WalkModeActivity extends Activity {
         }
         rearCorner = corner;
         sp.edit().putString(SafeWalkPrefKey.rearCamCorner, corner).commit();
+        SafeWalkConfig.exportConfig(this);
+        refreshAll();
+        previewIfEnabled();
+    }
+
+    /** 【路况预览 · 镜头】主摄 / 超广角：选中即落盘并让预览重开相机 */
+    private void selectLens(String lens) {
+        if (!swRearCam.isChecked()) {
+            Toast.makeText(this, "先打开上方的行走模式开关", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        rearLens = CameraLensPolicy.normalize(lens);
+        sp.edit().putString(SafeWalkPrefKey.rearCameraLens, rearLens).commit();
         SafeWalkConfig.exportConfig(this);
         refreshAll();
         previewIfEnabled();
@@ -546,6 +577,7 @@ public final class WalkModeActivity extends Activity {
         refreshDependencies();
         refreshModeChips();
         refreshPosChips();
+        refreshLensChips();
         refreshGaitDiagnosis();
         // 「系统 UI 适配」卡片在首页，本页不刷新它。
     }
@@ -702,6 +734,14 @@ public final class WalkModeActivity extends Activity {
     private void refreshPosChips() {
         for (int i = 0; i < POS_KEYS.length; i++) {
             paintChip(posChips[i], POS_KEYS[i].equals(rearCorner));
+        }
+    }
+
+    private void refreshLensChips() {
+        // auto 归一到 ultrawide，所以默认高亮「超广角」
+        String effective = CameraLensPolicy.normalize(rearLens);
+        for (int i = 0; i < LENS_KEYS.length; i++) {
+            paintChip(lensChips[i], LENS_KEYS[i].equals(effective));
         }
     }
 

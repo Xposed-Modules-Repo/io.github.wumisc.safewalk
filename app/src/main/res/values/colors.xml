@@ -30,14 +30,14 @@
     <color name="primary">#007AFF</color>
     <color name="on_accent">#FFFFFF</color>
 
-    <!-- 金色：致敬名单里的项目起源作者（祖师爷）专用，浅色底用深色金保证可读 -->
-    <color name="golden">#9A7B0F</color>
-
     <!-- 语义色：警告 / 正常 / 危险（急救提醒用） -->
     <color name="accent_warn">#FF9500</color>
     <color name="beyond_orange">#FF9500</color>
     <color name="accent_green">#34C759</color>
     <color name="seal_red">#C8392E</color>
+
+    <!-- 致敬名单：项目起源作者（祖师爷）专用金色。浅色底上用较深的金，保证对比度 -->
+    <color name="gold">#9A7B0F</color>
 
     <!-- 选项胶囊：选中实底 / 未选中描边由 drawable 引用 -->
     <color name="chip_solid">#007AFF</color>

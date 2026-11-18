@@ -452,7 +452,10 @@ public class ManualOrientationContractTest {
         assertTrue("A6 变化即清锁（含预览未开的重建路径）",
                 overlayCode.contains("if (manualOrientChanged) smallLock = null"));
         assertTrue("A6 纳入快路径触发条件",
-                overlayCode.contains("|| lowLightChanged || enhanceChanged || rotationChanged || manualOrientChanged)"));
+                overlayCode.contains("|| lowLightChanged || enhanceChanged || rotationChanged || manualOrientChanged")
+                        && (overlayCode.contains("|| manualOrientChanged)")
+                                || overlayCode.contains("|| manualOrientChanged\n")
+                                || overlayCode.contains("|| manualOrientChanged\t")));
         assertTrue("A6 快路径内重算调用",
                 overlayCode.contains("if (manualOrientChanged) reapplyManualOrientation()"));
         assertTrue("A6 reapply 方法存在", overlayCode.contains(REAPPLY_SIG));

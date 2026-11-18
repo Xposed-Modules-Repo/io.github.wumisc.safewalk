@@ -1486,11 +1486,11 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             } catch (t: Throwable) {
                 diag("tick: $t")
             }
-            // 【5.4.17 省电】总开关关闭时巡检从 5s 拉长到 30s：关闭态 check() 无实际
-            // 输出（步态提醒/预览都不该发生），5s 一次纯属空转唤醒。拉到 30s 少 6 倍
-            // 唤醒，同时保留低频哨兵，避免完全停 tick 后漏掉配置变化之外的兜底唤醒。
-            // 用户打开总开关的响应不受影响：configChangedReceiver 会立即 refresh+updateOverlay。
-            val interval = if (masterEnabled()) 2_000L else 30_000L
+            val now = System.currentTimeMillis()
+            // 【省电计划】自适应节拍：只在「正在走 / 预览显示中」维持 2 秒响应，
+            // 静置时放慢到 5 秒。计步是传感器事件驱动，放慢轮询不影响走路检测延迟。
+            val previewActive = lastSentShow == true || previewUntil > now
+            val interval = PowerPolicy.tickIntervalMs(masterEnabled(), walking, previewActive)
             Handler(Looper.getMainLooper()).postDelayed(this, interval)
         }
     }
