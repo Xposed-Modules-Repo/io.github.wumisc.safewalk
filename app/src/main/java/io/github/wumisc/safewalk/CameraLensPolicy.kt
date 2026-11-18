@@ -47,6 +47,41 @@ object CameraLensPolicy {
      */
     const val ULTRAWIDE_FOCAL_RATIO = 0.75f
 
+    /**
+     * 逻辑摄像头切超广角要下发的 zoom ratio。0.6 ≈ 业界通称的「0.6x 超广角」，
+     * 系统会据此把物理镜头从主摄切到超广角；在只暴露一颗后置 id 的机型上，
+     * 这是唯一可行的超广角入口（见 [zoomForLogicalUltrawide]）。
+     */
+    const val ULTRAWIDE_ZOOM = 0.6f
+
+    /**
+     * 逻辑摄像头场景：要不要下发 [ULTRAWIDE_ZOOM]，即 0.6x 超广角。
+     *
+     * 现代机型（小米 / OPPO / vivo / Pixel / 多数三星）只暴露一颗后置 id，
+     * 超广角靠 zoom ratio 切换——`CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE`
+     * 的下限 < 1.0 就说明它支持广角端。此时把 [ULTRAWIDE_ZOOM] 下发到
+     * `CaptureRequest.CONTROL_ZOOM_RATIO`，HAL 会自动切到超广角物理镜头，
+     * 画面就是用户说的「0.6 倍裁切 / 0.6x 视野」。
+     *
+     * 下限 ≥ 1.0 或读不到 range → 该逻辑摄像头没有广角端，返回 null（保持主摄 1.0），
+     * 配合独立 id 路径的回退，实现「无超广角用主摄代替」。
+     *
+     * @param mode        用户选的镜头档位
+     * @param zoomLower   CONTROL_ZOOM_RATIO_RANGE.lower；读不到传 null
+     * @param zoomUpper   CONTROL_ZOOM_RATIO_RANGE.upper；读不到传 null
+     * @return 要下发的 zoom ratio；null 表示保持默认 1.0（不下发该 key）
+     */
+    @JvmStatic
+    fun zoomForLogicalUltrawide(mode: String?, zoomLower: Float?, zoomUpper: Float?): Float? {
+        // 用户明确要主摄：绝不下发 <1 的 zoom，保持原生 1.0
+        if (normalize(mode) == MODE_MAIN) return null
+        // 没有 range：该设备不支持 zoom ratio 控制，走独立 id 路径，这里不干预
+        if (zoomLower == null || zoomUpper == null) return null
+        if (zoomLower >= 1f || zoomUpper < zoomLower) return null
+        // 把目标 0.6 夹在设备支持范围内：下限可能是 0.5，也可能是 0.7
+        return ULTRAWIDE_ZOOM.coerceIn(zoomLower, zoomUpper)
+    }
+
     /** 写错的值一律按超广角（默认带回退，是用户认可的默认档） */
     @JvmStatic
     fun normalize(mode: String?): String = when (mode) {

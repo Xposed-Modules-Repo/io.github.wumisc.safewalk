@@ -18,14 +18,14 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * 【5.4.16(81) 后摄默认 left】配置读取 fallback 由 FACING_AUTO 改为 FACING_LEFT 的专项契约用例。
+ * 【5.4.17(81) 后摄默认 left】配置读取 fallback 由 FACING_AUTO 改为 FACING_LEFT 的专项契约用例。
  *
  * <p><b>本轮生产改动只有 3 处 fallback + 版本字段：</b></p>
  * <ol>
  *   <li>{@code WalkPreviewService.java:901}（渲染生效点）{@code rearCameraFacing} 读取的
  *       {@code SafePrefs.getString} 第三参数 {@code FACING_AUTO → FACING_LEFT}；</li>
  *   <li>{@code PreviewStyleActivity.java:793}（paintChip 回显）、{@code :946}（诊断摘要）各一处；</li>
- *   <li>{@code build.gradle} 80/5.4.15 → 81/5.4.16。</li>
+ *   <li>{@code build.gradle} 80/5.4.15 → 81/5.4.17。</li>
  * </ol>
  *
  * <p><b>锁死边界（本轮"只改读取层 fallback"）：</b>A2/A7/A4 契约点、
@@ -423,13 +423,13 @@ public class LeftDefaultFacingContractTest {
 
     // ==================== L5 · 版本断言 ====================
 
-    /** L5 意图：版本升到 82/5.4.17，旧号 81/5.4.16 清干净。 */
+    /** L5 意图：版本升到 83/5.4.18，旧号 81/5.4.17 清干净。 */
     @Test
     public void l5_versionIs81Build5416NoOldNumbers() {
-        assertTrue("L5 build.gradle 须含 versionCode 82", gradleSrc.contains("versionCode 82"));
-        assertTrue("L5 build.gradle 须含 versionName \"5.4.17\"",
-                gradleSrc.contains("versionName \"5.4.17\""));
-        assertFalse("L5 须已无 versionCode 81", gradleSrc.contains("versionCode 81"));
-        assertFalse("L5 须已无 5.4.16", gradleSrc.contains("5.4.16"));
+        assertTrue("L5 build.gradle 须含 versionCode 83", gradleSrc.contains("versionCode 83"));
+        assertTrue("L5 build.gradle 须含 versionName \"5.4.18\"",
+                gradleSrc.contains("versionName \"5.4.18\""));
+        assertFalse("L5 须已无 versionCode 82", gradleSrc.contains("versionCode 82"));
+        assertFalse("L5 须已无 5.4.17", gradleSrc.contains("5.4.17"));
     }
 }

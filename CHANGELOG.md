@@ -1,5 +1,27 @@
 # 更新日志
 
+## [5.4.18] - 2026-11-18 修复版：逻辑摄像头 0.6x 超广角真正生效 + 起源作者实名署名
+
+### 范围
+
+- **修复「切了超广角没反应」**：5.4.17 只在摄像头 id 列表里按焦距找独立超广角镜头，
+  但小米 / OPPO / vivo / Pixel / 多数三星等**逻辑摄像头**机型只暴露一颗后置 id，
+  超广角藏在背后、必须靠 `CONTROL_ZOOM_RATIO=0.6` 才能切过去 —— 那些机型上旧实现
+  找不到独立广角 id 就回退主摄，等于没切。本次新增 `CameraLensPolicy.zoomForLogicalUltrawide`：
+  读 `CONTROL_ZOOM_RATIO_RANGE`，下限 <1 就把 0.6x（按设备下限夹取）下发到
+  `CaptureRequest.CONTROL_ZOOM_RATIO`，HAL 自动切到超广角物理镜头，拿到用户要的
+  **0.6 倍广角视野**；无广角端 / 读不到 range 则保持原生 1.0，配合原有「回退主摄」策略。
+  诊断日志新增 `zoom=` 与 `zoomRange=`，可在诊断页核对是否命中超广角。
+- **起源作者实名署名**：致敬名单第一项由敷衍的「2012 Transparent Screen app 作者」
+  改为 **「宋思雨（Song Siyu）· 2012 Transparent Screen 作者」**。经联网核实：
+  Song Siyu 是该 App（包名 `com.ellipselab.android.transparentscreen.free`，2012-03-14
+  发布）的开发者，也是「边走路边看手机、用后摄透视前方」这一想法的最早提出者 ——
+  即本模块「路况预览」玩法的真正源头。仍为金色祖师爷条目 + 可点击原下载页。
+
+### 测试
+
+- 新增 `CameraLensPolicyTest` 4 例（0.6x 下发 / 下限夹取 / 主摄档不下发 / 无广角回退）。
+
 ## [5.4.17] - 2026-11-18 稳定版：路况预览超广角 + 致敬名单祖师爷金色署名 + 省电计划
 
 ### 范围

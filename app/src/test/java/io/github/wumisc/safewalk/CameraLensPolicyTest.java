@@ -116,4 +116,39 @@ public class CameraLensPolicyTest {
         assertEquals(null, CameraLensPolicy.select(
                 Collections.<CameraLensPolicy.Candidate>emptyList(), CameraLensPolicy.MODE_MAIN));
     }
+
+    // ==================== 逻辑摄像头 zoom ratio（0.6x 超广角）====================
+
+    @Test
+    public void logicalUltrawide_applies06xWhenRangeSupportsIt() {
+        // 典型逻辑摄像头：zoom range [0.6, 8.0]，选超广角 → 下发 0.6
+        assertEquals(Float.valueOf(0.6f), CameraLensPolicy.zoomForLogicalUltrawide(
+                CameraLensPolicy.MODE_ULTRAWIDE, 0.6f, 8.0f));
+        assertEquals(Float.valueOf(0.6f), CameraLensPolicy.zoomForLogicalUltrawide(
+                CameraLensPolicy.MODE_AUTO, 0.5f, 10.0f));
+    }
+
+    @Test
+    public void logicalUltrawide_clampsToDeviceLowerBound() {
+        // 下限 0.7（比 0.6 窄）：夹到设备下限 0.7，仍是广角端
+        assertEquals(Float.valueOf(0.7f), CameraLensPolicy.zoomForLogicalUltrawide(
+                CameraLensPolicy.MODE_ULTRAWIDE, 0.7f, 5.0f));
+    }
+
+    @Test
+    public void mainMode_neverAppliesZoom() {
+        // 用户明确选主摄：不管 range 如何都不下发（保持原生 1.0）
+        assertEquals(null, CameraLensPolicy.zoomForLogicalUltrawide(
+                CameraLensPolicy.MODE_MAIN, 0.5f, 8.0f));
+    }
+
+    @Test
+    public void noUltrawideCapability_returnsNull() {
+        // 下限 >= 1：没有广角端 → 保持原生，配合回退主摄
+        assertEquals(null, CameraLensPolicy.zoomForLogicalUltrawide(
+                CameraLensPolicy.MODE_ULTRAWIDE, 1.0f, 8.0f));
+        // 读不到 range：走独立 id 路径，这里不干预
+        assertEquals(null, CameraLensPolicy.zoomForLogicalUltrawide(
+                CameraLensPolicy.MODE_ULTRAWIDE, null, null));
+    }
 }

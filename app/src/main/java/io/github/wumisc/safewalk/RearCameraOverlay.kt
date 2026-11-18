@@ -404,6 +404,15 @@ class RearCameraOverlay(
     private var aeCompTarget = 0
 
     /**
+     * 【路况预览 · 超广角】逻辑摄像头要下发的 zoom ratio。
+     *
+     * 现代机型只暴露一颗后置 id，超广角靠 `CONTROL_ZOOM_RATIO=0.6` 切换（见
+     * [CameraLensPolicy.zoomForLogicalUltrawide]）。由 [backCameraId] 在选中相机时
+     * 读该 id 的 zoom range 决定；null = 不下发该 key，保持原生 1.0（主摄 / 无广角机型）。
+     */
+    private var requestedZoomRatio: Float? = null
+
+    /**
      * 【5.3.0 画面方向】后置传感器的安装角度。
      *
      * 绝大多数手机后摄是「横装在机身里」的（SENSOR_ORIENTATION = 90），
@@ -2156,9 +2165,16 @@ class RearCameraOverlay(
         if (style.lowLight && aeCompTarget > 0 && !(style.torchWithPreview && flashAvailable)) {
             builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, aeCompTarget)
         }
+        // 【路况预览 · 超广角】逻辑摄像头机型：同一颗后置 id 上把 zoom 拉到 0.6x，
+        // HAL 自动切到超广角物理镜头，拿到用户要的「0.6 倍」视野。null 时不下发，
+        // 保持原生 1.0（独立超广角 id 机型 / 无广角机型 / 主摄档）。
+        val zoom = requestedZoomRatio
+        if (zoom != null) {
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom)
+        }
         val torchOn = style.torchWithPreview && flashAvailable
         val aeCompApplied = style.lowLight && aeCompTarget > 0 && !torchOn
-        diag("[cam] preview req | torch=$torchOn flash=${if (torchOn) "TORCH" else "-"} aeComp=${if (aeCompApplied) aeCompTarget else 0} lowLight=${style.lowLight}")
+        diag("[cam] preview req | torch=$torchOn flash=${if (torchOn) "TORCH" else "-"} aeComp=${if (aeCompApplied) aeCompTarget else 0} lowLight=${style.lowLight} zoom=${zoom ?: 1.0f}")
         return builder.build()
     }
 
@@ -2602,12 +2618,24 @@ class RearCameraOverlay(
             }
             val picked = CameraLensPolicy.select(candidates, style.cameraLens)
             if (picked != null) {
+                // 【超广角 · 逻辑摄像头】关键是这里：现代机型 cameraIdList 只有一颗后置，
+                // 超广角不是独立 id，而是同一颗 id 上把 CONTROL_ZOOM_RATIO 拉到 0.6x。
+                // 读不到 range / 下限 ≥1（无广角端）时策略返回 null → 保持原生 1.0。
+                val pickedChars = cm.getCameraCharacteristics(picked)
+                val zoomRange = pickedChars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+                requestedZoomRatio = CameraLensPolicy.zoomForLogicalUltrawide(
+                    style.cameraLens, zoomRange?.lower, zoomRange?.upper)
                 diag("[cam] 镜头选择=${style.cameraLens} → id=$picked"
+                        + " zoom=" + (requestedZoomRatio?.toString() ?: "1.0(原生)")
+                        + " zoomRange=" + (zoomRange?.let { "${it.lower}~${it.upper}" } ?: "不支持")
                         + " | 候选=" + candidates.filter { it.back }
                         .joinToString { "${it.id}(${it.minFocalMm ?: "?"}~${it.maxFocalMm ?: "?"}mm)" })
+            } else {
+                requestedZoomRatio = null
             }
             return picked
         } catch (_: Throwable) {
+            requestedZoomRatio = null
             // 任何异常都退回第一颗后置，保证「有摄像头就能出画面」这条底线
             return try {
                 cm.cameraIdList.firstOrNull { id ->

@@ -110,10 +110,12 @@ public class AcknowledgementsActivity extends Activity {
         // 项目起源：这两位才是整个「边走边看路况」玩法的祖师爷。放在最前面、
         // 金色字体 + 可点击链接，向先行者致敬（2026-11-18 应要求置顶）。
         out.add(new Section("项目起源 · 祖师爷（向先行者致敬）", new Item[]{
-                new Item("2012 Transparent Screen app 作者",
-                        "2012 年的 Transparent Screen 用后置摄像头把画面铺满屏幕，"
-                                + "第一次让「边走路边看手机还能看见前方」成为现实 —— "
-                                + "这是本模块「路况预览」玩法的最早源头。",
+                new Item("宋思雨（Song Siyu）· 2012 Transparent Screen 作者",
+                        "宋思雨（Song Siyu）是 2012 年 Transparent Screen（包名 "
+                                + "com.ellipselab.android.transparentscreen.free）的开发者，"
+                                + "是最早想到「边走路边看手机、用后置摄像头透视前方」的人。"
+                                + "这个念头正是本模块「路况预览」玩法的源头 —— "
+                                + "2012-03-14 发布，比所有同类实现都早。",
                         ADOPTED_ORIGIN, "https://transparent-screen.en.uptodown.com/android"),
                 new Item("dhiru1602 的 NamelessROM On-The-Go Mode",
                         "NamelessROM 的 On-The-Go Mode 把这套「透明屏幕」思路做进了系统 ROM，"
