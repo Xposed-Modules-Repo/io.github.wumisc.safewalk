@@ -354,6 +354,13 @@ object SafeWalkPrefKey {
      */
     const val rearCameraFacing = "rearCameraFacing"
 
+    /**
+     * 【5.4.17 镜头选择】路况预览用哪颗后置摄像头：
+     * `ultrawide`（默认，超广角优先、无则主摄）/ `main`（强制主摄）。
+     * 归一与选镜逻辑集中在 [CameraLensPolicy]。
+     */
+    const val cameraLens = "cameraLens"
+
     /** [previewHudText] 为空时的兜底文案。短、中性、不解释实现。 */
     const val PREVIEW_HUD_TEXT_DEFAULT = "路况预览"
 

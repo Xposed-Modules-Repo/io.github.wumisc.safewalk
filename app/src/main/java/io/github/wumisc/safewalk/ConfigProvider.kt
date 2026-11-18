@@ -105,7 +105,9 @@ class ConfigProvider : ContentProvider() {
             // 不含任何隐私字段；进白名单只为「导出配置带全」与跨进程读到当前档位。
             SafeWalkPrefKey.landscapeWindowShape,
             SafeWalkPrefKey.portraitWindowShape,
-            SafeWalkPrefKey.rearCameraFacing
+            SafeWalkPrefKey.rearCameraFacing,
+            // 5.4.17 镜头选择（超广角优先 / 主摄），纯显示参数，进白名单只为导出配置带全。
+            SafeWalkPrefKey.cameraLens
         )
     }
 

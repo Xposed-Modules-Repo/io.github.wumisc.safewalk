@@ -30,6 +30,9 @@
     <color name="primary">#007AFF</color>
     <color name="on_accent">#FFFFFF</color>
 
+    <!-- 金色：致敬名单里的项目起源作者（祖师爷）专用，浅色底用深色金保证可读 -->
+    <color name="golden">#9A7B0F</color>
+
     <!-- 语义色：警告 / 正常 / 危险（急救提醒用） -->
     <color name="accent_warn">#FF9500</color>
     <color name="beyond_orange">#FF9500</color>

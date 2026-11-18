@@ -901,11 +901,15 @@ public final class WalkPreviewService extends Service {
         String rearCameraFacing = ManualOrientation.normalizeFacing(
                 SafePrefs.getString(sp, SafeWalkPrefKey.rearCameraFacing,
                         ManualOrientation.FACING_LEFT));
+        // 【5.4.17 镜头选择】默认超广角优先；归一后渲染层只收到合法档位。
+        String cameraLens = CameraLensPolicy.normalize(
+                SafePrefs.getString(sp, SafeWalkPrefKey.cameraLens,
+                        CameraLensPolicy.LENS_ULTRAWIDE));
 
         overlay.show(mode, opacity, corner, contrast, torchWithPreview, contrastLevel,
                 hudText, hudSize, smallWidth, smallMargin, framing, border, lowLight,
                 screenEnhance, screenContrast, screenShadow, screenSat, rotationMode,
-                landscapeWindowShape, portraitWindowShape, rearCameraFacing);
+                landscapeWindowShape, portraitWindowShape, rearCameraFacing, cameraLens);
         DiagLog.log("[torch:overlay] 小窗联动闪光灯 | 开关=" + linkEnabled
                 + " 夜间区间=" + night + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
                 + " | 生命周期=小窗显示即亮、收起即灭（预览会话内 FLASH_MODE_TORCH）");

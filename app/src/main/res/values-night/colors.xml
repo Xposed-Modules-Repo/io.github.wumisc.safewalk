@@ -23,6 +23,7 @@
     <color name="primary">#0A84FF</color>
     <color name="on_accent">#FFFFFF</color>
 
+    <color name="golden">#FFD75E</color>
     <color name="accent_warn">#FF9F0A</color>
     <color name="beyond_orange">#FF9F0A</color>
     <color name="accent_green">#30D158</color>

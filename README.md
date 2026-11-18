@@ -9,7 +9,7 @@
 - 增强方式：**LSPosed 模块**（作用域只需勾选「系统界面（SystemUI）」，不需要系统框架）；
   无障碍相关能力可独立使用，不依赖 root
 - 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**5.4.16**（2026-11-17）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
+- 当前版本：**5.4.17**（2026-11-18）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
 
 ## 📥 安装与更新
 
@@ -191,6 +191,11 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 ---
 
 ## 🎖️ 致敬
+
+> <span style="color:#C9A227">**项目起源 · 祖师爷**</span> —— 「用后置摄像头透视路况」这一思路的最早实践者，本项目由他们发源：
+
+- <span style="color:#C9A227">**[botweb · Transparent Screen（2012）](https://play.google.com/store/apps/details?id=botweb.transparent.screen)**</span> —— 2012 年上线的「透明屏幕」App，把后置摄像头画面垫在屏幕底层，边走边看手机也不撞人。开山之作。
+- <span style="color:#C9A227">**[dhiru1602 · NamelessROM On-The-Go Mode](https://github.com/dhiru1602)**</span> —— 把透明屏幕做进 ROM 的先驱，用一个快捷开关让系统整体半透明，证明这条思路可以深入系统层。
 
 建立在 **LSPosed / Xposed** 之上，算法与架构思路参考：
 

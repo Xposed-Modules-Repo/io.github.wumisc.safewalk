@@ -848,6 +848,68 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- ============ 路况镜头（5.4.17 超广角优先） ============ -->
+        <TextView
+            style="@style/SectionLabel"
+            android:text="@string/camera_lens_title" />
+
+        <LinearLayout style="@style/CardStyle">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="14dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="身后路况用哪颗摄像头"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/chip_lens_ultrawide"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="超广角优先"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/chip_lens_main"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_choice_chip"
+                        android:gravity="center"
+                        android:text="主摄"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="@string/camera_lens_hint"
+                    android:textColor="@color/text_hint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- ============ 尺寸（仅角落小窗） ============ -->
         <TextView
             style="@style/SectionLabel"

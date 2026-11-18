@@ -90,7 +90,16 @@ public final class PreviewStyleActivity extends Activity {
             ManualOrientation.FACING_DOWN,
             ManualOrientation.FACING_LEFT
     };
-    private TextView[] landscapeShapeChips, portraitShapeChips, facingChips;
+
+    /**
+     * 【5.4.17 镜头】两档：超广角优先（默认，无则主摄）/ 强制主摄。
+     * 下标与布局 chip_lens_ultrawide / chip_lens_main 一一对应。
+     */
+    private static final String[] LENS_MODES = {
+            CameraLensPolicy.LENS_ULTRAWIDE,
+            CameraLensPolicy.LENS_MAIN
+    };
+    private TextView[] landscapeShapeChips, portraitShapeChips, facingChips, lensChips;
 
     private String rearMode = RearCameraOverlay.MODE_FULLSCREEN;
     private String rearCorner = RearCameraOverlay.CORNER_BR;
@@ -166,6 +175,11 @@ public final class PreviewStyleActivity extends Activity {
                 findViewById(R.id.chip_facing_right),
                 findViewById(R.id.chip_facing_down),
                 findViewById(R.id.chip_facing_left)
+        };
+        // 【5.4.17 镜头】路况镜头两档
+        lensChips = new TextView[]{
+                findViewById(R.id.chip_lens_ultrawide),
+                findViewById(R.id.chip_lens_main)
         };
 
         tvFraming = findViewById(R.id.tv_framing);
@@ -334,6 +348,11 @@ public final class PreviewStyleActivity extends Activity {
         for (int i = 0; i < FACING_MODES.length; i++) {
             final String facing = FACING_MODES[i];
             facingChips[i].setOnClickListener(v -> selectFacing(facing));
+        }
+        // 【5.4.17 镜头】两档互斥
+        for (int i = 0; i < LENS_MODES.length; i++) {
+            final String lens = LENS_MODES[i];
+            lensChips[i].setOnClickListener(v -> selectCameraLens(lens));
         }
 
         seekFraming.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -707,6 +726,16 @@ public final class PreviewStyleActivity extends Activity {
         previewIfEnabled();
     }
 
+    /** 【5.4.17】镜头切档：改完服务重读配置，渲染层关闭当前相机按新镜头重开。 */
+    private void selectCameraLens(String lens) {
+        String v = CameraLensPolicy.normalize(lens);
+        sp.edit().putString(SafeWalkPrefKey.cameraLens, v).commit();
+        SafeWalkConfig.exportConfig(this);
+        DiagLog.log("[style] 路况镜头 → " + v);
+        refreshAll();
+        previewIfEnabled();
+    }
+
     /**
      * 【5.1.0】手动调参 → 自动跟随让位。
      *
@@ -798,6 +827,13 @@ public final class PreviewStyleActivity extends Activity {
         }
         for (int i = 0; i < FACING_MODES.length; i++) {
             paintChip(facingChips[i], FACING_MODES[i].equals(facing));
+        }
+        // 【5.4.17 镜头】两档高亮
+        String lens = CameraLensPolicy.normalize(
+                SafePrefs.getString(sp, SafeWalkPrefKey.cameraLens,
+                        CameraLensPolicy.LENS_ULTRAWIDE));
+        for (int i = 0; i < LENS_MODES.length; i++) {
+            paintChip(lensChips[i], LENS_MODES[i].equals(lens));
         }
     }
 
@@ -953,6 +989,13 @@ public final class PreviewStyleActivity extends Activity {
         }
         if (!ManualOrientation.FACING_AUTO.equals(facing)) {
             base += " · 后摄转正" + facingWord(facing);
+        }
+        // 【5.4.17 镜头】默认超广角不显示；选了主摄才留痕，避免噪音。
+        String lens = CameraLensPolicy.normalize(
+                SafePrefs.getString(sp, SafeWalkPrefKey.cameraLens,
+                        CameraLensPolicy.LENS_ULTRAWIDE));
+        if (CameraLensPolicy.LENS_MAIN.equals(lens)) {
+            base += " · 路况镜头主摄";
         }
         // 【5.1.0】画面增强在摘要里必须出现，且写明它动的是画面 ——
         // 否则用户会以为「增强」还是指那行文字，改了也没人知道区别在哪。

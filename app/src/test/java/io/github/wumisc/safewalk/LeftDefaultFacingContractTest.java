@@ -356,9 +356,11 @@ public class LeftDefaultFacingContractTest {
                         "rearCameraFacing: String = ManualOrientation.FACING_AUTO"));
         assertTrue("L3b Style 字段默认值仍是 FACING_AUTO（含 val 前缀）",
                 overlayCode.contains("val rearCameraFacing: String = ManualOrientation.FACING_AUTO"));
-        assertTrue("L3b show 参数默认值仍是 FACING_AUTO（末参数后紧跟右括号）",
+        // 5.4.17 起 show() 在 rearCameraFacing 之后新增了 cameraLens 参数，
+        // 因此它不再是末参数：这里只要求默认值仍是 FACING_AUTO，后面跟逗号(其他参数)或右括号均可。
+        assertTrue("L3b show 参数默认值仍是 FACING_AUTO（后跟逗号或其他参数结束）",
                 countRegex(overlayCode,
-                        "rearCameraFacing: String = ManualOrientation\\.FACING_AUTO\\s*\\)") >= 1);
+                        "rearCameraFacing: String = ManualOrientation\\.FACING_AUTO\\s*[,)]") >= 1);
     }
 
     /** L3c 意图（A4 基石）：finalDeg 三重守卫与 run{val deg=finalDeg} 遮蔽逐字未动。 */
@@ -421,13 +423,13 @@ public class LeftDefaultFacingContractTest {
 
     // ==================== L5 · 版本断言 ====================
 
-    /** L5 意图：版本升到 81/5.4.16，旧号 80/5.4.15 清干净。 */
+    /** L5 意图：版本升到 82/5.4.17，旧号 81/5.4.16 清干净。 */
     @Test
     public void l5_versionIs81Build5416NoOldNumbers() {
-        assertTrue("L5 build.gradle 须含 versionCode 81", gradleSrc.contains("versionCode 81"));
-        assertTrue("L5 build.gradle 须含 versionName \"5.4.16\"",
-                gradleSrc.contains("versionName \"5.4.16\""));
-        assertFalse("L5 须已无 versionCode 80", gradleSrc.contains("versionCode 80"));
-        assertFalse("L5 须已无 5.4.15", gradleSrc.contains("5.4.15"));
+        assertTrue("L5 build.gradle 须含 versionCode 82", gradleSrc.contains("versionCode 82"));
+        assertTrue("L5 build.gradle 须含 versionName \"5.4.17\"",
+                gradleSrc.contains("versionName \"5.4.17\""));
+        assertFalse("L5 须已无 versionCode 81", gradleSrc.contains("versionCode 81"));
+        assertFalse("L5 须已无 5.4.16", gradleSrc.contains("5.4.16"));
     }
 }

@@ -39,13 +39,15 @@ public class AcknowledgementsActivity extends Activity {
 
     // 颜色一律取自资源：values-night 覆盖后整套界面自动转深色。
     // 原来这里是 0xFF1D1D1D 之类的常量，深色下白底白字，整页看不见。
-    private int C_TITLE, C_SUB, C_LINK, C_OK, C_PARTIAL, C_GONE, C_CARD, C_DIVIDER;
+    private int C_TITLE, C_SUB, C_LINK, C_OK, C_PARTIAL, C_GONE, C_CARD, C_DIVIDER, C_GOLDEN;
 
     private static final String ADOPTED_INTEGRATED = "直接集成";
     private static final String ADOPTED_FULL = "已落地";
     private static final String ADOPTED_PARTIAL = "部分落地";
     private static final String ADOPTED_REFERENCE = "仅参考";
     private static final String ADOPTED_GONE = "仅参考 · 仓库已失效";
+    /** 项目起源：这两位是「用摄像头透视路况」这一思路的最早实践者，本项目由此发源。 */
+    private static final String ADOPTED_ORIGIN = "项目起源 · 祖师爷";
 
     private float density;
 
@@ -56,12 +58,19 @@ public class AcknowledgementsActivity extends Activity {
         final String status;
         /** null 表示没有可访问的公开地址 */
         final String url;
+        /** true = 项目起源作者（祖师爷），名字用金色 + 加粗显示 */
+        final boolean golden;
 
         Item(String name, String desc, String status, String url) {
+            this(name, desc, status, url, false);
+        }
+
+        Item(String name, String desc, String status, String url, boolean golden) {
             this.name = name;
             this.desc = desc;
             this.status = status;
             this.url = url;
+            this.golden = golden;
         }
     }
 
@@ -90,6 +99,7 @@ public class AcknowledgementsActivity extends Activity {
         C_GONE = getColor(R.color.text_muted);
         C_CARD = getColor(R.color.card_bg);
         C_DIVIDER = getColor(R.color.divider);
+        C_GOLDEN = getColor(R.color.golden);
 
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
 
@@ -103,6 +113,23 @@ public class AcknowledgementsActivity extends Activity {
     /** 全部致谢数据。要改条目只动这里，不用碰布局。 */
     private List<Section> buildSections() {
         List<Section> out = new ArrayList<>();
+
+        // 【起源 · 祖师爷】这一思路的最早实践者，置顶、金字、可点开原作。
+        // 没有他们 2012 年的探路，就不会有今天的安全出行。
+        out.add(new Section("起源 · 祖师爷（本思路的最早实践者）", new Item[]{
+                new Item("botweb · Transparent Screen（2012）",
+                        "2012 年上线的 Android「透明屏幕」App，把后置摄像头的实时画面垫在屏幕最底层，"
+                                + "让人边走边看手机也不撞到人。这是「用摄像头透视路况」这一玩法的开山之作，"
+                                + "本项目的行走模式正是它的精神续作。原作者 botweb（Sascha Affolter）。",
+                        ADOPTED_ORIGIN,
+                        "https://play.google.com/store/apps/details?id=botweb.transparent.screen", true),
+                new Item("dhiru1602 · NamelessROM On-The-Go Mode",
+                        "把「透明屏幕」做进 ROM 的先驱：NamelessROM 的 On-The-Go Mode 用一个快捷开关"
+                                + "开启后置透视，让系统整体半透明。相比普通 App，它证明了这条思路可以"
+                                + "深入系统层。本项目运行在 SystemUI 的 Hook 架构，与它一脉相承。作者 dhiru1602。",
+                        ADOPTED_ORIGIN,
+                        "https://github.com/dhiru1602", true),
+        }));
 
         out.add(new Section("直接依赖（不是「参考」，是装进项目里的库）", new Item[]{
                 new Item("Kyant0/AndroidLiquidGlass",
@@ -243,18 +270,23 @@ public class AcknowledgementsActivity extends Activity {
 
         TextView name = new TextView(this);
         name.setText(item.url != null ? item.name + " ↗" : item.name);
-        name.setTextSize(15);
+        // 祖师爷条目：金字 + 加大加粗，体现对前辈的尊重；其余维持原样。
+        name.setTextSize(item.golden ? 17 : 15);
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        if (item.url != null) {
+        if (item.golden) {
+            name.setTextColor(C_GOLDEN);
+        } else if (item.url != null) {
             name.setTextColor(C_LINK);
+        } else {
+            name.setTextColor(C_TITLE);
+        }
+        if (item.url != null) {
             name.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     openUrl(item.url);
                 }
             });
-        } else {
-            name.setTextColor(C_TITLE);
         }
         head.addView(name, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -283,6 +315,7 @@ public class AcknowledgementsActivity extends Activity {
     }
 
     private int statusColor(String status) {
+        if (ADOPTED_ORIGIN.equals(status)) return C_GOLDEN;
         if (ADOPTED_INTEGRATED.equals(status)) return C_LINK;
         if (ADOPTED_FULL.equals(status)) return C_OK;
         if (ADOPTED_PARTIAL.equals(status)) return C_PARTIAL;
