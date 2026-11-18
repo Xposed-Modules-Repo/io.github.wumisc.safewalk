@@ -1,5 +1,9 @@
 # 更新日志
 
+## [5.5.0-stable] - 2026-11-18 稳定版发布：正式 Release 构建（非 debuggable，同签名可覆盖安装）
+
+> 与 5.5.0 功能完全一致，仅构建类型由 debug 切为正式 release：`minifyEnabled false`（保护 hook 反射）、沿用 debug.keystore 签名（SHA-256 `cf0da72d…`，可直接覆盖安装不丢急救卡数据）、`debuggable=false`、移除调试冗余。817 单测全过。Release 资产由 debug 包替换为 `safewalk-v5.5.0-release.apk`。
+
 ## [5.5.0] - 2026-11-18 医疗急救卡：车祸预警/锁屏强提醒/系统SOS/急救卡字段/AED 导航
 
 > 功能级版本。设计见 `docs/emergency-medical-card-PRD.md`、`docs/emergency-medical-card-ARCH.md`、`docs/emergency-medical-card-ARCH-v1.1.md`。

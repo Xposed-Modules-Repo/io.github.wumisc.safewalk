@@ -45,7 +45,11 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled false  // Xposed hook 依赖固定类名/反射，混淆会破坏注入，必须关闭
+            // 【稳定版】沿用 debug.keystore 签名：与既有安装包同签名，
+            // 用户可直接覆盖安装、不丢急救卡加密数据；release 默认 debuggable=false、
+            // 无调试冗余，作为正式发布包。
+            signingConfig signingConfigs.debug
         }
     }
 }
