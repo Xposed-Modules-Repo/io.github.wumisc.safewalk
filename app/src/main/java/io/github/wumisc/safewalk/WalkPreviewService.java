@@ -625,6 +625,7 @@ public final class WalkPreviewService extends Service {
             overlay.hide();
             reportPreviewState();
             stopForeground(STOP_FOREGROUND_REMOVE);
+            foregroundEstablished = false;  // 已撤掉前台，下次启动允许重新提起
             stopSelf();
             // 预览服务停掉 = 磁贴该变回「关」；面板没展开时也要及时对齐
             WalkTileService.refresh(this);
@@ -1779,6 +1780,9 @@ public final class WalkPreviewService extends Service {
      * 走降级；将来 HyperOS 5 换了限制，也不需要改代码 —— 不存在「版本判断猜错了就废掉」。
      */
     private void goForeground() {
+        // 【省电专项】已提起则跳过：避免设置页频繁操作时同一秒重复 startForeground。
+        // 完全失败(fgsType==-2)不跳过，保留原有降级重试机会。
+        if (foregroundEstablished && fgsType != -2) return;
         NotificationChannel ch = new NotificationChannel(
                 CHANNEL_WALK, "行走模式", NotificationManager.IMPORTANCE_LOW);
         ch.setDescription("行走模式开启期间保持后台运行；关闭本渠道会导致常驻通知不显示");
@@ -1819,6 +1823,7 @@ public final class WalkPreviewService extends Service {
                 try {
                     startForeground(NOTIF_ID, n, type);
                     fgsType = type;
+                    foregroundEstablished = true;
                     DiagLog.log("[FGS] 前台服务已提起｜type=" + fgsTypeName(type) + "｜" + osTag);
                     if (type != ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) {
                         // 降级后相机在后台会被拒，这一点必须写进日志，
@@ -1847,6 +1852,7 @@ public final class WalkPreviewService extends Service {
         try {
             startForeground(NOTIF_ID, n);
             fgsType = -1;
+            foregroundEstablished = true;
             DiagLog.log("[FGS] 已用无 type 方式提起前台｜" + osTag);
         } catch (Throwable t) {
             fgsType = -2;
@@ -1868,6 +1874,17 @@ public final class WalkPreviewService extends Service {
 
     /** 最近一次成功的前台服务类型：-1=无 type，-2=完全失败，0=尚未提起。仅用于诊断。 */
     private volatile int fgsType = 0;
+
+    /**
+     * 【省电专项】前台服务是否已在本进程成功提起。
+     *
+     * 每次 send(ACTION_SHOW) 都会走 onStartCommand → goForeground，用户在设置页
+     * 来回点镜头/参数时同一秒能连提 4~14 次。startForeground 成功后进程即处于
+     * 前台，"再提一次"除了重建通知渠道、跑一遍降级链、刷日志之外没有任何作用。
+     * 这里记住已提起的事实，重复调用直接跳过；只有 ACTION_STOP 里 stopForeground
+     * 之后才清零，允许下次启动重新提起。
+     */
+    private boolean foregroundEstablished = false;
 
     private static String fgsTypeName(int type) {
         if (type == ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) return "camera";

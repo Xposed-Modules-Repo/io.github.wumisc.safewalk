@@ -91,6 +91,38 @@ object CameraLensPolicy {
     }
 
     /**
+     * 镜头切换时是否需要「关相机再重开」（**省电专项**，纯逻辑可单测）。
+     *
+     * ## 为什么要它
+     *
+     * 切换主摄/超广角时，旧实现无条件 `closeCamera() + openCamera()`：
+     * 一次完整的 HAL 断开→重握→重建会话，数百毫秒大电流，还伴随画面黑一下。
+     * 用户在设置页来回点镜头时（真机 diag.log 13:42 一分钟 14 次 FGS、
+     * 14:00 两秒内连切 4 次），这就是一串昂贵的大电流脉冲。
+     *
+     * 但**绝大多数现代机型只有一颗后置逻辑摄像头**，超广角并不是第二颗物理
+     * id，而是同一颗 id 上把 `CONTROL_ZOOM_RATIO` 拉到 0.6x（见
+     * [zoomForLogicalUltrawide]）。这种情况下切镜头根本不用重开相机：
+     * 只要重新下发一次 repeating request 就能换视野，零 HAL 握手。
+     *
+     * ## 判据
+     *
+     * @param oldId       切换前正在使用的相机 id（null=还没开）
+     * @param newId       目标镜头解析出的相机 id（null=解析失败）
+     * @param zoomSupported 目标镜头是否走逻辑 zoom 路径（zoom range 下限 < 1）
+     * @return true=必须关相机重开（物理 id 变了，或还没开）；false=可原地切 zoom
+     *
+     * 只有「cameraId 相同 且 该 id 支持逻辑 zoom」才走原地切换；
+     * 独立多摄（两颗物理 id）必须重开——否则 open 的还是旧镜头。
+     */
+    @JvmStatic
+    fun needsReopenOnLensChange(oldId: String?, newId: String?, zoomSupported: Boolean): Boolean {
+        if (oldId == null || newId == null) return true     // 信息不全：保守重开，宁可慢一点也不出错
+        if (oldId != newId) return true                      // 物理相机 id 变了：必须重开
+        return !zoomSupported                                // 同一颗 id 且支持逻辑 zoom → 原地切
+    }
+
+    /**
      * 一个候选摄像头。故意只用纯数据类型，不引用 android.hardware.camera2，
      * 这样 JVM 单测能直接构造多摄场景，不需要真机 / Robolectric 的相机桩。
      *

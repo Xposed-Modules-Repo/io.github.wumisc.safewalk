@@ -151,4 +151,33 @@ public class CameraLensPolicyTest {
         assertEquals(null, CameraLensPolicy.zoomForLogicalUltrawide(
                 CameraLensPolicy.MODE_ULTRAWIDE, null, null));
     }
+
+    // ==================== 省电专项：镜头切换是否需要重开相机 ====================
+
+    @Test
+    public void sameLogicalCamera_supportsZoom_noReopen() {
+        // 现代机型：主摄与超广角共用一颗逻辑 id，靠 0.6x 切视野 → 原地切，不重开相机
+        assertEquals(false, CameraLensPolicy.needsReopenOnLensChange("0", "0", true));
+    }
+
+    @Test
+    public void differentPhysicalId_alwaysReopen() {
+        // 独立多摄：主摄 id=0、超广角 id=2，物理 id 变了 → 必须 close→open
+        assertEquals(true, CameraLensPolicy.needsReopenOnLensChange("0", "2", true));
+        assertEquals(true, CameraLensPolicy.needsReopenOnLensChange("0", "2", false));
+    }
+
+    @Test
+    public void sameId_butNoLogicalZoom_reopen() {
+        // 同一颗 id 但不支持逻辑 zoom（下限>=1）：无法靠改 zoom 换视野 → 重开（保守）
+        assertEquals(true, CameraLensPolicy.needsReopenOnLensChange("0", "0", false));
+    }
+
+    @Test
+    public void missingIdInfo_conservativelyReopen() {
+        // 还没开过相机 / 解析失败：信息不全，一律重开，绝不冒险跳过
+        assertEquals(true, CameraLensPolicy.needsReopenOnLensChange(null, "0", true));
+        assertEquals(true, CameraLensPolicy.needsReopenOnLensChange("0", null, true));
+        assertEquals(true, CameraLensPolicy.needsReopenOnLensChange(null, null, true));
+    }
 }

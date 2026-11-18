@@ -105,6 +105,34 @@ object SafeWalkPrefKey {
      */
     const val emerLastSosTs = "emerLastSosTs"
 
+    // ===== 【医疗急救卡 v1.1】字段全集 =====
+    // 以下 key 全部只由 App 进程的 EmergencyVault 读写（加密存储），
+    // 严禁加入 ConfigProvider.WHITELIST，也严禁写进 safewalk_config.json。
+    // 迁移用的旧 key（emerName/emerBlood/emerAddress/emerContactName/
+    // emerContactPhone/emerAllergy/emerCondition）保持原名不变，见 EmergencyVault.migrateIfNeeded。
+    const val emerAge = "emerAge"
+    const val emerGender = "emerGender"
+    /** 血型枚举值：A/B/AB/O/OTHER/UNKNOWN */
+    const val emerBloodType = "emerBloodType"
+    /** Rh 枚举值：POSITIVE/NEGATIVE/UNKNOWN */
+    const val emerRh = "emerRh"
+    const val emerAllergySevere = "emerAllergySevere"
+    const val emerMedications = "emerMedications"
+    /** 紧急联系人 JSON 数组（>=3 位） */
+    const val emerContacts = "emerContacts"
+    const val emerInsuranceId = "emerInsuranceId"
+    const val emerOrganDonation = "emerOrganDonation"
+    /** 隐私开关 JSON（showBloodOnLock/showAddressOnLock/allowSmsLocation/allowQr） */
+    const val emerPrivacyFlags = "emerPrivacyFlags"
+    /** 医疗 QR 载荷缓存（加密存储内；不进白名单、不进日志） */
+    const val emerQrPayload = "emerQrPayload"
+    /** 用户自定义紧急号码表（JSON） */
+    const val emerEmergencyNumbers = "emerEmergencyNumbers"
+    /** 明文→加密一次性迁移完成标记；不进白名单（Hook 不关心） */
+    const val emerVaultMigrated = "emerVaultMigrated"
+    /** 加密急救卡 SharedPreferences 文件名 */
+    const val EMER_VAULT_PREFS = "safewalk_emer_secure"
+
     // ===== 车祸预警（急救卡，Pixel 风格） =====
     /**
      * 车祸预警总开关：SystemUI 进程持续监测加速度，检测到撞击后
@@ -414,6 +442,25 @@ object SafeWalkPrefKey {
      */
     const val EXTRA_BROADCAST_TOKEN = "token"
     const val BROADCAST_TOKEN = "safewalk-bc-2.5"
+
+    // ===== 【医疗急救卡 v1.1】一次性显示通道常量（全部不进 WHITELIST）=====
+    /** 显示通道 authority：与 ConfigProvider.AUTHORITY 物理隔离，绝不共用 */
+    const val DISPLAY_AUTHORITY = "io.github.wumisc.safewalk.display"
+    /** 显示通道 path：与 ConfigProvider 的 /config 物理隔离 */
+    const val DISPLAY_PATH = "/emergency_fields"
+    /** 一次性 display token 的 Intent/Binder extra key（只传 token，不传字段值） */
+    const val EXTRA_DISPLAY_TOKEN = "display_token"
+    /** App → SystemUI：显示急救覆盖层（只带一次性 token + eventId） */
+    const val ACTION_EMERGENCY_SHOW = "io.github.wumisc.safewalk.EMERGENCY_SHOW"
+    /** App → SystemUI：Activity 已可见，覆盖层退场 */
+    const val ACTION_EMERGENCY_VISIBLE = "io.github.wumisc.safewalk.EMERGENCY_VISIBLE"
+    /** App → SystemUI：用户取消/结束，覆盖层退场（兜底） */
+    const val ACTION_EMERGENCY_HIDE = "io.github.wumisc.safewalk.EMERGENCY_HIDE"
+    /** 显示载荷 TTL：20 秒；用 SystemClock.elapsedRealtime() 计量，挂既有 tick */
+    const val DISPLAY_TTL_MS = 20_000L
+    /** DISPLAY_TTL_MS 的 Java 可见别名（供 Java Activity/Receiver 引用） */
+    @JvmField
+    val DISPLAY_TTL_MS_JVM: Long = DISPLAY_TTL_MS
 }
 
 /**

@@ -109,6 +109,42 @@ class ConfigProvider : ContentProvider() {
             // 路况预览镜头选择：纯显示参数，进白名单只为「导出配置带全」。
             SafeWalkPrefKey.rearCameraLens
         )
+
+        /**
+         * 【隐私契约·单测锚点】医疗字段全集。
+         *
+         * 与 [WHITELIST] 必须恒不相交：`WHITELIST ∩ MEDICAL_KEYS == ∅`。
+         * 任何新增的急救卡字段（无论加密前后、无论是否显示字段）都必须登记到这里；
+         * 单测 WhitelistIsolationTest 会断言这条不变式，一旦有人误把隐私字段塞进
+         * 白名单，构建期即失败。显示载荷走独立的 DisplayProvider 通道，与此集合无关。
+         */
+        @JvmField
+        val MEDICAL_KEYS: Set<String> = setOf(
+            // 旧明文 key（迁移来源，仍禁止跨进程）
+            SafeWalkPrefKey.emerName,
+            SafeWalkPrefKey.emerBlood,
+            SafeWalkPrefKey.emerAddress,
+            SafeWalkPrefKey.emerContactName,
+            SafeWalkPrefKey.emerContactPhone,
+            SafeWalkPrefKey.emerAllergy,
+            SafeWalkPrefKey.emerCondition,
+            // 加密急救卡字段
+            SafeWalkPrefKey.emerAge,
+            SafeWalkPrefKey.emerGender,
+            SafeWalkPrefKey.emerBloodType,
+            SafeWalkPrefKey.emerRh,
+            SafeWalkPrefKey.emerAllergySevere,
+            SafeWalkPrefKey.emerMedications,
+            SafeWalkPrefKey.emerContacts,
+            SafeWalkPrefKey.emerInsuranceId,
+            SafeWalkPrefKey.emerOrganDonation,
+            SafeWalkPrefKey.emerPrivacyFlags,
+            SafeWalkPrefKey.emerQrPayload,
+            SafeWalkPrefKey.emerEmergencyNumbers,
+            // 隐私状态 / 迁移标记：同样不跨进程
+            SafeWalkPrefKey.emerLastSosTs,
+            SafeWalkPrefKey.emerVaultMigrated
+        )
     }
 
     override fun onCreate(): Boolean = true

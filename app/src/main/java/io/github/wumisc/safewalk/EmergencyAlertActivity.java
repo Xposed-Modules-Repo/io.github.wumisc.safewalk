@@ -3,9 +3,10 @@ package io.github.wumisc.safewalk;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.location.Location;
 import android.location.LocationManager;
 import android.media.Ringtone;
@@ -18,33 +19,39 @@ import android.os.Looper;
 import android.telephony.SmsManager;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 /**
- * 全屏急救卡（Pixel 车祸检测风格）。
+ * 全屏急救卡（v1.1 求助闭环）。
  *
- * 车祸检测在 SystemUI 进程，检测到撞击后广播拉起本页；
- * 这里显示用户预填的急救卡信息 + 60 秒倒计时 + 警报声，
- * 倒计时结束仍未点「我没事」就自动求助：发含位置的短信 + 拨紧急联系人。
+ * 从 EmergencyVault 读完整卡（Activity 面保留住址，U1），红底 ≥6 字段 ≥18sp。
+ * 可见即发 ACTION_EMERGENCY_VISIBLE → 覆盖层 removeView + 清字段副本（单一暴露面）。
+ * 求助后必给可见回执（showReceipt），不静默失败；FSI 被撤销时 Receiver 已降级通知。
  */
 public class EmergencyAlertActivity extends Activity {
 
     private static final int COUNTDOWN_SECONDS = 60;
+    private static final long SOS_DEDUP_MS = 10 * 60 * 1000L;
+    private static final String EXTRA_EVENT_ID = "event_id";
 
-    private TextView tvCountdown, tvName, tvBlood, tvContact, tvAddress;
-    private Button btnOk, btnSosNow;
+    private TextView tvCountdown, tvName, tvBlood, tvAllergy, tvConditions;
+    private TextView tvContact, tvAge, tvAddress, tvReceipt;
+    private Button btnOk, btnSos, btnSosSystem, btnAed, btnQr, btnDial120;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private int remain = COUNTDOWN_SECONDS;
     private Ringtone ringtone;
     private boolean resolved = false;
+    private boolean visibleNotified = false;
+    private EmergencyCard card = new EmergencyCard();
+    private String eventId = "";
+    private Bitmap qrBitmap;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_emergency_alert);
-
-        // 锁屏 + 熄屏也要能弹出来，这是急救卡的核心诉求
         setShowWhenLocked(true);
         setTurnScreenOn(true);
         getWindow().addFlags(
@@ -53,39 +60,129 @@ public class EmergencyAlertActivity extends Activity {
                         WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
                         WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
 
+        EmergencyDiag.install();
+        EmergencyVault.init(this);
+        EmergencyVault.migrateIfNeeded(this);
+        card = EmergencyVault.readCard();
+        eventId = getIntent().getStringExtra(EXTRA_EVENT_ID);
+        if (eventId == null || eventId.isEmpty()) eventId = "local";
+
         bindViews();
         loadCard();
         bindButtons();
         startCountdown();
         startAlarm();
+        notifyVisible();
     }
 
     private void bindViews() {
         tvCountdown = findViewById(R.id.tv_alert_countdown);
         tvName = findViewById(R.id.tv_alert_name);
         tvBlood = findViewById(R.id.tv_alert_blood);
+        tvAllergy = findViewById(R.id.tv_alert_allergy);
+        tvConditions = findViewById(R.id.tv_alert_conditions);
         tvContact = findViewById(R.id.tv_alert_contact);
+        tvAge = findViewById(R.id.tv_alert_age);
         tvAddress = findViewById(R.id.tv_alert_address);
+        tvReceipt = findViewById(R.id.tv_alert_receipt);
         btnOk = findViewById(R.id.btn_alert_ok);
-        btnSosNow = findViewById(R.id.btn_alert_sos);
+        btnSos = findViewById(R.id.btn_alert_sos);
+        btnSosSystem = findViewById(R.id.btn_alert_sos_system);
+        btnAed = findViewById(R.id.btn_alert_aed);
+        btnQr = findViewById(R.id.btn_alert_qr);
+        btnDial120 = findViewById(R.id.btn_alert_dial_120);
     }
 
+    /** 从 Vault 读完整卡：Activity 面显示住址（U1），关键字段 ≥18sp */
     private void loadCard() {
-        SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
-        String name = SafePrefs.getString(sp, SafeWalkPrefKey.emerName, "");
-        String blood = SafePrefs.getString(sp, SafeWalkPrefKey.emerBlood, "");
-        String contactName = SafePrefs.getString(sp, SafeWalkPrefKey.emerContactName, "");
-        String address = SafePrefs.getString(sp, SafeWalkPrefKey.emerAddress, "");
+        tvName.setText(value(card.getName(), "未填写"));
+        String blood = (card.getBloodType().getLabel() + " " + card.getRh().getLabel()).trim();
+        tvBlood.setText("血型：" + value(blood, "未填写"));
+        tvAllergy.setText("过敏：" + value(card.getAllergy(), "无记录")
+                + (card.getAllergySevere() ? "（★严重）" : ""));
+        tvConditions.setText("基础疾病：" + value(card.getConditions(), "无记录"));
+        EmergencyContact p = card.primaryContact();
+        String contact = (p.getName() + " " + p.getRelation() + " " + p.getPhone()).trim();
+        tvContact.setText("紧急联系人：" + value(contact, "未设置"));
+        tvAge.setText("年龄：" + (card.getAge() > 0 ? card.getAge() + " 岁" : "未填写"));
+        tvAddress.setText("住址：" + value(card.getAddress(), "未填写"));
+        tvReceipt.setText("求助将在倒计时结束后自动进行，点「我没事」可取消。");
+        EmergencyDiag.logCard("alert_read", card);
+    }
 
-        tvName.setText(name.isEmpty() ? "未填写" : name);
-        tvBlood.setText(blood.isEmpty() ? "未填写" : blood);
-        tvAddress.setText(address.isEmpty() ? "未填写" : address);
-        tvContact.setText(contactName.isEmpty() ? "未设置紧急联系人" : contactName);
+    private static String value(String v, String fallback) {
+        return v == null || v.trim().isEmpty() ? fallback : v.trim();
     }
 
     private void bindButtons() {
         btnOk.setOnClickListener(v -> resolve(false));
-        btnSosNow.setOnClickListener(v -> resolve(true));
+        btnSos.setOnClickListener(v -> resolve(true));
+        btnSosSystem.setOnClickListener(v -> {
+            boolean ok = SystemSosLauncher.openSystemSos(this);
+            showReceipt(new SosAction(eventId, SosType.SYSTEM_SOS, "", false, false, ok,
+                    ok ? "已打开系统紧急呼救设置" : "未找到系统紧急呼救入口，请使用下方 120 按钮",
+                    System.currentTimeMillis()));
+        });
+        btnAed.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(this, AedGuideActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Throwable t) {
+                Toast.makeText(this, "无法打开 AED 引导，请直接拨打 120", Toast.LENGTH_LONG).show();
+            }
+        });
+        btnQr.setOnClickListener(v -> showQr());
+        btnDial120.setOnClickListener(v -> {
+            boolean ok = SystemSosLauncher.dialEmergency(this, "120");
+            showReceipt(new SosAction(eventId, SosType.FALLBACK_120, "120", false, ok, false,
+                    ok ? "已打开 120 拨号盘，请按拨号键" : "未找到拨号应用，请手动拨打 120",
+                    System.currentTimeMillis()));
+        });
+    }
+
+    private void showQr() {
+        if (!card.getPrivacy().getAllowQr()) {
+            Toast.makeText(this, "医疗 QR 为明文，请先在急救卡编辑页开启「允许生成医疗 QR」",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        Bitmap bmp = MedicalQr.encode(card);
+        if (bmp == null) {
+            Toast.makeText(this, "QR 生成失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (qrBitmap != null && !qrBitmap.isRecycled()) qrBitmap.recycle();
+        qrBitmap = bmp;
+        ImageView iv = new ImageView(this);
+        iv.setImageBitmap(bmp);
+        iv.setAdjustViewBounds(true);
+        new AlertDialog.Builder(this)
+                .setTitle("医疗急救卡 QR（明文）")
+                .setView(iv)
+                .setPositiveButton("关闭", null)
+                .show();
+    }
+
+    /** 可见后一次性发 ACK：覆盖层 removeView + 清字段副本，保证单一暴露面 */
+    private void notifyVisible() {
+        if (visibleNotified) return;
+        visibleNotified = true;
+        try {
+            Intent i = new Intent(SafeWalkPrefKey.ACTION_EMERGENCY_VISIBLE);
+            i.setPackage("com.android.systemui");
+            i.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN);
+            i.putExtra(SafeWalkPrefKey.EXTRA_DISPLAY_TOKEN, "");
+            i.putExtra(EXTRA_EVENT_ID, eventId);
+            sendBroadcast(i);
+        } catch (Throwable ignored) {
+        }
+        EmergencyDiag.event(EmergencyDiag.P_OVERLAY, "activity_visible event=" + eventId);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) notifyVisible();
     }
 
     private void startCountdown() {
@@ -96,7 +193,7 @@ public class EmergencyAlertActivity extends Activity {
                 if (resolved) return;
                 remain--;
                 if (remain <= 0) {
-                    resolve(true); // 超时自动求助
+                    resolve(true);
                     return;
                 }
                 tvCountdown.setText(String.valueOf(remain));
@@ -130,58 +227,73 @@ public class EmergencyAlertActivity extends Activity {
         if (sos) {
             doSos();
         } else {
+            sendHide();
             Toast.makeText(this, "已取消，注意安全", Toast.LENGTH_SHORT).show();
             finish();
         }
     }
 
-    private void doSos() {
-        SharedPreferences sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+    private void sendHide() {
+        try {
+            Intent i = new Intent(SafeWalkPrefKey.ACTION_EMERGENCY_HIDE);
+            i.setPackage("com.android.systemui");
+            i.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN);
+            i.putExtra(EXTRA_EVENT_ID, eventId);
+            sendBroadcast(i);
+        } catch (Throwable ignored) {
+        }
+    }
 
-        // 【本次修复】重复求助去重：撞击检测可能连续触发、full-screen 通知被点开也可能
-        // 重建本页（进程被杀后）。没有去重时，一次事故会给联系人发好几条短信、拨好几通
-        // 电话——既骚扰对方，也可能产生通信费用。
-        long last = SafePrefs.getLong(sp, SafeWalkPrefKey.emerLastSosTs, 0L);
+    private void doSos() {
+        // 10 分钟去重：先落盘标记再执行，进程被杀也不重发
+        long last = EmergencyVault.lastSosTs();
         long now = System.currentTimeMillis();
         if (last > 0L && now - last < SOS_DEDUP_MS) {
-            DiagLog.log("[sos] " + (now - last) / 1000 + "s 前已求助过，本次跳过（防重复短信/拨号）");
-            Toast.makeText(this, "刚刚已发送过求助，已跳过重复发送", Toast.LENGTH_LONG).show();
+            EmergencyDiag.event(EmergencyDiag.P_SOS, "dedup_skip gap=" + (now - last) + "ms");
+            showReceipt(new SosAction(eventId, SosType.SMS, "", false, false, false,
+                    "刚刚已发送过求助，已跳过重复发送", now));
+            sendHide();
             finish();
             return;
         }
-        // 先落盘再执行：即使随后进程被杀，也不会重复求助
-        sp.edit().putLong(SafeWalkPrefKey.emerLastSosTs, now).commit();
+        EmergencyVault.markSos(new SosAction(eventId, SosType.SMS, "", false, false, false, "", now));
 
-        String phone = SafePrefs.getString(sp, SafeWalkPrefKey.emerContactPhone, "");
-        String name = SafePrefs.getString(sp, SafeWalkPrefKey.emerName, "");
-        String contactName = SafePrefs.getString(sp, SafeWalkPrefKey.emerContactName, "");
-
-        // 没设联系人时不要把页面关掉：用户需要看见「为什么没求助」并当场去填
+        EmergencyContact p = card.primaryContact();
+        String phone = p.getPhone();
         if (phone == null || phone.trim().isEmpty()) {
-            DiagLog.log("[sos] 未设置紧急联系人电话，无法自动求助");
-            Toast.makeText(this, "未设置紧急联系人电话，请先到急救卡里填写", Toast.LENGTH_LONG).show();
+            // 没设联系人：不关页面，给出可见原因（修正"点了没反应"）
+            EmergencyDiag.event(EmergencyDiag.P_SOS, "no_contact");
             tvCountdown.setText("未设置紧急联系人");
+            showReceipt(new SosAction(eventId, SosType.SMS, "", false, false, false,
+                    "未设置紧急联系人电话，请到急救卡补齐；也可直接点「拨打 120」", now));
             return;
         }
 
-        // 先发短信（含位置），再拨电话，避免拨号界面遮挡短信发送
-        sendSosSms(phone, name, contactName);
-        callContact(phone);
+        boolean sms = sendSosSms(phone, p.getName());
+        boolean dial = SystemSosLauncher.dialEmergency(this, phone);
+        showReceipt(new SosAction(eventId, SosType.SMS, phone, sms, dial, false,
+                (sms ? "求助短信已发送" : "短信未发出，已尝试跳转短信应用") + "；" +
+                    (dial ? "拨号盘已打开（请按拨号键）" : "未能打开拨号盘，请手动拨打"),
+                now));
+        sendHide();
         finish();
     }
 
-    /** 同一次事故只在首轮求助；窗口内重复触发一律跳过 */
-    private static final long SOS_DEDUP_MS = 10 * 60 * 1000L;
+    /** 可见回执：任何结果都写在屏幕上，绝不静默失败 */
+    private void showReceipt(SosAction a) {
+        String text = a.getReceipt();
+        tvReceipt.setText(text == null || text.isEmpty() ? "求助已触发，请保持电话畅通" : text);
+        EmergencyDiag.event(EmergencyDiag.P_SOS,
+                "receipt type=" + a.getType() + " sms=" + a.getSmsSent() +
+                    " dial=" + a.getDialPrefilled() + " len=" + (text == null ? 0 : text.length()));
+    }
 
     @SuppressLint("MissingPermission")
-    private void sendSosSms(String phone, String name, String contactName) {
-        if (phone == null || phone.isEmpty()) {
-            Toast.makeText(this, "未设置紧急联系人电话，无法自动求助", Toast.LENGTH_LONG).show();
-            return;
-        }
-        String loc = lastKnownLocationText();
+    private boolean sendSosSms(String phone, String contactName) {
+        if (phone == null || phone.isEmpty()) return false;
+        String loc = card.getPrivacy().getAllowSmsLocation() ? lastKnownLocationText() : "";
         String msg = "【SafeWalk 紧急求助】我可能遭遇了事故，请尽快联系我。"
-                + (name.isEmpty() ? "" : "\n姓名：" + name)
+                + (card.getName().isEmpty() ? "" : "\n姓名：" + card.getName())
                 + (contactName.isEmpty() ? "" : "\n紧急联系人：" + contactName)
                 + (loc.isEmpty() ? "" : "\n位置：" + loc);
 
@@ -189,10 +301,6 @@ public class EmergencyAlertActivity extends Activity {
                 && checkSelfPermission(Manifest.permission.SEND_SMS)
                 == PackageManager.PERMISSION_GRANTED) {
             try {
-                // 【本次修复】长短信必须分片。求助短信含姓名/联系人/坐标，
-                // 中英文混排很容易超过单条 70 字的限制，用 sendTextMessage 发
-                // 会被运营商截断——最常见的结果就是「位置」那一段没了，
-                // 而位置恰恰是求助短信里最要紧的信息。
                 SmsManager sm = SmsManager.getDefault();
                 java.util.ArrayList<String> parts = sm.divideMessage(msg);
                 if (parts != null && parts.size() > 1) {
@@ -200,39 +308,18 @@ public class EmergencyAlertActivity extends Activity {
                 } else {
                     sm.sendTextMessage(phone, null, msg, null, null);
                 }
-                Toast.makeText(this, "已发送求助短信", Toast.LENGTH_LONG).show();
-                return;
-            } catch (Throwable t) {
-                // 发送失败降级跳短信应用
+                return true;
+            } catch (Throwable ignored) {
             }
         }
-        // 降级：跳转短信应用，预填内容，用户点一下发送
+        // 降级：跳短信应用预填，用户点发送
         try {
             Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + phone));
             i.putExtra("sms_body", msg);
             startActivity(i);
-        } catch (Throwable t) {
-            Toast.makeText(this, "无法发送短信，请手动联系", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private void callContact(String phone) {
-        if (phone == null || phone.isEmpty()) return;
-        if (Build.VERSION.SDK_INT >= 23
-                && checkSelfPermission(Manifest.permission.CALL_PHONE)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
-                startActivity(new Intent(Intent.ACTION_CALL, Uri.parse("tel:" + phone)));
-                return;
-            } catch (Throwable ignored) {
-            }
-        }
-        // 降级：跳转拨号盘（不直接呼出，需要用户点一下拨号键）
-        try {
-            startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + phone)));
         } catch (Throwable ignored) {
         }
+        return false;
     }
 
     @SuppressLint("MissingPermission")
@@ -240,9 +327,7 @@ public class EmergencyAlertActivity extends Activity {
         try {
             if (Build.VERSION.SDK_INT >= 23
                     && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                    != PackageManager.PERMISSION_GRANTED) {
-                return "";
-            }
+                    != PackageManager.PERMISSION_GRANTED) return "";
             LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
             Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             if (loc == null) loc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
@@ -257,10 +342,8 @@ public class EmergencyAlertActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        // singleTask 复用实例时，如果上一轮撞击的倒计时还在跑，说明是同一次事故
-        // （或同一次事故的两条拉起通道先后到达），不能再叠一轮倒计时。
         if (!resolved) {
-            DiagLog.log("[sos] 倒计时进行中再次收到撞击，忽略重复拉起");
+            EmergencyDiag.event(EmergencyDiag.P_SOS, "new_intent_during_countdown_ignored");
         }
     }
 
@@ -268,6 +351,10 @@ public class EmergencyAlertActivity extends Activity {
     protected void onDestroy() {
         stopAlarm();
         handler.removeCallbacksAndMessages(null);
+        if (qrBitmap != null && !qrBitmap.isRecycled()) {
+            qrBitmap.recycle();
+            qrBitmap = null;
+        }
         super.onDestroy();
     }
 }

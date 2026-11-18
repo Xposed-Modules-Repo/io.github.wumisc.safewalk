@@ -60,6 +60,26 @@ object DiagLog {
     @Volatile
     var enabled: Boolean = true
 
+    /**
+     * 【医疗急救卡 v1.1】脱敏钩子。
+     *
+     * DiagLog 本身不认识医疗字段，也不该硬编码字段清单；由 [EmergencyDiag.install]
+     * 注入一个"字段名 + 值 → 可安全落盘文本"的函数。任何医疗字段写日志前都必须
+     * 经 [redact]，输出形如 `key=***(len=N)`。默认实现原样返回，仅用于非医疗日志；
+     * EmergencyDiag 会在 App 进程启动时覆盖它。
+     */
+    @JvmStatic
+    @Volatile
+    var redactor: ((String?, String?) -> String)? = { _, value -> value ?: "" }
+
+    /** 走脱敏钩子输出一条可安全落盘的文本（医疗字段永远只看到 *** 与长度） */
+    @JvmStatic
+    fun redact(key: String?, value: String?): String = try {
+        redactor?.invoke(key, value) ?: "***"
+    } catch (_: Throwable) {
+        "***"
+    }
+
     /** 是否已经做过一次完整探测（失败也算，避免每写一条就重探一遍目录） */
     @Volatile
     private var resolved = false

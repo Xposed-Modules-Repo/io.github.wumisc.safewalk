@@ -15,8 +15,8 @@ android {
         // miuix-blur 的 AGSL RuntimeShader 要 Android 13+，minSdk 提到 33
         minSdk 33
         targetSdk 35
-        versionCode 83
-        versionName "5.4.18"
+        versionCode 85
+        versionName "5.5.0"
     }
 
     compileOptions {
@@ -66,6 +66,12 @@ dependencies {
     implementation 'androidx.annotation:annotation:1.8.0'
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.arch.core:core-runtime:2.2.0'
+
+    // ===== 医疗急救卡（T01）=====
+    // 急救卡加密存储：AndroidKeyStore + AES256-GCM，纯本地无 GMS。
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+    // 医疗 QR：ZXing core 是纯 Java 实现，不引入 Play Services、不联网。
+    implementation 'com.google.zxing:core:3.5.3'
 
     // Miuix 液态玻璃组件（compileSdk 已升至 37，满足 0.9.4 要求）
 

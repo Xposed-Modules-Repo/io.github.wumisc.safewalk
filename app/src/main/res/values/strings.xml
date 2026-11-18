@@ -23,8 +23,4 @@
     <string name="orient_port_hint">系统竖着拿时，小窗窗口框做成横条还是竖条。注意竖条窗口的画面永远不旋转，这是写死的规则。</string>
     <string name="orient_facing_title">后摄转正方向</string>
     <string name="orient_facing_hint">直接指定画面最终朝哪边，目测哪边朝上就选哪边。只在横条小窗生效；竖条窗口画面恒不转。选「自动」恢复原来的自动推断。</string>
-
-    <!-- 5.4.17 镜头选择：超广角优先 / 主摄 -->
-    <string name="camera_lens_title">路况镜头</string>
-    <string name="camera_lens_hint">「超广角优先」会选视野更广的镜头看身后路况，没有超广角的机型自动用主摄代替；「主摄」则固定用主摄。需要重新打开预览才生效。</string>
 </resources>

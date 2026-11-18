@@ -413,6 +413,14 @@ class RearCameraOverlay(
     private var requestedZoomRatio: Float? = null
 
     /**
+     * 【省电专项】当前已打开相机对应的物理 id，以及它是否支持逻辑 zoom（下限<1）。
+     * 镜头切换时据此判断是否只需原地切 zoom、而不用 close→open 相机。
+     * 仅当 [CameraLensPolicy.needsReopenOnLensChange] 判定「物理 id 变了」才重开。
+     */
+    private var openedCameraId: String? = null
+    private var openedCameraSupportsZoom = false
+
+    /**
      * 【5.3.0 画面方向】后置传感器的安装角度。
      *
      * 绝大多数手机后摄是「横装在机身里」的（SENSOR_ORIENTATION = 90），
@@ -894,12 +902,27 @@ class RearCameraOverlay(
                 || lensChanged)
         ) {
             style = target
-            // 【路况预览 · 镜头】换镜头要换相机 id：先关掉旧设备，再走带冷却的重开。
-            // closeCamera 会推进代号、作废在飞的回调，openCamera 内部等 HAL 断开。
+            // 【省电专项 · 路况预览镜头】换镜头不再一律关相机重开。
+            // 现代机型只有一颗后置逻辑摄像头，超广角靠 CONTROL_ZOOM_RATIO=0.6 实现，
+            // 同一颗 id 原地重下发 repeating request 就能换视野，省掉一次 HAL 大电流握手。
+            // 只有独立多摄（物理 id 真的变了）才 close→open。判定见 CameraLensPolicy。
             if (lensChanged && isShowing) {
-                diag("[overlay] 镜头切换 → ${target.cameraLens}，关闭旧相机并重开")
-                closeCamera()
-                openCamera()
+                val targetId = backCameraId()   // 按新 style.cameraLens 算出目标 id 并刷新 requestedZoomRatio
+                // 第三参用「当前相机记录的 zoom 能力」：策略只在 oldId==newId 时读它，
+                // 那一刻当前相机就是目标相机，能力一致，省一次 CameraManager 查询。
+                val mustReopen = CameraLensPolicy.needsReopenOnLensChange(
+                    openedCameraId, targetId, openedCameraSupportsZoom)
+                if (mustReopen) {
+                    diag("[overlay] 镜头切换 → ${target.cameraLens}，物理 id 变化"
+                            + "($openedCameraId→$targetId)，关闭旧相机并重开")
+                    closeCamera()
+                    openCamera()
+                } else {
+                    // 同一颗逻辑摄像头：只重下发一次 CaptureRequest，0.6x/1.0x 立即生效。
+                    diag("[overlay] 镜头切换 → ${target.cameraLens}，同一逻辑 id=$targetId"
+                            + " 原地切 zoom=${requestedZoomRatio ?: 1.0f}，不重开相机（省电）")
+                    refreshRequestInSession()
+                }
             }
             if (hudChanged) applyHudStyle()
             if (enhanceChanged) applyScreenEnhance()
@@ -2263,6 +2286,9 @@ class RearCameraOverlay(
             // 反过来的话，会话会按「窗口宽高」这个错误比例配起来，
             // 中途改只能重建会话（画面黑一下），而横屏时用户往往正在走路。
             val id = backCameraId()
+            // 【省电专项】记下本次要打开的相机 id 与 zoom 能力，供镜头切换时判断能否原地切 zoom
+            openedCameraId = id
+            openedCameraSupportsZoom = id != null && hasLogicalZoom(id)
             resolveOrientation(id, view.width, view.height)
             // 方向刚算出来，立刻把矩阵落下去。
             // 上面 onSurfaceTextureAvailable 里那次 applyFraming 跑在 openCamera 之前，
@@ -2578,6 +2604,18 @@ class RearCameraOverlay(
                 + " 原始=" + rawDeg + "° 实转=" + appliedRotDeg + "°"
                 + (if (rawDeg != appliedRotDeg) "（已按窗口形状校正）" else "（无需校正）")
         )
+    }
+
+    /**
+     * 【省电专项】某颗相机是否支持「逻辑 zoom」（CONTROL_ZOOM_RATIO_RANGE 下限 < 1）。
+     * 支持则超广角靠下发 0.6x 实现，切镜头无需重开相机。读不到按不支持处理（保守重开）。
+     */
+    private fun hasLogicalZoom(id: String): Boolean = try {
+        val range = cm.getCameraCharacteristics(id)
+            .get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+        range != null && range.lower < 1f && range.upper > range.lower
+    } catch (_: Throwable) {
+        false
     }
 
     /**

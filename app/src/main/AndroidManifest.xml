@@ -212,6 +212,16 @@
             android:turnScreenOn="true"
             android:theme="@style/Theme.Safewalk" />
 
+        <!--
+            AED 导航（T05）：从急救告警页进入，只在本应用内使用，不导出。
+            无网/无数据时页面 100% 显示「拨打 120」的 ACTION_DIAL 按钮。
+        -->
+        <activity
+            android:name=".AedGuideActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="附近 AED" />
+
         <activity
             android:name=".SmartReminderActivity"
             android:exported="false"
@@ -371,6 +381,12 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="io.github.wumisc.safewalk.CRASH_DETECTED" />
+                <!-- v1.1：SHOW/VISIBLE 为 App → SystemUI 的一次性显示通道广播，
+                     由 Hook 侧以 signature CONTROL 权限动态注册接收器。
+                     Manifest 此处声明仅为让静态检视能看到完整 action 清单。 -->
+                <action android:name="io.github.wumisc.safewalk.EMERGENCY_SHOW" />
+                <action android:name="io.github.wumisc.safewalk.EMERGENCY_VISIBLE" />
+                <action android:name="io.github.wumisc.safewalk.EMERGENCY_HIDE" />
             </intent-filter>
         </receiver>
 
@@ -425,6 +441,20 @@
         <provider
             android:name=".ConfigProvider"
             android:authorities="io.github.wumisc.safewalk.config"
+            android:exported="true"
+            android:enabled="true" />
+
+        <!--
+            【v1.1 一次性显示通道】与 ConfigProvider 物理隔离：独立 authority/path/方法/数据源/鉴权。
+            ⚠️ 绝对不能挂 android:permission="...CONTROL"：CONTROL 是本应用自签名的 signature 权限，
+            SystemUI 是系统签名、与本应用不同签名，挂上后 SystemUI 的 call("take") 会被系统直接拒绝。
+            照抄 ConfigProvider 的做法：exported=true、不挂 permission，靠代码里
+            isTrustedDisplayCaller() 的 uid + 包名双重鉴权 fail-closed。
+            query() 恒返回空 Cursor，避免被当成第二条配置通道读取。
+        -->
+        <provider
+            android:name=".DisplayProvider"
+            android:authorities="io.github.wumisc.safewalk.display"
             android:exported="true"
             android:enabled="true" />
 

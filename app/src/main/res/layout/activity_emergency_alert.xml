@@ -1,126 +1,226 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/seal_red"
-    android:orientation="vertical"
-    android:padding="24dp">
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:gravity="center"
-        android:text="疑似检测到撞击"
-        android:textColor="#FFFFFF"
-        android:textSize="26sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:gravity="center"
-        android:text="如你无恙，请在倒计时结束前点「我没事」"
-        android:textColor="#FFE0D8"
-        android:textSize="14sp" />
-
-    <TextView
-        android:id="@+id/tv_alert_countdown"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:gravity="center"
-        android:text="60"
-        android:textColor="#FFFFFF"
-        android:textSize="80sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:text="秒后自动求助"
-        android:textColor="#FFE0D8"
-        android:textSize="14sp" />
+    android:fillViewport="true"
+    android:padding="20dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:background="#FFFFFF"
-        android:orientation="vertical"
-        android:padding="20dp">
+        android:orientation="vertical">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="急救卡"
-            android:textColor="#C8392E"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tv_alert_name"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="未填写"
-            android:textColor="#1A1A1A"
-            android:textSize="18sp"
+            android:gravity="center"
+            android:text="疑似检测到撞击"
+            android:textColor="#FFFFFF"
+            android:textSize="26sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tv_alert_blood"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="血型：未填写"
-            android:textColor="#5A5A5A"
-            android:textSize="15sp" />
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text="如你无恙，请在倒计时结束前点「我没事」"
+            android:textColor="#FFE0D8"
+            android:textSize="14sp" />
 
         <TextView
-            android:id="@+id/tv_alert_contact"
+            android:id="@+id/tv_alert_countdown"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="紧急联系人：未设置"
-            android:textColor="#5A5A5A"
-            android:textSize="15sp" />
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:text="60"
+            android:textColor="#FFFFFF"
+            android:textSize="72sp"
+            android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tv_alert_address"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="住址：未填写"
-            android:textColor="#5A5A5A"
+            android:gravity="center"
+            android:text="秒后自动求助"
+            android:textColor="#FFE0D8"
+            android:textSize="14sp" />
+
+        <!-- 完整急救卡：≥6 字段，关键字段统一 ≥18sp，红底内白底高对比卡片 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="#FFFFFF"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="医疗急救卡 · 无需解锁"
+                android:textColor="#C8392E"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_alert_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="未填写"
+                android:textColor="#1A1A1A"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_alert_blood"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="血型：未填写"
+                android:textColor="#1A1A1A"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/tv_alert_allergy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="过敏：无记录"
+                android:textColor="#1A1A1A"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/tv_alert_conditions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="基础疾病：无记录"
+                android:textColor="#1A1A1A"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/tv_alert_contact"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="紧急联系人：未设置"
+                android:textColor="#1A1A1A"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/tv_alert_age"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="年龄：未填写"
+                android:textColor="#1A1A1A"
+                android:textSize="18sp" />
+
+            <!-- U1：住址不进覆盖层，但 Activity 完整卡面保留显示 -->
+            <TextView
+                android:id="@+id/tv_alert_address"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="住址：未填写"
+                android:textColor="#1A1A1A"
+                android:textSize="18sp" />
+        </LinearLayout>
+
+        <!-- 可见回执：短信/拨号/系统SOS/无联系人，任何结果都明示 -->
+        <TextView
+            android:id="@+id/tv_alert_receipt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="#8E2018"
+            android:padding="12dp"
+            android:text="求助将在倒计时结束后自动进行"
+            android:textColor="#FFFFFF"
             android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btn_alert_ok"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="#FFFFFF"
+            android:text="我没事 · 取消求助"
+            android:textColor="@color/seal_red"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_alert_sos"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:backgroundTint="@color/beyond_orange"
+            android:text="立即求助（短信 + 拨号盘）"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_alert_dial_120"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:backgroundTint="#FFFFFF"
+                android:text="拨打 120"
+                android:textColor="@color/seal_red"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btn_alert_aed"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginLeft="8dp"
+                android:backgroundTint="#FFFFFF"
+                android:text="附近 AED"
+                android:textColor="@color/seal_red"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="16dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_alert_sos_system"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:backgroundTint="#8E2018"
+                android:text="系统 SOS"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btn_alert_qr"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginLeft="8dp"
+                android:backgroundTint="#8E2018"
+                android:text="医疗 QR"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+        </LinearLayout>
+
     </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
-
-    <Button
-        android:id="@+id/btn_alert_ok"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:backgroundTint="#FFFFFF"
-        android:text="我没事"
-        android:textColor="@color/seal_red"
-        android:textSize="18sp"
-        android:textStyle="bold" />
-
-    <Button
-        android:id="@+id/btn_alert_sos"
-        android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:layout_marginTop="12dp"
-        android:layout_marginBottom="16dp"
-        android:backgroundTint="@color/beyond_orange"
-        android:text="立即求助"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp" />
-</LinearLayout>
+</ScrollView>

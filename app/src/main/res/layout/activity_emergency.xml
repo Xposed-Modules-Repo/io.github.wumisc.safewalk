@@ -27,11 +27,36 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:lineSpacingExtra="4dp"
-            android:text="手机损坏、迷路、身体不适或无网络环境下，救援人员可直接查看此卡片了解你的信息。全部数据本地保存，不上传网络。"
+            android:text="手机损坏、迷路、身体不适或无网络环境下，救援人员可直接查看此卡片了解你的信息。全部数据本地加密保存，不上传网络。"
             android:textColor="@color/text_hint"
             android:textSize="13sp"/>
 
-        <!-- 表单卡片 -->
+        <!-- v1.1 用户裁决知情提示：撞击确认时关键信息强制锁屏显示 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="#FFF4E5"
+            android:orientation="vertical"
+            android:padding="14dp">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="撞击触发时关键信息将锁屏直接显示"
+                android:textColor="#8A4B00"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:lineSpacingExtra="3dp"
+                android:text="一旦确认为撞击，姓名/血型/过敏/基础疾病/主联系人会在锁屏上红底大字显示约 20 秒，不解锁即可读；这是为了救助效率。下方隐私开关仅约束手动预览，不约束撞击场景。"
+                android:textColor="#8A4B00"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 基本信息 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -48,59 +73,253 @@
                 android:inputType="textPersonName"
                 android:background="@null"/>
             <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
-            <EditText
-                android:id="@+id/et_blood"
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="血型"
-                android:inputType="textCapCharacters"
-                android:background="@null"/>
+                android:orientation="horizontal">
+                <EditText
+                    android:id="@+id/et_age"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="年龄"
+                    android:inputType="number"
+                    android:background="@null"/>
+                <Spinner
+                    android:id="@+id/sp_gender"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:spinnerMode="dialog" />
+            </LinearLayout>
             <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="血型"
+                    android:textColor="@color/text_body"
+                    android:textSize="14sp" />
+                <Spinner
+                    android:id="@+id/sp_blood"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:spinnerMode="dialog" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="Rh"
+                    android:textColor="@color/text_body"
+                    android:textSize="14sp" />
+                <Spinner
+                    android:id="@+id/sp_rh"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:spinnerMode="dialog" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
             <EditText
                 android:id="@+id/et_address"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="住址"
+                android:hint="常住住址（可选）"
                 android:inputType="textPostalAddress"
                 android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
-            <!-- 注意与代码的对应关系：et_contact 存的是姓名，et_phone 存的是电话。
-                 之前这两条 hint 和存储字段是错位的——「身高/体重」框写进的是联系电话，
-                 「紧急联系人电话」框写进的是姓名，急救时看到的信息全是串的。 -->
-            <EditText
-                android:id="@+id/et_contact"
-                android:layout_width="match_parent"
+        </LinearLayout>
+
+        <!-- 医疗信息：施救者优先看 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:hint="紧急联系人姓名"
-                android:inputType="textPersonName"
-                android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
-            <EditText
-                android:id="@+id/et_phone"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="紧急联系人电话"
-                android:inputType="phone"
-                android:background="@null"/>
-            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
-            <!-- 医疗急救最关键的两项：救援人员最需要知道「对什么药过敏」「在吃什么药」 -->
+                android:text="医疗信息"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+
             <EditText
                 android:id="@+id/et_allergy"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:hint="过敏史（如：青霉素过敏）"
                 android:inputType="textMultiLine"
                 android:maxLines="3"
                 android:background="@null"/>
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sw_allergy_severe"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="严重过敏（锁屏前置★）"
+                android:textColor="@color/accent_warn"
+                android:textSize="13sp" />
             <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
             <EditText
                 android:id="@+id/et_condition"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="慢性病 / 长期用药（如：高血压、二甲双胍）"
+                android:hint="基础疾病（如：心脏病、糖尿病）"
                 android:inputType="textMultiLine"
                 android:maxLines="3"
                 android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
+            <EditText
+                android:id="@+id/et_medications"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="当前用药"
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
+            <EditText
+                android:id="@+id/et_insurance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="医保号（可选，高敏感，不进锁屏）"
+                android:inputType="text"
+                android:background="@null"/>
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sw_organ_donation"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="器官捐献意愿"
+                android:textColor="@color/text_body"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 紧急联系人（3 位） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="紧急联系人（建议填 3 位）"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <EditText android:id="@+id/et_contact1_name" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2" android:hint="① 姓名" android:inputType="textPersonName" android:background="@null"/>
+                <EditText android:id="@+id/et_contact1_relation" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="关系" android:inputType="text" android:background="@null"/>
+            </LinearLayout>
+            <EditText android:id="@+id/et_contact1_phone" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="① 电话" android:inputType="phone" android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <EditText android:id="@+id/et_contact2_name" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2" android:hint="② 姓名" android:inputType="textPersonName" android:background="@null"/>
+                <EditText android:id="@+id/et_contact2_relation" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="关系" android:inputType="text" android:background="@null"/>
+            </LinearLayout>
+            <EditText android:id="@+id/et_contact2_phone" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="② 电话" android:inputType="phone" android:background="@null"/>
+            <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <EditText android:id="@+id/et_contact3_name" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2" android:hint="③ 姓名" android:inputType="textPersonName" android:background="@null"/>
+                <EditText android:id="@+id/et_contact3_relation" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="关系" android:inputType="text" android:background="@null"/>
+            </LinearLayout>
+            <EditText android:id="@+id/et_contact3_phone" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="③ 电话" android:inputType="phone" android:background="@null"/>
+        </LinearLayout>
+
+        <!-- 隐私与分享 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="隐私与分享"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sw_show_blood_lock"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="手动预览时显示血型（撞击时不受此开关约束）"
+                android:textColor="@color/text_body"
+                android:textSize="13sp" />
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sw_show_address_lock"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="手动预览时显示住址（撞击时不受此开关约束）"
+                android:textColor="@color/text_body"
+                android:textSize="13sp" />
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sw_allow_sms_location"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="求助短信附带当前位置"
+                android:textColor="@color/text_body"
+                android:textSize="13sp" />
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sw_allow_qr"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="允许生成医疗 QR（明文，扫码可读全部信息）"
+                android:textColor="@color/accent_warn"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_gen_qr"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="@color/seal_red"
+                android:text="生成医疗 QR"
+                android:textColor="@color/on_accent"/>
+
+            <ImageView
+                android:id="@+id/iv_qr"
+                android:layout_width="220dp"
+                android:layout_height="220dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="12dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="医疗急救卡二维码"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tv_vault_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/text_hint"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <Button
@@ -109,10 +328,10 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:backgroundTint="@color/primary"
-            android:text="保存急救卡"
+            android:text="保存急救卡（本地加密）"
             android:textColor="@color/on_accent"/>
 
-        <!-- 锁屏可见性：把话说清楚，并给一条真能落地的路径 -->
+        <!-- 锁屏可见性：保留"复制到系统紧急信息"卡片（Q3 联动不替代） -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -124,7 +343,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="锁屏时别人看不到这张卡"
+                android:text="复制到系统紧急信息"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:textStyle="bold"/>
@@ -134,7 +353,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:lineSpacingExtra="4dp"
-                android:text="手机没电、损坏或锁屏时，App 里的卡片是打不开的。建议把下面这段信息复制一份，填进系统「紧急信息 / 医疗急救信息」，那样锁屏也能被救援人员看到。"
+                android:text="手机没电、损坏或 SystemUI 未加载时，App 里的卡片打不开。建议把下面这段信息复制一份，填进系统「紧急信息 / 医疗急救信息」，作为关机/没电场景的兜底。"
                 android:textColor="@color/text_hint"
                 android:textSize="13sp"/>
 
@@ -180,7 +399,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:lineSpacingExtra="2dp"
-                        android:text="持续监测撞击，检测到后弹出急救卡，60秒未响应自动联系紧急联系人"
+                        android:text="持续监测撞击，检测到后锁屏强提醒，60秒未响应自动求助"
                         android:textColor="@color/text_hint"
                         android:textSize="12sp"/>
                 </LinearLayout>
@@ -205,34 +424,11 @@
                 android:layout_marginTop="8dp"
                 android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/chip_crash_low"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingHorizontal="14dp"
-                    android:paddingVertical="6dp"
-                    android:text="低"/>
-
-                <TextView
-                    android:id="@+id/chip_crash_mid"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginLeft="8dp"
-                    android:paddingHorizontal="14dp"
-                    android:paddingVertical="6dp"
-                    android:text="中"/>
-
-                <TextView
-                    android:id="@+id/chip_crash_high"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginLeft="8dp"
-                    android:paddingHorizontal="14dp"
-                    android:paddingVertical="6dp"
-                    android:text="高"/>
+                <TextView android:id="@+id/chip_crash_low" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingHorizontal="14dp" android:paddingVertical="6dp" android:text="低"/>
+                <TextView android:id="@+id/chip_crash_mid" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginLeft="8dp" android:paddingHorizontal="14dp" android:paddingVertical="6dp" android:text="中"/>
+                <TextView android:id="@+id/chip_crash_high" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginLeft="8dp" android:paddingHorizontal="14dp" android:paddingVertical="6dp" android:text="高"/>
             </LinearLayout>
 
-            <!-- 权限逐项状态：避免「以为在监测，其实没授权」 -->
             <TextView
                 android:id="@+id/tv_perm_status"
                 android:layout_width="match_parent"

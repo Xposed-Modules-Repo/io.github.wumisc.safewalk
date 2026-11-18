@@ -588,6 +588,10 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             }
             // 车祸预警：总开关+车祸开关都开着才启动持续加速度监听
             step("车祸检测") { updateCrashDetection() }
+            // 【v1.1 T04】急救覆盖层 + 一次性显示取件客户端。
+            // 两步各自 try/catch（step 已保证），失败只损失这两路，绝不影响心跳看门狗。
+            step("急救覆盖层") { EmergencyOverlay.install(ctx!!) }
+            step("显示取件客户端") { DisplayClient.install(ctx!!, EmergencyOverlay) }
             // 环境光监测：夜间自动开灯前判断「太黑才亮」
             step("环境光监测") { startLightMonitor() }
             // 预览已搬到 App 进程（WalkPreviewService）：Hook 这里只做步态判定，
@@ -1479,6 +1483,12 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private val tickRunnable = object : Runnable {
         override fun run() {
             try {
+                // 【v1.1 T04】急救覆盖层 TTL 兜底：Activity 可见 ACK 丢失时，
+                // 20s 后自动 hide()，复用既有 2s/5s tick，不另起定时器、不开 wake lock。
+                try {
+                    EmergencyOverlay.expireIfDue(SystemClock.elapsedRealtime())
+                } catch (_: Throwable) {
+                }
                 // check() 负责步态与提醒；updateOverlay() 只负责悬浮窗。
                 // 之前 tick 里漏掉 check()，导致整套提醒逻辑从未被执行过。
                 check()

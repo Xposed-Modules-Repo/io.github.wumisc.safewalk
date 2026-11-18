@@ -1,0 +1,76 @@
+{
+  "type": "FeatureCollection",
+  "note": "SafeWalk 内置 AED 示范数据（少量 POI）。国内 OSM 覆盖稀疏，请以现场标识和 120 为准；用户可通过 aed_user.geojson 自建。",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "demo-beijing-01",
+      "properties": {
+        "name": "AED · 王府井地铁站",
+        "addr:full": "北京市东城区王府井地铁站站厅层",
+        "access": "站内服务台旁",
+        "opening_hours": "随车站运营时间",
+        "phone": "010-120",
+        "source": "OSM",
+        "verified_at": 1735689600000
+      },
+      "geometry": { "type": "Point", "coordinates": [116.4109, 39.9149] }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-beijing-02",
+      "properties": {
+        "name": "AED · 天安门东地铁站",
+        "addr:full": "北京市东城区天安门东地铁站",
+        "access": "站内通道",
+        "opening_hours": "随车站运营时间",
+        "phone": "010-120",
+        "source": "OSM",
+        "verified_at": 1735689600000
+      },
+      "geometry": { "type": "Point", "coordinates": [116.4011, 39.9075] }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-beijing-03",
+      "properties": {
+        "name": "AED · 前门大街游客中心",
+        "addr:full": "北京市东城区前门大街游客服务中心",
+        "access": "一楼大厅",
+        "opening_hours": "09:00-20:00",
+        "phone": "010-120",
+        "source": "OSM",
+        "verified_at": 1735689600000
+      },
+      "geometry": { "type": "Point", "coordinates": [116.3966, 39.8994] }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-shanghai-01",
+      "properties": {
+        "name": "AED · 人民广场地铁站",
+        "addr:full": "上海市黄浦区人民广场地铁站",
+        "access": "站厅层",
+        "opening_hours": "随车站运营时间",
+        "phone": "021-120",
+        "source": "OSM",
+        "verified_at": 1735689600000
+      },
+      "geometry": { "type": "Point", "coordinates": [121.4737, 31.2304] }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-guangzhou-01",
+      "properties": {
+        "name": "AED · 体育西路地铁站",
+        "addr:full": "广州市天河区体育西路地铁站",
+        "access": "站厅层",
+        "opening_hours": "随车站运营时间",
+        "phone": "020-120",
+        "source": "OSM",
+        "verified_at": 1735689600000
+      },
+      "geometry": { "type": "Point", "coordinates": [113.3235, 23.1335] }
+    }
+  ]
+}

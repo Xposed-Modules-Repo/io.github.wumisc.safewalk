@@ -1,5 +1,48 @@
 # 更新日志
 
+## [5.5.0] - 2026-11-18 医疗急救卡：车祸预警/锁屏强提醒/系统SOS/急救卡字段/AED 导航
+
+> 功能级版本。设计见 `docs/emergency-medical-card-PRD.md`、`docs/emergency-medical-card-ARCH.md`、`docs/emergency-medical-card-ARCH-v1.1.md`。
+
+### 新增能力（对应用户五大需求）
+
+1. **车祸预警落成**：保留 CrashDetector 低通+2采样+60s冷却骨架，叠加 `CrashFusionPolicy` 二级融合（速度突变 Δv + 姿态夹角 + 屏幕状态 + 跌倒排除）降低误报。
+2. **锁屏强提醒（四路并用）**：① SystemUI 系统级覆盖层 ② 全屏 Activity ③ FSI 通知（含撤销降级）④ ACTION_CLOSE_SYSTEM_DIALOGS。覆盖层**直接渲染关键医疗字段**（姓名/血型+Rh/过敏★/基础疾病/主联系人/年龄，红底 ≥18sp），救助效率优先。
+3. **系统 SOS 联动**：`SystemSosLauncher` 候选 Intent 链 + resolveActivity 校验 + ACTION_DIAL 预填 120/110，不静默代拨。
+4. **急救卡字段扩展**：血型(A/B/AB/O/其他/未知)+Rh、年龄/性别、≥3 联系人、医保、器官捐献、隐私开关、医疗 QR；全部 EncryptedSharedPreferences 加密存储（AndroidKeyStore AES256-GCM），旧明文 7 字段幂等迁移。
+5. **AED 导航**：纯本地 GeoJSON（内置示范 + 用户自建）+ Haversine 500m 检索 + `geo:` 步行引导；无数据/无定位 100% 提示拨打 120。
+
+### 隐私与安全（受控放宽）
+
+- 医疗字段**源数据**永不跨进程、永不落盘、永不进日志；ConfigProvider 白名单零医疗字段（单测铁律守护）。
+- 唯一例外：撞击确认为真后，经独立 `DisplayProvider` 一次性通道（一次性 token 用后即焚 + TTL 20s + system uid/包名双重鉴权 + 载荷最小化）把最小字段集送入 SystemUI 内存渲染，Activity 可见即退场（单一暴露面）。
+- 两条跨进程通道（ConfigProvider 开关 / DisplayProvider 显示）物理隔离；DiagLog 医疗字段只记长度与 token 哈希前 4 位。
+
+### 兼容与注意
+
+- 覆盖层直接显示医疗信息是用户明确裁决（救助效率优先），任何拿到手机者锁屏可见（TTL 20s 窗口），已在设置页明示。
+- 100% 触达前提：设备开机 + SystemUI 存活；关机/没电/SystemUI 崩溃/作用域取消不承诺，降级为撞击瞬间预发 SMS 回执。
+- 测试：809 项全通过（0 失败），Q4 六组安全测试 + 四层安全机制全部覆盖；真机 6 类锁屏状态矩阵待验证。
+
+## [5.4.19] - 2026-11-18 省电专项：镜头切换原地换视野 + 前台服务去重
+
+### 范围
+
+依据真机 16.5 小时 `diag.log`（4023 行）定位到三处高频大电流开销并修复：
+
+- **镜头切换不再每次重开相机（核心省电）**：日志显示用户在设置页来回切主摄/超广角时，
+  每次都触发 `closeCamera()+openCamera()` 完整 HAL 握手（数百毫秒大电流 + 画面黑一下），
+  13:42 一分钟 14 次、14:00 两秒内 4 次。现代机型主摄与 0.6x 超广角共用一颗后置
+  **逻辑摄像头**（日志铁证：切前切后都是 `id=0`），本就只需改 `CONTROL_ZOOM_RATIO`。
+  新增 `CameraLensPolicy.needsReopenOnLensChange`：物理 id 未变且支持逻辑 zoom 时，
+  只重下发一次 CaptureRequest 原地换视野，**零 HAL 握手**；独立多摄（id 真变了）才重开，
+  保守兜底不误判。超广角 0.6x 行为完全不变。
+- **前台服务（FGS）重复提起去重**：`onStartCommand` 每次都走 `goForeground()`，
+  同一秒最多重复 4~14 次重建通知渠道、跑降级链、刷日志。新增 `foregroundEstablished`
+  幂等标志，已成功提起就跳过，仅 `ACTION_STOP` 撤掉前台后清零；完全失败(-2)仍保留重试。
+- **测试**：新增 `CameraLensPolicyTest` 4 例（同逻辑 id 不重开 / 异物理 id 必重开 /
+  无逻辑 zoom 重开 / 信息不全保守重开）。全量 745/745 通过。
+
 ## [5.4.18] - 2026-11-18 修复版：逻辑摄像头 0.6x 超广角真正生效 + 起源作者实名署名
 
 ### 范围
