@@ -368,14 +368,14 @@ public class LandscapeFishHeadRightContractTest {
                 applyFramingCode.contains("hudView?.rotation = -90"));
     }
 
-    /** A4 意图：版本号升到 85/5.5.0，旧号 84/5.4.19 清干净。 */
+    /** A4 意图：版本号升到 86/5.5.1，旧号 85/5.5.0 清干净。 */
     @Test
     public void a4_versionIs5414Build79NoOldNumbers() {
-        assertTrue("A4 build.gradle 须含 versionCode 85", gradleSrc.contains("versionCode 85"));
-        assertTrue("A4 build.gradle 须含 versionName \"5.5.0\"",
-                gradleSrc.contains("versionName \"5.5.0\""));
-        assertFalse("A4 须已无 versionCode 84", gradleSrc.contains("versionCode 84"));
-        assertFalse("A4 须已无 5.4.19", gradleSrc.contains("5.4.19"));
+        assertTrue("A4 build.gradle 须含 versionCode 86", gradleSrc.contains("versionCode 86"));
+        assertTrue("A4 build.gradle 须含 versionName \"5.5.1\"",
+                gradleSrc.contains("versionName \"5.5.1\""));
+        assertFalse("A4 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
+        assertFalse("A4 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }
 
     /** A5 意图：硬边界 token 计数不破（59 号只改 deg when 一分支 + 版本 + 注释）。

@@ -57,13 +57,15 @@ class WalkConfirmPolicy @JvmOverloads constructor(
     /**
      * 整段跨度下限。
      *
-     * **故意留在 4000 而不是跟着收紧到 5.5 秒**：门槛是「连续 10 步」，
-     * 正常步频 550ms 时 9 个间隔只有 4.95 秒 —— 跨度要求一旦超过它，
-     * 「刚好走满 10 步」就永远过不了，等于把放行条件变成死条件。
-     * 这个坑本文件开头已经踩过一次（旧版 `≥15 步` 对 10 步的窗口恒不成立），
-     * 不能再犯。真正的分辨力来自平均间隔上限与节律一致性，不在跨度上。
+     * 【为什么必须跟着门槛走，而不是写死一个数】这段跨度的本义是「步流要持续够久」，
+     * 它天然等于「(门槛-1) 个步间隔」。写死 4000 在门槛 10 步时是安全的
+     * （正常步频 550ms → 9 个间隔 4.95 秒 > 4 秒）；但 5.5.0 门槛降到 8 步后，
+     * 8 步在 550ms 步频下只有 3.85 秒 —— 写死 4000 会把**每分钟 109 步的正常步行
+     * 判死**，正是本文件开头那次「门槛不可达 / 恒不成立」事故的同款翻车。
+     * 所以默认值改由 [minSpanFor] 按门槛推导，每个档位都比「该档位在最快允许步频下
+     * 能凑出的最短跨度」再留一点余量。
      */
-    private val minSpanMs: Long = 4000L
+    private val minSpanMs: Long = minSpanFor(requiredSteps)
 ) {
 
     companion object {
@@ -81,13 +83,19 @@ class WalkConfirmPolicy @JvmOverloads constructor(
         /**
          * 把用户设置换算成纯加速度门槛。
          *
-         * 用户设置的是「连续走 N 步」，硬件计步确认按 2 步放行；纯加速度抗噪差，
-         * 取 2N 并夹在 [MIN_REQUIRED_STEPS, WINDOW_CAP] 之间。
-         * 默认 N=5 → 10 步（窗口满格），恰好是「连续走满一整个窗口」。
+         * 【5.5.0 为什么不再 ×2】旧版这么写是因为**硬件计步确认只要 2 步**，
+         * 纯加速度抗噪差，必须取 2N 才配得上同一句「连续走 N 步」的承诺。
+         * 5.5.0 起硬件门槛抬到 8 步（[STEP_CONFIRM_MIN]），两套判据已经对齐，
+         * 再乘 2 只会让默认档（8）直接顶到窗口上限 10，
+         * 用户把滑条从 8 拨到 9、10 时门槛却一直是 10 —— 滑条看起来坏了。
+         *
+         * 现在改成**直接映射**：门槛 = 用户设的步数，夹在
+         * [MIN_REQUIRED_STEPS, WINDOW_CAP] 之间。默认 8 → 8 步，9 → 9 步，10 → 10 步，
+         * 三档都能在采集层的 10 步窗口内可达（这是本文件开头那次死条件事故的底线）。
          */
         @JvmStatic
         fun requiredStepsFor(prefSteps: Int): Int =
-            min(WINDOW_CAP, max(MIN_REQUIRED_STEPS, prefSteps * 2))
+            min(WINDOW_CAP, max(MIN_REQUIRED_STEPS, prefSteps))
     }
 
     /** 判定结果（含失败原因与量化指标，供日志与单测断言） */
@@ -161,4 +169,27 @@ class WalkConfirmPolicy @JvmOverloads constructor(
 
     /** 供日志展示的门槛 */
     fun requiredSteps(): Int = requiredSteps
+}
+
+/**
+ * 按「门槛步数」推导整段跨度下限（毫秒）。
+ *
+ * 推导依据：跨度 = (门槛-1) × 平均步间隔。取 450ms 作为「最快仍算步行」的步间隔
+ * （≈133 步/分，再快就是慢跑，已被 [WalkConfirmPolicy] 的平均间隔下限 380ms 拦），
+ * 于是：
+ * ```
+ * 门槛 8 步 → 7 × 450 = 3150ms（正常步频 550ms 实际跨度 3850ms，留 22% 余量）
+ * 门槛 9 步 → 8 × 450 = 3600ms
+ * 门槛 10 步 → 9 × 450 = 4050ms（550ms 步频实际 4950ms，留 22% 余量）
+ * ```
+ * 下限再夹到 3000ms（服务层的「短促抖动」闸门同值），保证「3 秒内连抖 8 下」
+ * 无论哪个档位都过不了跨度关。
+ *
+ * 关键点：这个值**必须随门槛变化**。写死一个数就必然出现「某个档位恒不成立」
+ * 或「正常步频被误杀」，本文件开头记录的两次事故都是这个成因。
+ */
+private fun minSpanFor(requiredSteps: Int): Long {
+    val steps = if (requiredSteps < 2) 2 else requiredSteps
+    val derived = (steps - 1) * 450L
+    return if (derived < 3000L) 3000L else derived
 }

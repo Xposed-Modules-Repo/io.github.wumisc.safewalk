@@ -423,13 +423,13 @@ public class LeftDefaultFacingContractTest {
 
     // ==================== L5 · 版本断言 ====================
 
-    /** L5 意图：版本升到 84/5.4.19，旧号 83/5.4.18 清干净。 */
+    /** L5 意图：版本升到 86/5.5.1，旧号 85/5.5.0 清干净。 */
     @Test
     public void l5_versionIs81Build5416NoOldNumbers() {
-        assertTrue("L5 build.gradle 须含 versionCode 85", gradleSrc.contains("versionCode 85"));
-        assertTrue("L5 build.gradle 须含 versionName \"5.5.0\"",
-                gradleSrc.contains("versionName \"5.5.0\""));
-        assertFalse("L5 须已无 versionCode 84", gradleSrc.contains("versionCode 84"));
-        assertFalse("L5 须已无 5.4.19", gradleSrc.contains("5.4.19"));
+        assertTrue("L5 build.gradle 须含 versionCode 86", gradleSrc.contains("versionCode 86"));
+        assertTrue("L5 build.gradle 须含 versionName \"5.5.1\"",
+                gradleSrc.contains("versionName \"5.5.1\""));
+        assertFalse("L5 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
+        assertFalse("L5 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }
 }

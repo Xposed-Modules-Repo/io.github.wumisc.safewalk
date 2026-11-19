@@ -5,6 +5,14 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose' version '2.4.21'
 }
 
+// 【私有签名】本地 keystore.properties 不进仓库（见 .gitignore）；
+// 缺失时回退 debug 签名，保证他人 clone 后无需私钥也能编译。
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace 'io.github.wumisc.safewalk'
     // miuix-blur 0.9.4 强制 compileSdk>=37
@@ -15,8 +23,8 @@ android {
         // miuix-blur 的 AGSL RuntimeShader 要 Android 13+，minSdk 提到 33
         minSdk 33
         targetSdk 35
-        versionCode 85
-        versionName "5.5.0"
+        versionCode 86
+        versionName "5.5.1"
     }
 
     compileOptions {
@@ -43,13 +51,23 @@ android {
         checkTestSources false
     }
 
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile rootProject.file(keystoreProps.getProperty('storeFile'))
+                storePassword keystoreProps.getProperty('storePassword')
+                keyAlias keystoreProps.getProperty('keyAlias')
+                keyPassword keystoreProps.getProperty('keyPassword')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false  // Xposed hook 依赖固定类名/反射，混淆会破坏注入，必须关闭
-            // 【稳定版】沿用 debug.keystore 签名：与既有安装包同签名，
-            // 用户可直接覆盖安装、不丢急救卡加密数据；release 默认 debuggable=false、
-            // 无调试冗余，作为正式发布包。
-            signingConfig signingConfigs.debug
+            // 【私有密钥】有 keystore.properties 时用项目自有 release 密钥；
+            // 缺失（他人 clone）则回退 debug 签名，保证可编译。
+            signingConfig keystorePropsFile.exists() ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

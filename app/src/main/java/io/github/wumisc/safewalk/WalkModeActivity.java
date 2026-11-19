@@ -191,10 +191,12 @@ public final class WalkModeActivity extends Activity {
 
         updateOpacityLabel(opacity);
 
-        // 确认步数 2~10（滑条 0~8），默认 5；停下延迟 5~30 秒（滑条 0~25），默认 15
-        int steps = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5);
-        steps = Math.max(2, Math.min(10, steps));
-        seekGaitSteps.setProgress(steps - 2);
+        // 确认步数 8~10（滑条 0~2），默认 8；停下延迟 5~30 秒（滑条 0~25），默认 15
+        // 【5.5.0】下限 2 → 8：用户要求「连续走 8 步为最低标准」，2~7 档已无意义，
+        // 历史设置在读回时被夹到 8，不需要数据迁移。
+        int steps = SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 8);
+        steps = Math.max(8, Math.min(10, steps));
+        seekGaitSteps.setProgress(steps - 8);
         tvGaitSteps.setText("连续走 " + steps + " 步才弹出预览");
 
         // 默认从 10 秒提到 15 秒（v5.1.0）：等红灯、低头看手机再走，
@@ -294,11 +296,11 @@ public final class WalkModeActivity extends Activity {
         seekGaitSteps.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override
             public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                tvGaitSteps.setText("连续走 " + (progress + 2) + " 步才弹出预览");
+                tvGaitSteps.setText("连续走 " + (progress + 8) + " 步才弹出预览");
             }
             @Override
             public void onStopTrackingTouch(SeekBar sb) {
-                sp.edit().putInt(SafeWalkPrefKey.gaitConfirmSteps, sb.getProgress() + 2).commit();
+                sp.edit().putInt(SafeWalkPrefKey.gaitConfirmSteps, sb.getProgress() + 8).commit();
                 SafeWalkConfig.exportConfig(WalkModeActivity.this);
                 // 新步数阈值要立刻作用于运行中的步态监听
                 if (swRearCam.isChecked()) WalkPreviewService.send(WalkModeActivity.this, WalkPreviewService.ACTION_SHOW, null);

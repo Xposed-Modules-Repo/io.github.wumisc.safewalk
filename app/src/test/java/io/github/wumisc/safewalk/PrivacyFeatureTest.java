@@ -117,11 +117,18 @@ public class PrivacyFeatureTest {
         assertTrue("必须把 LSPosed 作为首推恢复路径", msg.contains("LSPosed"));
         assertTrue("必须写明从 LSPosed 模块页进入首页", msg.contains("模块"));
         assertTrue("必须写明 INFO 入口不依赖桌面图标", msg.contains("INFO"));
-        // ② ③ ④ 其余三条保留
+        // ② 系统设置；③ 通知栏常驻通知；④ adb —— 其余三条保留
         assertTrue("必须写明系统设置恢复路径", msg.contains("设置"));
-        assertTrue("必须写明磁贴恢复路径", msg.contains("磁贴"));
+        assertTrue("必须写明通知栏常驻通知恢复路径", msg.contains("通知"));
         assertTrue("必须写明 adb 显式启动路径",
                 msg.contains("adb shell am start -n " + pkg + "/.MainActivity"));
+        // 【语义还原】磁贴已回归「常显 ↔ 自动跟随」纯切换，不再承担恢复入口，
+        // 因此恢复文案里不能再引导用户去点磁贴 / 控制中心（点了只是切档位，反而更困惑）。
+        assertFalse("磁贴不再是恢复入口，文案不得再提磁贴", msg.contains("磁贴"));
+        assertFalse("磁贴不再是恢复入口，文案不得再提控制中心", msg.contains("控制中心"));
+        // 仍然必须是四条路径：①～④ 各一条
+        assertTrue("必须保留四条恢复路径", msg.contains("①") && msg.contains("②")
+                && msg.contains("③") && msg.contains("④"));
     }
 
     @Test
@@ -149,7 +156,8 @@ public class PrivacyFeatureTest {
             assertEquals(PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                     pm.getComponentEnabledSetting(hidden));
 
-            // 关键断言：桌面图标没了，但显式启动 MainActivity 必须仍然可达（adb / 磁贴走的就是这条）。
+            // 关键断言：桌面图标没了，但显式启动 MainActivity 必须仍然可达（adb 走的就是这条；
+            // LSPosed 的 INFO 入口与常驻通知的 contentIntent 也最终落到同一个 MainActivity）。
             // 【为何不用 resolveActivity】Robolectric 的 pm.resolveActivity() 即便 Intent 带显式
             // component，仍要求 intent-filter 的 category 匹配；MainActivity 现为 MAIN + INFO
             // （无 LAUNCHER / DEFAULT），会被误判不可达。真机上显式 component 启动不经过 filter 匹配，
@@ -158,7 +166,7 @@ public class PrivacyFeatureTest {
             android.content.pm.ActivityInfo info = pm.getActivityInfo(main, 0);
             assertNotNull("隐藏图标后 MainActivity 仍须在 Manifest 中声明（显式启动前提）", info);
             assertEquals(MainActivity.class.getName(), info.name);
-            assertFalse("隐藏图标只切 alias，绝不能禁用 MainActivity 本体（否则 adb/磁贴无法恢复）",
+            assertFalse("隐藏图标只切 alias，绝不能禁用 MainActivity 本体（否则 adb/通知/LSPosed 都无法恢复）",
                     pm.getComponentEnabledSetting(main)
                             == PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
         } finally {

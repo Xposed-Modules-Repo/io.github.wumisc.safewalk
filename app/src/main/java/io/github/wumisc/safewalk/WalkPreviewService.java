@@ -128,7 +128,8 @@ public final class WalkPreviewService extends Service {
     // ========== 防误触：硬件计步器确认 ==========
     // 加速度计判「走」只是波形像走。拿在手里乱动、刷屏、放桌上颠，波形都像走，
     // 只有一样东西不会骗人：系统硬件计步器（TYPE_STEP_COUNTER）——真迈步才计数。
-    // 所以加速度判走通过后，还要看「最近 10 秒硬件计步 ≥ 3 步」才显示预览。
+    // 所以加速度判走通过后，还要看「最近 10 秒硬件计步 ≥ 8 步」才显示预览
+    // （5.5.0 由 2 步抬到 8 步：见 [STEP_CONFIRM_MIN] 的说明）。
     // 设备无计步器 / 传感器从不回调时自动降级不拦，保证功能不被改崩。
     private Sensor stepCounterSensor;
     private SensorEventListener stepCounterListener;
@@ -153,9 +154,20 @@ public final class WalkPreviewService extends Service {
     private int lastLoggedChannelOrdinal = -1;
     /** 是否收到过硬件计步事件（没收到 = 无计步器或传感器失效，不拦） */
     private boolean stepCounterAlive = false;
-    /** 硬件计步确认窗口（毫秒）与最少步数 */
+    /**
+     * 硬件计步确认窗口（毫秒）与最少步数。
+     *
+     * 【5.5.0 为什么从 2 抬到 8】
+     * 2 步太松：真机自测里「举着手机伸个懒腰」「翻身带两下」「在手里晃三下」
+     * 都能在 10 秒窗口内凑出 2~3 个硬件步（不少 ROM 的 STEP_DETECTOR 对
+     * 重心位移敏感，不是严格迈步计数），于是波形 + 两步就把预览弹出来。
+     * 用户要求「连续走 8 步为最低标准」——8 步是"人真的开始走路"的最小单位
+     * （正常步频 8 步 ≈ 4~5 秒，慢走 ≈ 10 秒，都还能落在这个 10 秒窗口内），
+     * 而抖动/伸展/翻身几乎不可能连续凑出 8 步节律。
+     * 窗口本身不放大：抬门槛比拉长窗口更安全，不会把"刚起步"误判成"没在走"。
+     */
     private static final long STEP_CONFIRM_WINDOW_MS = 10_000L;
-    private static final int STEP_CONFIRM_MIN = 2;
+    private static final int STEP_CONFIRM_MIN = 8;
     /**
      * 【沙发误触修复 v3 · 真机日志 2026-11-10 13:48~14:02】
      *
@@ -165,7 +177,8 @@ public final class WalkPreviewService extends Service {
      * 真机日志里 `累计=7/15`、`累计=10/7` 刷了 968 条，自动跟随一次都没激活。
      *
      * 现在门槛交给 [WalkConfirmPolicy]：不看「累计多少步」，改看**步流的时间形态**
-     * （连续 8~10 步、最大步间隔 ≤1.6s、平均步频 0.7~2.8Hz、整段 ≥4s，
+     * （连续 8~10 步、最大步间隔 ≤1.4s、平均步间隔 380~950ms、
+     * 整段跨度 ≥ 3.15~4.05s（按门槛推导，见 WalkConfirmPolicy.minSpanFor），
      * 且相邻间隔离散度受控），既在窗口上限内可达，又能把间歇抖动挡在外面。
      */
     private WalkConfirmPolicy accelPolicy;
@@ -182,6 +195,21 @@ public final class WalkPreviewService extends Service {
     private static final long ACCEL_MIN_STREAK_MS = 15_000L;
     /** 连续步流允许的最大间隙：超过它即视为「走断了」，连续计时清零 */
     private static final long STREAK_GAP_MS = 3_000L;
+    /**
+     * 【5.5.0 加固】最小连续跨度校验：最近 [ACCEL_MIN_SPAN_STEPS] 个合格步的时间跨度
+     * 至少要这么长，否则按「短促抖动」处理，不刷新步流、不激活预览。
+     *
+     * 为什么要它：「连续 8 步」只约束了**数量**，没约束**时长**。「举着手机在 3 秒内
+     * 连抖 8 下」（伸懒腰、甩手、翻身拍床）在波形上与走路几乎一样，光靠数量照样能凑满。
+     * 真人走 8 步：正常步频 ~4~5 秒、慢走 ~10 秒，都远大于 3 秒；而采集层步频窗口
+     * 上限是 2.5Hz，8 个合格步**理论最短** 7×400=2800ms —— 所以「< 3 秒的 8 步」
+     * 只可能落在 2.4Hz 以上的慢跑边界上，不是正常步行。
+     *
+     * 阈值取 3000ms 的效果：真人步行（含慢走、含口袋晃动造成的漏峰拉长）100% 通过，
+     * 只有"3 秒内连抖 8 下"被挡。样本不足 8 个时**不判**（见 [accelStreamLongEnough]）。
+     */
+    private static final int ACCEL_MIN_SPAN_STEPS = 8;
+    private static final long ACCEL_MIN_SPAN_MS = 3_000L;
     /** 启动以来计步器累计产生的步数（自本次注册起）。从未出数 = 该设备计步器不可信，停用确认 */
     private long everSteppedTotal = 0L;
     /** TYPE_STEP_COUNTER 是累计传感器，values[0]=总步数；记录上次回调的总步数以算增量 */
@@ -1034,8 +1062,10 @@ public final class WalkPreviewService extends Service {
             return;
         }
         gait.reset();
-        gait.setConfirmSteps(Math.max(2, Math.min(10,
-                SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5))));
+        // 5.5.0：门槛下限从 2 抬到 8（用户要求「连续走 8 步为最低标准」），
+        // 与 [GaitDetector.confirmSteps] 默认值、UI 滑条 8~10 档保持一致。
+        gait.setConfirmSteps(Math.max(8, Math.min(10,
+                SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 8))));
         gaitWalking = false;
         lastStepTs = 0L;
         walkingStreakStartTs = 0L;
@@ -1103,6 +1133,18 @@ public final class WalkPreviewService extends Service {
                 boolean countReached = credible
                         && gait.confirmedStepCount() >= gait.getConfirmSteps();
                 boolean qualified = stepTick || countReached;
+
+                // ==== [SPAN] 最小连续跨度校验（5.5.0 加固：数量之外再看时长）====
+                // 「连续 8 步」若发生在 3 秒内，说明是短促抖动而不是走路：
+                // 真人走 8 步需要 4~10 秒。这里只拦「够快又够多」这一种特例，
+                // 不改变 GaitDetector 内部的峰值/包络/步频/LAY_FLAT/不应期任何机制。
+                if (qualified && !accelStreamLongEnough()) {
+                    qualified = false;
+                    DiagLog.logThrottled("gait.span", "short",
+                            "[SPAN] ⛔ 最近 " + ACCEL_MIN_SPAN_STEPS + " 步跨度 < "
+                                    + ACCEL_MIN_SPAN_MS + "ms，判为短促抖动，不刷新步流",
+                            2_000L, 10_000L);
+                }
 
                 if (qualified) {
                     // 【沙发误触修复】维护「连续步流」计时：间隙超过 STREAK_GAP_MS
@@ -1494,8 +1536,16 @@ public final class WalkPreviewService extends Service {
 
         // 0 < n < 门槛：计步器刚起步或轻微漏计。兜底保留，但必须同时满足
         // 「节律稳定」+「连续步流够久」，不能让纯加速度计数单独决定放行。
+        //
+        // 【5.5.0】「步数」这一项从 `确认步数×2` 改成 `min(窗口上限, 确认步数×2)`：
+        // 确认步数抬到 8 后 `8×2=16` 超过采集层队列上限 10（peakIntervals 恒定 ≤10），
+        // 原式会变成**永不成立的死条件**，兜底整条失效 —— 这正是 5.1.0 那次
+        // 「自动跟随全程一次没弹」的同款事故。用一个可达上限把它夹住，
+        // 默认档（8）等价于「窗口满格 10 步」，与抬门槛前的放行强度完全一致。
         long streak = streakMs();
-        if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2
+        int sustainedSteps = Math.min(WalkConfirmPolicy.WINDOW_CAP,
+                gait.getConfirmSteps() * 2);
+        if (gait.confirmedStepCount() >= sustainedSteps
                 && gait.hasStableGait() && streak >= ACCEL_MIN_STREAK_MS) {
             // 状态跳变（放行是一次性决定），但同样按帧可达，仍走节流出口
             DiagLog.logThrottled("gait.hw", "pass",
@@ -1519,15 +1569,17 @@ public final class WalkPreviewService extends Service {
      * 判定交给 [WalkConfirmPolicy]，看的是**步流形态**而不是「累计多少步」：
      *   ① 非平躺（LAY_FLAT 直接拦）；
      *   ② 连续合格步 ≥ 8~10（受采集层 10 步窗口约束，可达）；
-     *   ③ 相邻步最大间隔 ≤ 1.6s、平均步间隔 350~1400ms、整段跨度 ≥ 4s、
+     *   ③ 相邻步最大间隔 ≤ 1.4s、平均步间隔 380~950ms、
+     *      整段跨度随门槛推导（8 步 3.15s / 10 步 4.05s），
      *      相邻间隔离散度受控 —— 真人走路是连续步流，沙发抖动是间歇的。
      *
      * v2 的 `≥15 步` 是死条件（窗口上限 10），已由真机日志证实会让自动跟随彻底失效。
      */
     private boolean accelOnlyConfirm() {
         if (accelPolicy == null) {
-            int pref = Math.max(2, Math.min(10,
-                    SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 5)));
+            // 5.5.0：下限 8（原为 2），与硬件计步门槛、UI 滑条保持一致
+            int pref = Math.max(8, Math.min(10,
+                    SafePrefs.getInt(sp, SafeWalkPrefKey.gaitConfirmSteps, 8)));
             accelPolicy = new WalkConfirmPolicy(WalkConfirmPolicy.requiredStepsFor(pref));
         }
         if (!accelFallbackLogged) {
@@ -1568,6 +1620,29 @@ public final class WalkPreviewService extends Service {
                         + " 跨度=" + v.spanMs + "ms 最大间隔=" + v.maxGapMs + "ms 均隔=" + v.avgIntervalMs + "ms"
                         + " | 本机无硬件计步器，靠步流形态判走（间歇抖动过不了）",
                 2_000L, 10_000L);
+    }
+
+    /**
+     * 最近 [ACCEL_MIN_SPAN_STEPS] 个合格步的时间跨度是否已经够长（≥[ACCEL_MIN_SPAN_MS]）。
+     *
+     * 语义刻意做成「没有足够样本时返回 true」：本方法是一道**否决闸**，
+     * 只在证据充分（已经攒到 8 个时间戳）时才允许否决。
+     * 这样真走路刚起步、或采集层漏了几个峰导致时间戳不足 8 个时，
+     * 不会被误判成「抖动」而让自动跟随失效 —— 宁可少拦一次，不可误杀走路。
+     */
+    private boolean accelStreamLongEnough() {
+        if (accelStepTs.size() < ACCEL_MIN_SPAN_STEPS) return true;
+        java.util.Iterator<Long> it = accelStepTs.descendingIterator();
+        long newest = 0L;
+        long oldest = 0L;
+        int n = 0;
+        while (it.hasNext() && n < ACCEL_MIN_SPAN_STEPS) {
+            long ts = it.next();
+            if (n == 0) newest = ts;
+            oldest = ts;
+            n++;
+        }
+        return newest - oldest >= ACCEL_MIN_SPAN_MS;
     }
 
     /** 记录一个合格步的时间戳；队列只留最近一段步流，断步由调用方清空 */
@@ -1612,14 +1687,21 @@ public final class WalkPreviewService extends Service {
     /**
      * 收起后冷却（防「显示→收起→秒开」死循环，也就是用户反馈的「没完没了」）。
      * 判定停下收起后 [STOP_COOLDOWN_MS] 内，手持乱动几秒又凑够 confirmSteps 步时
-     * **不立即显示**，必须达到「持续判走」（累计步 ≥ 门槛两倍）才放行。
-     * 真走路停下后再走，几秒内能攒满两倍步数，照常显示；手持乱动很难连续攒满，被压住。
+     * **不立即显示**，必须达到「持续判走」才放行。
+     * 真走路停下后再走，几秒内能攒满「持续判走」门槛，照常显示；手持乱动很难连续攒满，被压住。
+     *
+     * 【5.5.0】「持续判走」从 `确认步数×2` 改为 `min(窗口上限, 确认步数×2)`：
+     * 确认步数抬到 8 后 `8×2=16` 超出采集层队列上限 10，原式恒不成立 ——
+     * 冷却期内重新走起来就再也放不出来（用户观感是「走一段停一下之后就再也不弹了」）。
+     * 夹到上限后默认档等于「窗口满格 10 步」，与抬门槛前的行为逐位一致。
      */
     private boolean shouldShowNow() {
         long now = System.currentTimeMillis();
         if (lastStopTs == 0L || now - lastStopTs >= STOP_COOLDOWN_MS) return true;
         // 本方法在判定帧上会被高频调用，日志必须节流，否则冷却期内同样会刷屏
-        if (gait.confirmedStepCount() >= gait.getConfirmSteps() * 2) {
+        int sustainedSteps = Math.min(WalkConfirmPolicy.WINDOW_CAP,
+                gait.getConfirmSteps() * 2);
+        if (gait.confirmedStepCount() >= sustainedSteps) {
             DiagLog.logThrottled("gait.cooldown", "pass",
                     "[gait] 判定停下冷却内持续判走（累计 "
                             + gait.confirmedStepCount() + " 步），放行显示",

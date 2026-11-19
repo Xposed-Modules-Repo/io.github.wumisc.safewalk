@@ -33,7 +33,7 @@ object SafeWalkPrefKey {
     const val nightTorchEndHour = "nightTorchEndHour"
     /** 诊断日志总开关：关掉后不再写日志文件，省 I/O 省电。默认开 */
     const val enableDiagLog = "enableDiagLog"
-    /** 步态确认步数：连续走够这么多步才弹预览（2~10），默认 5 */
+    /** 步态确认步数：连续走够这么多步才弹预览（8~10），默认 8 */
     const val gaitConfirmSteps = "gaitConfirmSteps"
     /** 停下后多少秒收起预览（5~30），默认 10 */
     const val gaitStopSec = "gaitStopSec"

@@ -315,14 +315,14 @@ public class LandscapeNoRotateContractTest {
 
     // ==================== A 组 · 源码文本契约 ====================
 
-    /** A1 意图：版本号已升 5.4.19(84)，旧号 5.4.18/83 彻底清除。 */
+    /** A1 意图：版本号已升 5.5.1(86)，旧号 5.5.0/85 彻底清除。 */
     @Test
     public void a1_versionBumpedTo5414Build79() {
-        assertTrue("A1 build.gradle 须含 versionCode 85", gradleSrc.contains("versionCode 85"));
-        assertTrue("A1 build.gradle 须含 versionName \"5.5.0\"",
-                gradleSrc.contains("versionName \"5.5.0\""));
-        assertFalse("A1 须已无 versionCode 84", gradleSrc.contains("versionCode 84"));
-        assertFalse("A1 须已无 5.4.19", gradleSrc.contains("5.4.19"));
+        assertTrue("A1 build.gradle 须含 versionCode 86", gradleSrc.contains("versionCode 86"));
+        assertTrue("A1 build.gradle 须含 versionName \"5.5.1\"",
+                gradleSrc.contains("versionName \"5.5.1\""));
+        assertFalse("A1 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
+        assertFalse("A1 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }
 
     /** A2 意图（本任务核心固化）：5.4.14 设计意图注释逐字保留在 applyFraming 内，且确为注释不是代码。 */

@@ -86,6 +86,12 @@ public class EmergencyCardActivity extends Activity {
         btnSave.setOnClickListener(v -> saveCard());
         Button btnCopy = findViewById(R.id.btn_copy_emergency);
         btnCopy.setOnClickListener(v -> copyCard());
+        // 【5.5.0】换签名后旧包必须卸载重装，加密卡会随之消失 —— 给用户一条
+        // 「先导出到文件、重装后再导入」的备份通道（SAF，不要存储权限）。
+        Button btnExport = findViewById(R.id.btn_export_emergency);
+        btnExport.setOnClickListener(v -> exportCard());
+        Button btnImport = findViewById(R.id.btn_import_emergency);
+        btnImport.setOnClickListener(v -> pickImportFile());
         Button btnQr = findViewById(R.id.btn_gen_qr);
         btnQr.setOnClickListener(v -> generateQr());
         Button btnSos = findViewById(R.id.btn_goto_sos);
@@ -322,6 +328,165 @@ public class EmergencyCardActivity extends Activity {
     private static void appendField(StringBuilder sb, String label, String value) {
         if (value == null || value.trim().isEmpty()) return;
         sb.append(label).append('：').append(value.trim()).append('\n');
+    }
+
+    // ========== 导出 / 导入（换签名重装后的数据恢复通道） ==========
+
+    private static final int REQ_EXPORT_CARD = 4001;
+    private static final int REQ_IMPORT_CARD = 4002;
+    /**
+     * 导入文件大小上限。
+     *
+     * 正常急救卡 JSON 不到 4KB。用户从文件选择器挑的可能是任意文件（照片、APK、
+     * 几十兆的日志），先按体量一刀切掉，避免把整个文件读进内存。
+     */
+    private static final int MAX_IMPORT_BYTES = 256 * 1024;
+
+    /**
+     * 导出：先明示风险，再让用户用系统文件选择器决定落在哪。
+     *
+     * 这里**不**直接写到公共目录：SAF 让用户自己选位置，既不需要
+     * READ/WRITE_EXTERNAL_STORAGE，也避免 App 悄悄把明文医疗信息铺在磁盘上。
+     */
+    private void exportCard() {
+        EmergencyCard card = EmergencyVault.readCard();
+        if (card.getName().trim().isEmpty() && card.getContacts().isEmpty()) {
+            Toast.makeText(this, "还没有保存过急救卡，请先填写并点「保存急救卡」再导出",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("导出急救卡？")
+                .setMessage("导出文件包含血型、过敏史、住址、联系人等敏感医疗信息，"
+                        + "且为**明文**（未加密）。\n\n"
+                        + "请保存到只有你自己能访问的位置，不要发到群聊、网盘或公共目录；"
+                        + "换签名重装完成后建议删除该文件。")
+                .setPositiveButton("继续导出", (d, w) -> launchCreateDocument())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 拉起系统「新建文件」选择器（ACTION_CREATE_DOCUMENT），默认文件名带日期 */
+    private void launchCreateDocument() {
+        try {
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("application/json");
+            i.putExtra(Intent.EXTRA_TITLE,
+                    EmergencyCardBackup.suggestFileName(System.currentTimeMillis()));
+            startActivityForResult(i, REQ_EXPORT_CARD);
+        } catch (Throwable t) {
+            Toast.makeText(this, "没有可用的文件选择器，无法导出", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** 导入：先让用户挑文件（ACTION_OPEN_DOCUMENT），解析成功再确认覆盖 */
+    private void pickImportFile() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("application/json");
+            startActivityForResult(i, REQ_IMPORT_CARD);
+        } catch (Throwable t) {
+            Toast.makeText(this, "没有可用的文件选择器，无法导入", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+        Uri uri = data.getData();
+        if (uri == null) return;
+        if (requestCode == REQ_EXPORT_CARD) {
+            writeExportFile(uri);
+        } else if (requestCode == REQ_IMPORT_CARD) {
+            readImportFile(uri);
+        }
+    }
+
+    /** 把当前**已保存**的急救卡写成 JSON 文件（未保存的编辑不会混进备份） */
+    private void writeExportFile(Uri uri) {
+        String json = EmergencyCardBackup.exportJson(EmergencyVault.readCard());
+        java.io.OutputStream os = null;
+        try {
+            os = getContentResolver().openOutputStream(uri, "wt");
+            if (os == null) throw new IllegalStateException("所选位置不可写");
+            os.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            os.flush();
+            Toast.makeText(this, "急救卡已导出，请妥善保管该文件", Toast.LENGTH_LONG).show();
+            EmergencyDiag.event(EmergencyDiag.P_EMERGENCY, "card_exported");
+        } catch (Throwable t) {
+            Toast.makeText(this, "导出失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+        } finally {
+            closeQuietly(os);
+        }
+    }
+
+    /** 读入用户选的文件 → 解析 → 确认 → 覆盖写入加密 Vault */
+    private void readImportFile(Uri uri) {
+        String text;
+        try {
+            text = readText(uri);
+        } catch (Throwable t) {
+            Toast.makeText(this, "读取文件失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        EmergencyCard card = EmergencyCardBackup.importJson(text);
+        if (card == null) {
+            Toast.makeText(this, "文件无法识别：不是本 App 导出的急救卡备份（或版本不兼容）",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("导入这张急救卡？")
+                .setMessage(EmergencyCardBackup.describe(card)
+                        + "\n\n导入将覆盖当前的急救卡（加密保存在本机）。")
+                .setPositiveButton("覆盖导入", (d, w) -> applyImport(card))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void applyImport(EmergencyCard card) {
+        boolean ok = EmergencyVault.saveCard(card);
+        fillFromVault();   // 界面立刻显示导入内容，用户能当场核对
+        if (ok) {
+            Toast.makeText(this, "已导入急救卡，重启 App 后全部生效", Toast.LENGTH_LONG).show();
+            EmergencyDiag.event(EmergencyDiag.P_EMERGENCY, "card_imported");
+        } else {
+            Toast.makeText(this, "⚠ 本次未落盘：设备加密不可用，重启后会丢失",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** 读取 URI 全部文本（UTF-8，去掉可能的 BOM），超过 [MAX_IMPORT_BYTES] 直接判非法 */
+    private String readText(Uri uri) throws Exception {
+        java.io.InputStream in = getContentResolver().openInputStream(uri);
+        if (in == null) throw new IllegalStateException("无法打开所选文件");
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        try {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                if (bos.size() + n > MAX_IMPORT_BYTES) {
+                    throw new IllegalStateException("文件过大，不像是急救卡备份");
+                }
+                bos.write(buf, 0, n);
+            }
+        } finally {
+            closeQuietly(in);
+        }
+        String text = new String(bos.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        if (!text.isEmpty() && text.charAt(0) == '\uFEFF') text = text.substring(1);
+        return text;
+    }
+
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c == null) return;
+        try {
+            c.close();
+        } catch (Throwable ignored) {
+        }
     }
 
     // ========== 车祸预警 ==========

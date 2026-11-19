@@ -17,6 +17,7 @@ local.properties
 *.p12
 *.pem
 signing.properties
+keystore.properties
 
 # IDE
 .idea/

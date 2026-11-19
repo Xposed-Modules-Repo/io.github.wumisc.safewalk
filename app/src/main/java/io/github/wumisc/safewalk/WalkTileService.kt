@@ -32,6 +32,12 @@ import android.service.quicksettings.TileService
  * 【状态为什么不看 isAlive()】
  * 见 [WalkTileStatePolicy]：自动跟随开着就显示激活，否则点完到服务起来的两秒内
  * 磁贴还是灰的，像点了没反应。服务没活只在副标题里提示。
+ *
+ * 【磁贴不承担「恢复入口」职责】
+ * 它只负责「常显 ↔ 自动跟随」这一个纯切换，任何开关状态下点下去都是切换语义。
+ * 桌面图标隐藏后的恢复入口走**通知**（行走模式的常驻通知点击即回首页）与
+ * **LSPosed 模块**（INFO 入口，不依赖桌面图标），磁贴不再为此让位 ——
+ * 否则「隐藏图标的用户发现磁贴不切换档位了」，两种语义互相污染。
  */
 class WalkTileService : TileService() {
 
@@ -58,17 +64,8 @@ class WalkTileService : TileService() {
         DiagLog.init(applicationContext)
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
 
-        // 【5.5.0 隐私 · 恢复入口 ②】桌面图标隐藏后用户进不了 App，而磁贴不依赖桌面图标。
-        // 隐藏态下把磁贴临时改成「恢复入口」：点一下直接打开 MainActivity，用户即可关掉隐藏。
-        // 行走切换此时让位给恢复（隐藏态属于隐私优先场景），并在 toast 里说清，避免以为点坏了。
-        if (SafePrefs.getBool(sp, SafeWalkPrefKey.hideLauncherIcon, false)) {
-            DiagLog.log("[tile] 桌面图标处于隐藏态，磁贴作为恢复入口打开 App")
-            toast("已进入安全出行，可在首页恢复桌面图标")
-            startActivityAndCollapseCompat(mainIntent())
-            refreshTile()
-            return
-        }
-
+        // 磁贴只做「常显 ↔ 自动跟随」的纯切换，不再兼任「桌面图标隐藏后的恢复入口」：
+        // 恢复入口走通知栏常驻通知与 LSPosed 模块，磁贴不因隐藏态改变行为。
         val master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
         val walk = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
         val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
@@ -168,14 +165,10 @@ class WalkTileService : TileService() {
         val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
         tile.state = WalkTileStatePolicy.resolve(master, walk, auto)
         tile.label = getString(R.string.tile_walk_label)
-        tile.subtitle = if (SafePrefs.getBool(sp, SafeWalkPrefKey.hideLauncherIcon, false)) {
-            // 隐藏态下磁贴就是恢复入口，副标题直接告诉用户「点它能进 App」
-            "图标已隐藏 · 点击进入 App 恢复"
-        } else {
-            WalkTileStatePolicy.subtitle(
-                master, walk, auto, WalkPreviewService.isAlive()
-            )
-        }
+        // 副标题统一由纯策略给出：磁贴不因「图标已隐藏」改变文案或行为（恢复入口走通知/LSPosed）
+        tile.subtitle = WalkTileStatePolicy.subtitle(
+            master, walk, auto, WalkPreviewService.isAlive()
+        )
         tile.updateTile()
     }
 

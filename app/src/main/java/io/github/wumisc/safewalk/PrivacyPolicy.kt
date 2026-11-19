@@ -7,8 +7,9 @@ import android.content.pm.PackageManager
  * 【5.5.0 隐私】桌面图标隐藏 / 最近任务隐藏的纯策略。
  *
  * 这里只放**无副作用的计算**：状态映射、幂等判定、恢复文案、启动 flag。
- * 真正的 PackageManager / ActivityManager 调用在 [MainActivity] 与 [WalkTileService] 里，
+ * 真正的 PackageManager / ActivityManager 调用在 [MainActivity] 里，
  * 全部经本对象算出「该设成什么」，再包 try/catch 落到系统 API。
+ * （[WalkTileService] 只管「常显 ↔ 自动跟随」切换，不再涉及图标隐藏与恢复。）
  *
  * 之所以把状态计算抽出来：alias 的两态最容易写反（隐藏时反而把带 LAUNCHER 的打开 =
  * 图标还在），而这段逻辑无法靠肉眼 review 保证，必须用单测把四个组合钉死。
@@ -56,8 +57,13 @@ object LauncherIconPolicy {
      * LSPosed 用 getLaunchIntentForPackage 优先匹配 INFO category，隐藏后仍能打开首页：
      *  ① LSPosed 管理器 → 模块 → 安全出行 → 点开进入首页关掉「隐藏桌面图标」（推荐）；
      *  ② 系统设置 → 应用 → 显示图标（系统级，任何 App 都能做到，不依赖本 App 任何组件）；
-     *  ③ 控制中心磁贴（不依赖桌面图标）——隐藏态下点磁贴会打开本 App；
+     *  ③ 下拉通知栏点「行走模式运行中」常驻通知进入首页
+     *     （行走模式开启期间该通知 setOngoing，contentIntent 直达 MainActivity）；
      *  ④ adb 显式启动 MainActivity（整机丢失图标时的终极兜底）。
+     *
+     * 【为什么这里不再写磁贴】5.5.0 曾把控制中心磁贴当作隐藏态的恢复入口，用户明确
+     * 要求还原磁贴的纯切换语义（常显 ↔ 自动跟随）。磁贴不再承担恢复职责，
+     * 恢复文案也就不能继续引导用户去点磁贴 —— 否则点下去只是切档位，反而更困惑。
      */
     @JvmStatic
     fun recoveryMessage(pkg: String): String =
@@ -66,7 +72,7 @@ object LauncherIconPolicy {
             "① LSPosed 管理器 → 模块 → 找到「安全出行」→ 点开进入首页 → 关掉「隐藏桌面图标」开关" +
             "（推荐；模块经 INFO 入口启动，不依赖桌面图标）；\n" +
             "② 系统 设置 → 应用 → 安全出行 → 显示/启用图标；\n" +
-            "③ 下拉控制中心，点「自动跟随步行」磁贴进入本 App 恢复；\n" +
+            "③ 下拉通知栏，点「行走模式运行中」常驻通知进入首页恢复；\n" +
             "④ 电脑执行：adb shell am start -n $pkg/.MainActivity\n\n" +
             "隐藏期间来电/短信、车祸预警等所有功能照常运行。"
 }

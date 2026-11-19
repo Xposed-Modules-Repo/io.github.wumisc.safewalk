@@ -202,8 +202,15 @@ class GaitDetector {
     private var gaitStateCallback: GaitStateCallback? = null
     private var staticDetectTimerStart: Long? = null
     private val SENSOR_STATIC_THRESHOLD = 3000L // 传感器3秒无运动判定为静置
-    /** 连续合格步达到这个数才认定「走起来」，防刷手机误触。可由 UI 配置（2~10） */
-    var confirmSteps: Int = 5
+    /**
+     * 连续合格步达到这个数才认定「走起来」，防刷手机误触。可由 UI 配置（8~10）。
+     *
+     * 【5.5.0 默认 5 → 8】用户反馈「晃手机、伸懒腰、翻身都会累计步数并误触发预览」，
+     * 要求「连续走 8 步为最低标准」。5 步时两三下带规律的晃动就能凑满；
+     * 8 步（正常步频约 4~5 秒、慢走约 10 秒）才是「人真的开始走路」的最小单位。
+     * 队列上限 10（见 feedAcc 里的 `peakIntervals.size > 10`），8 在窗口内可达。
+     */
+    var confirmSteps: Int = 8
 
     fun setGaitStateCallback(callback: GaitStateCallback?) {
         gaitStateCallback = callback

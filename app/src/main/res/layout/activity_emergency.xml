@@ -367,6 +367,51 @@
                 android:textColor="@color/primary"/>
         </LinearLayout>
 
+        <!-- 备份与恢复：换签名后旧包必须卸载重装，加密卡随之消失，给一条导出/导入通道 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="备份与恢复"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:lineSpacingExtra="4dp"
+                android:text="急救卡加密保存在本机，卸载 App 会一并删除。换安装包（例如重装新版）前，先导出一份 JSON 文件；装好后用「导入急救卡」恢复。导出文件是明文，包含血型、过敏、住址等信息，请妥善保管。"
+                android:textColor="@color/text_hint"
+                android:textSize="13sp"/>
+
+            <Button
+                android:id="@+id/btn_export_emergency"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:backgroundTint="@color/card_bg"
+                android:text="导出急救卡"
+                android:textColor="@color/primary"/>
+
+            <Button
+                android:id="@+id/btn_import_emergency"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="@color/card_bg"
+                android:text="导入急救卡"
+                android:textColor="@color/primary"/>
+        </LinearLayout>
+
         <!-- 车祸预警（Pixel 风格急救卡） -->
         <LinearLayout
             android:layout_width="match_parent"
