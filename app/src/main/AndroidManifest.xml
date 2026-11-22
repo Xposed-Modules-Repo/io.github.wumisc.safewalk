@@ -104,6 +104,50 @@
     <!-- 电话/短信非必需：平板等无通话模块的设备也能装，车祸预警降级为跳转 -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
+    <!--
+        包可见性（Android 11 起强制）。不声明这一段的直接后果是「按钮点了没反应」，
+        而不是报错 —— `resolveActivity()` 对未声明的包一律返回 null，
+        `getLaunchIntentForPackage()` 同样返回 null，代码只好走"未安装"分支：
+
+        · `geo:`      → AedGuideActivity 的「在导航中打开 AED」，误判成"未安装地图应用"；
+        · `tel:`      → SystemSosLauncher 的急救拨号盘（ACTION_DIAL 预填号码）；
+        · `smsto:`    → EmergencyAlertActivity 的短信求助（ACTION_SENDTO）；
+        · `https:`    → 致谢页/反馈页/GitHub 仓库的跳转链接；
+        · DIAL/EMERGENCY_CALL → 厂商「紧急呼救设置」入口的 resolveActivity 预检；
+        · LSPosed 管理器 → 激活引导里「打开 LSPosed」；
+        · 厂商安全中心/紧急页 → 自启动页、紧急设置页的 component 预检
+          （显式 component 的 startActivity 本身不受限，但 resolveActivity 会被过滤）。
+
+        这里只声明"可见性"，不申请任何权限、不改变任何调用逻辑。
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+        <intent>
+            <action android:name="android.telephony.action.EMERGENCY_CALL" />
+        </intent>
+        <package android:name="org.lsposed.manager" />
+        <package android:name="org.lsposed.lspatch" />
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.huawei.emergency" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.iqoo.call" />
+    </queries>
+
     <application
         android:label="安全出行"
         android:icon="@mipmap/ic_launcher"

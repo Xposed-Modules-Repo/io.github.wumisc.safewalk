@@ -236,11 +236,25 @@ object CameraLensPolicy {
         return best
     }
 
-    /** 候选相对主摄的视野倍率；无可用数据返回 null */
+    /**
+     * 候选相对主摄的视野倍率；**两侧口径必须一致**，否则返回 null。
+     *
+     * 【5.6.2 修复】5.6.0 允许「一边有等效焦距、一边只能用物理焦距」时混算，
+     * 再把混算结果与等效口径的 0.8 阈值比较。真机上的后果正是这一版要避免的：
+     * 长焦模组物理焦距只有 3~5mm（传感器也小），而主摄物理焦距 7mm，
+     * 5/7=0.71 ≤ 0.8 → **长焦被判成超广角**，选中后画面比主摄还窄。
+     * 等效焦距的意义就是消除传感器尺寸差异，混口径等于把差异又加回去。
+     * 所以这里只允许同口径相比：两边都能算等效焦距就比等效，
+     * 两边都算不出才退回物理焦距（此时阈值也同步降级到
+     * [ULTRAWIDE_FOCAL_RATIO]）；一边有一边没有 = 无法比较，直接放弃该候选。
+     */
     private fun wideRatio(c: Candidate, main: Candidate): Float? {
         val cEfl = c.eflMm
         val mEfl = main.eflMm
-        if (cEfl != null && mEfl != null && mEfl > 0f) return cEfl / mEfl
+        if (cEfl != null && mEfl != null) return if (mEfl > 0f) cEfl / mEfl else null
+        // 只有一侧有等效焦距：口径不一致，不可比。宁可认不出超广角（回退主摄），
+        // 也不能把长焦当广角——后者是看得见的错误画面。
+        if (cEfl != null || mEfl != null) return null
         val cf = c.minFocalMm
         val mf = main.minFocalMm
         if (cf != null && cf > 0f && mf != null && mf > 0f) return cf / mf

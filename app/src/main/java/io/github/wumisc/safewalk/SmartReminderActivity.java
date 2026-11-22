@@ -464,7 +464,7 @@ public final class SmartReminderActivity extends Activity {
     private int nightEndHour() { return SafePrefs.getInt(sp, SafeWalkPrefKey.nightTorchEndHour, 6); }
 
     private void updateNightTimeLabel() {
-        tvNightTime.setText(String.format("%02d:00 – %02d:00", nightStartHour(), nightEndHour()));
+        tvNightTime.setText(String.format(java.util.Locale.US, "%02d:00 – %02d:00", nightStartHour(), nightEndHour()));
     }
 
     /** 选夜间生效时段：先弹开始时间，确认后再弹结束时间（整点即可，忽略分） */

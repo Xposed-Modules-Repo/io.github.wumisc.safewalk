@@ -119,7 +119,7 @@ public class AcknowledgementsActivity extends Activity {
                         ADOPTED_ORIGIN, "https://transparent-screen.en.uptodown.com/android"),
                 new Item("dhiru1602 的 NamelessROM On-The-Go Mode",
                         "NamelessROM 的 On-The-Go Mode 把这套「透明屏幕」思路做进了系统 ROM，"
-                                + "由 dhiru1602（Dheeraj Chintaluri）主导；是本项目从独立 App"
+                                + "由 dhiru1602（Dheeraj Chintaluri）主导；是本项目从独立 App "
                                 + "走向系统级实现的直接思想来源。",
                         ADOPTED_ORIGIN, "https://github.com/dhiru1602"),
         }));

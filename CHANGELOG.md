@@ -1,5 +1,30 @@
 # 更新日志
 
+## [5.6.2] - 2026-11-22 全量体检：超广角跨口径误判、包可见性、Locale
+
+本轮把主代码 28,600 行（86 个 .kt + 17 个 .java + 39 个 XML）过了一遍，跑完整 Android Lint（1 error / 641 warning 逐类分诊），连同既有 905 个单测一起验证。下面只列**真实缺陷**，风格类噪音（`ApplySharedPref`、`HardcodedText`、`ObsoleteSdkInt`）不动。
+
+### 超广角：跨口径比较会选到长焦（真机可见的错误画面）
+- `CameraLensPolicy.wideRatio()` 原允许「主摄能算等效焦距、副摄只能用物理焦距」时混算，再把结果与**等效口径**的 0.8 阈值比较。长焦物理焦距本来就短（典型 5mm vs 主摄 7mm），比值 0.71 ≤ 0.8 → **长焦被判成超广角**，用户点「超广角」画面反而变成变焦。这正是 5.6.0 换等效焦距要消除的那个误差，等于又加回去一次。
+- 现在只允许同口径相比：两侧都有等效焦距 → 比等效；两侧都没有 → 退物理焦距（阈值同步降到 0.75）；**一侧有一侧没有 → 该候选不可比**，直接放弃并回退主摄。宁可认不出超广角，也不能给一张错误画面。
+- 新增回归用例 `crossCaliberCandidateIsNotCompared`（锁死上述反例），原有长焦/真超广角用例继续通过。
+
+### 包可见性：Android 11+ 下几个入口点了没反应
+- Manifest 从未声明 `<queries>`。`resolveActivity()` / `getLaunchIntentForPackage()` 对未声明的包一律返回 null，代码只好走「未安装」分支，而且**不报错**：
+  - AED 页「在导航中打开」→ 误报「未安装地图应用」（`geo:`）；
+  - 急救拨号盘（`tel:` ACTION_DIAL）与短信求助（`smsto:`）预检失败；
+  - 激活引导「打开 LSPosed」（`getLaunchIntentForPackage`）；
+  - 厂商「紧急呼救设置」/自启动页的 component 预检；
+  - 致谢页 / 反馈页 / 仓库链接（`https:`）。
+- 补 `<queries>` 只声明可见性，不申请权限、不改任何调用逻辑。
+
+### 国际化与文案
+- 4 处 `String.format` 未指定 Locale（`WalkConfirmPolicy` 三处步频/断裂日志、`SmartReminderActivity` 夜间时段标签）。阿拉伯语/波斯语等环境下会输出本地数字，部分语言小数点为逗号 → `%.1f` 结果与预期不符。统一按 `Locale.US`。
+- 致谢页一处跨行拼接少了空格（`…从独立 App` + `走向系统级…` → `App走向…`），补空格。
+
+### 权限误报归位
+- `EmergencyOverlay.closeSystemDialogs()` 发 `ACTION_CLOSE_SYSTEM_DIALOGS` 需签名级 `BROADCAST_CLOSE_SYSTEM_DIALOGS`，第三方声明也拿不到，广播会被系统丢弃。这是「尽力而为」的辅助动作（急救卡本身是 overlay 全屏浮层，仍会显示），补 `@SuppressLint("MissingPermission")` 与注释，避免这条误报长期掩盖真正需要权限的调用点。
+
 ## [5.6.1] - 2026-11-22 横屏必横：窗口形状与画面方向同源
 
 ### 修「横屏时路况小窗有概率变成竖条、后摄画面躺 90°」
@@ -10,6 +35,9 @@
 - **建锁后不再死锁**：`applyPoseChange()` 原来只要 `smallLock != null` 就无条件 `return`，于是首帧建成什么形状就永远是什么形状，姿态再翻也不重排。现改为「同朝向 return、横↔竖真翻转放行」——翻转时清锁 → `buildParams` → `refreshRotation` → 按目标尺寸 `applyFraming` → `lockFirstFrame` 重锁，与 `onDisplayChanged` 的放行路径同构。
 - **后摄方向跟随窗口**：`refreshRotation` 的 `landscape` 参数与窗口尺寸同源；`alignToWindow` 按实际窗口宽高决定 swap，超广角画面方向随之转正。
 - 新增锁定/翻转诊断日志（`姿态真翻转 → 解锁重排`、`🔄 姿态翻转已重算并重锁`），真机可一眼看出是没触发还是锁错。
+
+### 感谢名单
+- 「我是寂寞的花」（酷安）名下补两条贡献说明：**真机测试**、**超广角思路与看法**。
 
 ### 测试
 - 全量 904 个单测通过（6 跳过）。同步更新 6 个源码契约测试中已随 5.6.0/5.6.1 演进的断言（版本号、270° 常量、并集判据、横条尺寸语义），未删除任何护栏。

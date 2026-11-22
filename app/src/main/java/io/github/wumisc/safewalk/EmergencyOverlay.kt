@@ -167,6 +167,16 @@ object EmergencyOverlay {
     @JvmStatic
     fun fieldsCountForDiag(): Int = fieldsCopy?.let { countFields(it) } ?: 0
 
+    /**
+     * 收起通知栏/系统对话框，让急救卡不被下拉栏挡住。
+     *
+     * `BROADCAST_CLOSE_SYSTEM_DIALOGS` 是**系统签名级**权限，第三方应用声明了也拿不到，
+     * 所以这条广播在 App 进程里通常会被系统直接丢弃 —— 这是「尽力而为」的辅助动作，
+     * 失败无害：急救卡本身是 TYPE_APPLICATION_OVERLAY 全屏浮层，仍然会显示。
+     * 真正接管面板才是 SystemUI 侧 Hook 的职责。这里显式压掉 lint 的 MissingPermission，
+     * 避免掩盖真正需要权限的调用点。
+     */
+    @SuppressLint("MissingPermission")
     @JvmStatic
     fun closeSystemDialogs() {
         try {

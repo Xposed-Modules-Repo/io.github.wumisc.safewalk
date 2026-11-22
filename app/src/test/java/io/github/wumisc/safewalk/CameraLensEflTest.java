@@ -50,6 +50,21 @@ public class CameraLensEflTest {
                 CameraLensPolicy.select(l, CameraLensPolicy.MODE_ULTRAWIDE));
     }
 
+    /**
+     * 【5.6.2】跨口径不可比：主摄能算等效焦距、副摄读不到传感器尺寸时，
+     * 绝不能拿「副摄物理焦距 / 主摄物理焦距」去跟等效口径的 0.8 阈值比 ——
+     * 长焦物理焦距本来就短（5mm vs 主摄 7mm），比值 0.71 会被当成超广角，
+     * 点下去画面反而变成变焦。正确行为：该候选无法比较，回退主摄。
+     */
+    @Test
+    public void crossCaliberCandidateIsNotCompared() {
+        List<CameraLensPolicy.Candidate> l = new ArrayList<>();
+        l.add(cam("0", true, 7.0f, 12.5f));                       // 主摄：有等效焦距 24.2mm
+        l.add(new CameraLensPolicy.Candidate("2", true, 5.0f, 5.0f, null)); // 长焦：读不到传感器尺寸
+        assertEquals("跨口径不可比，必须回退主摄", "0",
+                CameraLensPolicy.select(l, CameraLensPolicy.MODE_ULTRAWIDE));
+    }
+
     @Test
     public void realUltrawideIsSelected() {
         List<CameraLensPolicy.Candidate> l = new ArrayList<>();

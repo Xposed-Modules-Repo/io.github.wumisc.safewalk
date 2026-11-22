@@ -426,9 +426,9 @@ public class LeftDefaultFacingContractTest {
     /** L5 意图：版本升到 86/5.5.1，旧号 85/5.5.0 清干净。 */
     @Test
     public void l5_versionIs81Build5416NoOldNumbers() {
-        assertTrue("L5 build.gradle 须含 versionCode 88", gradleSrc.contains("versionCode 88"));
-        assertTrue("L5 build.gradle 须含 versionName \"5.6.1\"",
-                gradleSrc.contains("versionName \"5.6.1\""));
+        assertTrue("L5 build.gradle 须含 versionCode 89", gradleSrc.contains("versionCode 89"));
+        assertTrue("L5 build.gradle 须含 versionName \"5.6.2\"",
+                gradleSrc.contains("versionName \"5.6.2\""));
         assertFalse("L5 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
         assertFalse("L5 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }

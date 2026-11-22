@@ -140,13 +140,13 @@ class WalkConfirmPolicy @JvmOverloads constructor(
         val avg = if (tail.size > 1) span / (tail.size - 1) else 0L
 
         if (maxGap > maxGapMs) {
-            return Verdict(false, "步流断裂 " + (maxGap / 1000.0).let { String.format("%.1f", it) } + "s", steps, span, maxGap, avg)
+            return Verdict(false, "步流断裂 " + (maxGap / 1000.0).let { String.format(java.util.Locale.US, "%.1f", it) } + "s", steps, span, maxGap, avg)
         }
         if (avg < minAvgIntervalMs) {
-            return Verdict(false, "步频过快 " + String.format("%.2f", 1000.0 / avg) + "Hz", steps, span, maxGap, avg)
+            return Verdict(false, "步频过快 " + String.format(java.util.Locale.US, "%.2f", 1000.0 / avg) + "Hz", steps, span, maxGap, avg)
         }
         if (avg > maxAvgIntervalMs) {
-            return Verdict(false, "步频过慢 " + String.format("%.2f", 1000.0 / avg) + "Hz", steps, span, maxGap, avg)
+            return Verdict(false, "步频过慢 " + String.format(java.util.Locale.US, "%.2f", 1000.0 / avg) + "Hz", steps, span, maxGap, avg)
         }
         if (span < minSpanMs) {
             return Verdict(false, "连续时长不足 " + (span / 1000) + "s", steps, span, maxGap, avg)

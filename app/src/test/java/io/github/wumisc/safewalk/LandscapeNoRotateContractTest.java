@@ -315,12 +315,12 @@ public class LandscapeNoRotateContractTest {
 
     // ==================== A 组 · 源码文本契约 ====================
 
-    /** A1 意图：版本号已升 5.6.1(88)，旧号 5.5.0/85 彻底清除。 */
+    /** A1 意图：版本号已升 5.6.2(89)，旧号 5.5.0/85 彻底清除。 */
     @Test
     public void a1_versionBumpedTo5414Build79() {
-        assertTrue("A1 build.gradle 须含 versionCode 88", gradleSrc.contains("versionCode 88"));
-        assertTrue("A1 build.gradle 须含 versionName \"5.6.1\"",
-                gradleSrc.contains("versionName \"5.6.1\""));
+        assertTrue("A1 build.gradle 须含 versionCode 89", gradleSrc.contains("versionCode 89"));
+        assertTrue("A1 build.gradle 须含 versionName \"5.6.2\"",
+                gradleSrc.contains("versionName \"5.6.2\""));
         assertFalse("A1 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
         assertFalse("A1 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }
