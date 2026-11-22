@@ -148,6 +148,15 @@ class GaitDetector {
      * 一律冻结。它是只读观察值，不参与任何步态判定，判停动作本身也不触碰它。
      */
     private var lastStepActivityTs = 0L
+
+    /**
+     * 【5.6.0】最近一次「采集层达标」是否发生在平放姿态下。
+     *
+     * 只作为**事实**上报：采集层不再因为平放而否决这一帧，改为由
+     * [WalkPreviewService] 结合硬件步数与 [MotionContext] 决定要不要真正显示。
+     * 默认 false，[reset] 时归零。
+     */
+    private var lastPeakFlat = false
     /** 上一帧是否已经在阈值之上：只认「上穿」的那一刻，避免一个波峰算成好几步 */
     private var aboveThreshold = false
     private val peakIntervals = mutableListOf<Long>()
@@ -328,12 +337,20 @@ class GaitDetector {
                                 // 抗误触：连续攒够 confirmSteps 个合格步、且主轴一致
                                 // 才认定「走起来」。否则单手刷手机的两下抖动也会把预览弹出来。
                                 if (peakIntervals.size >= confirmSteps && axisStable()) {
-                                    // 平躺（床上/沙发平放刷手机）姿态不判走：走路时手机随身体
-                                    // 上下摆动会转成 TILTED/UPRIGHT，稳定 LAY_FLAT 基本是平放
-                                    // 误触。步仍累计，姿态转正后照常触发，不误杀走路。
-                                    if (currentAttitude == PhoneAttitude.LAY_FLAT) {
-                                        return false
-                                    }
+                                    // 【5.6.0 平放修复】平放不再在这里一票否决。
+                                    //
+                                    // 5.5.1 及以前：`if (LAY_FLAT) return false`，于是
+                                    // 「手机在兜里/平着拿走路」永远吐不出合格步，配合
+                                    // [WalkConfirmPolicy] 的同款否决 + 服务层 credible 闸，
+                                    // 形成三处串联硬拦；而唯一的补救分支「平放 + 硬件步数≥8」
+                                    // 在缺少 ACTIVITY_RECOGNITION 的机型上又恒不成立（通道 STALE）。
+                                    // 真机代价：18 分钟步行只激活 2 次，LAY_FLAT 占回调的 64%。
+                                    //
+                                    // 现在只把「这一帧的峰是平放姿态下产生的」当作事实上报，
+                                    // 要不要放行交给上层：上层会用硬件步数与
+                                    // [MotionContext] 的位移证据做补偿判定；两条都不成立时照样拦。
+                                    // 采集层自己的能力（包络、步频、主轴、不应期）一处未改。
+                                    lastPeakFlat = currentAttitude == PhoneAttitude.LAY_FLAT
                                     return true
                                 }
                                 return false
@@ -378,6 +395,14 @@ class GaitDetector {
      * 只在 reset() 里归零；判停动作本身不触碰它。纯观察值，不改动任何既有判定逻辑。
      */
     fun stepActivityTs(): Long = lastStepActivityTs
+
+    /**
+     * 【5.6.0】最近一次达标帧是否在平放姿态下产生（只读观察值，不参与任何判定）。
+     *
+     * 调用方（[WalkPreviewService]）用它决定是否需要额外证据：
+     * 平放 + 硬件步数达标 / 平放 + 位移证据成立 → 放行；两条都没有 → 拦。
+     */
+    fun lastPeakWasFlat(): Boolean = lastPeakFlat
 
     /**
      * 主轴稳定性：最近 confirmSteps 个合格步里，同一个轴的占比 ≥70% 才算稳定。
@@ -434,6 +459,7 @@ class GaitDetector {
         peakAxes.clear()
         lastPeakTime = 0L
         lastStepActivityTs = 0L
+        lastPeakFlat = false
         aboveThreshold = false
         envelope = 0f
         lastSampleTs = 0L

@@ -3,7 +3,9 @@ package io.github.wumisc.safewalk
 import android.content.Context
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
 import android.util.Log
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 
@@ -279,6 +281,70 @@ object DiagLog {
     }
 
     /**
+     * 【5.6.0 省电】常开的写入流 + 批量 flush。
+     *
+     * 5.5.1 的 `appendLine` 是「每条日志一次 open→write→close」：`gaitTick` 一秒一条、
+     * 传感器回调每 60ms 就可能来一条，等于每秒数十次 open/close 系统调用 ——
+     * 这是整个模块里最隐蔽也最稳定的一块耗电，且全部发生在**主线程或传感器回调线程**上。
+     *
+     * 现在改成：文件句柄常开，写进 8KB 缓冲；累计 8 条 或 距上次 flush 超过 800ms
+     * 才真实落盘一次。日志内容、顺序、格式一个字节都没变，只是把 I/O 次数压掉 ~90%。
+     * 崩溃时最多丢最后 8 条（原来的做法同样会在析构失败时丢最后一条），
+     * 进程退出与「停止预览」都会强制 [flushNow]。
+     */
+    private var out: BufferedOutputStream? = null
+    private var outFor: File? = null
+    private var pendingLines = 0
+    private var lastFlushMs = 0L
+    private var lastSizeCheckLines = 0
+
+    private fun ensureOut(f: File): BufferedOutputStream? {
+        val cur = out
+        if (cur != null && outFor === f) return cur
+        closeOut()
+        val n = try {
+            BufferedOutputStream(FileOutputStream(f, true), 8192)
+        } catch (t: Throwable) {
+            noteWriteFailure(f, t)
+            return null
+        }
+        out = n
+        outFor = f
+        pendingLines = 0
+        lastSizeCheckLines = 0
+        // 新流建立时先记一次基准时间，避免第一条就触发一次 flush 判断
+        lastFlushMs = SystemClock.uptimeMillis()
+        return n
+    }
+
+    private fun closeOut() {
+        val c = out ?: return
+        out = null
+        outFor = null
+        try {
+            c.flush()
+        } catch (_: Throwable) {
+        }
+        try {
+            c.close()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** 把缓冲里的内容真正写下去（进程退出 / 停止预览 / 写日志前切换目录时调用） */
+    @JvmStatic
+    fun flushNow() {
+        synchronized(ringLock) {
+            try {
+                out?.flush()
+            } catch (_: Throwable) {
+            }
+            pendingLines = 0
+            lastFlushMs = SystemClock.uptimeMillis()
+        }
+    }
+
+    /**
      * 原样追加一段文本（用于 Hook 回传的日志，正文自带上游时间戳）。
      */
     @JvmStatic
@@ -287,9 +353,12 @@ object DiagLog {
         val f = logFile ?: return
         synchronized(ringLock) {
             try {
-                if (f.length() > MAX_BYTES) f.delete()
-                FileOutputStream(f, true).use { it.write(text.toByteArray()) }
+                val o = ensureOut(f) ?: return
+                o.write(text.toByteArray())
+                pendingLines += 1
+                maybeFlush(o)
             } catch (t: Throwable) {
+                closeOut()
                 noteWriteFailure(f, t)
             }
         }
@@ -302,11 +371,37 @@ object DiagLog {
         // 刚删完又被另一线程 append 到旧 fd 的乱序内容。
         synchronized(ringLock) {
             try {
-                if (f.length() > MAX_BYTES) f.delete()
-                FileOutputStream(f, true).use { it.write((line + "\n").toByteArray()) }
+                // 长度检查每条都做是一次 stat 系统调用，改成每 32 条查一次，
+                // 512KB 的上限对 32 条日志的误差完全不敏感。
+                lastSizeCheckLines += 1
+                if (lastSizeCheckLines >= 32) {
+                    lastSizeCheckLines = 0
+                    if (f.length() > MAX_BYTES) {
+                        closeOut()          // 先关流：Windows/部分 FUSE 上删已打开文件会失败
+                        f.delete()
+                    }
+                }
+                val o = ensureOut(f) ?: return
+                o.write((line + "\n").toByteArray())
+                pendingLines += 1
+                maybeFlush(o)
             } catch (t: Throwable) {
+                closeOut()
                 noteWriteFailure(f, t)
             }
+        }
+    }
+
+    /** 累计 8 条或超过 800ms 落盘一次 */
+    private fun maybeFlush(o: BufferedOutputStream) {
+        val now = SystemClock.uptimeMillis()
+        if (pendingLines >= 8 || now - lastFlushMs >= 800L) {
+            try {
+                o.flush()
+            } catch (_: Throwable) {
+            }
+            pendingLines = 0
+            lastFlushMs = now
         }
     }
 

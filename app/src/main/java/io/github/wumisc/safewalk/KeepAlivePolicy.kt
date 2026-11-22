@@ -48,11 +48,15 @@ object KeepAlivePolicy {
     /** 诊断用：是谁发起的恢复（看门狗 / 开机 / 解锁 / 划任务）。 */
     const val EXTRA_REVIVE_SOURCE = "keepalive.source"
 
-    /** App 侧心跳周期。30s 一条本地广播，成本远低于 Hook 的 2s 巡检。 */
-    const val HEARTBEAT_INTERVAL_MS = 30_000L
+    /**
+     * App 侧心跳周期。一条本地广播成本很低，但它是**常驻**的：
+     * 5.6.0 从 30s 放宽到 45s，一天少发 960 条广播，代价是「服务被杀后多久被发现」
+     * 从最多 90s 变成最多 135s —— 而恢复本身还要 1.5s 自检 + 启动，用户感知差别很小。
+     */
+    const val HEARTBEAT_INTERVAL_MS = 45_000L
 
-    /** 连续 3 个心跳周期没消息才判定服务已死，容忍偶发丢广播。 */
-    const val HEARTBEAT_TIMEOUT_MS = 90_000L
+    /** 连续 3 个心跳周期没消息才判定服务已死，容忍偶发丢广播。随心跳周期同步放宽。 */
+    const val HEARTBEAT_TIMEOUT_MS = 135_000L
 
     /** 正常复活冷却：成功拉起后给服务 60s 起来并发第一条心跳，别连环拉。 */
     const val REVIVE_COOLDOWN_MS = 60_000L

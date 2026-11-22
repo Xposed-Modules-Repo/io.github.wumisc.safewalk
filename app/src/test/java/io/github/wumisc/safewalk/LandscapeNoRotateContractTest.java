@@ -315,12 +315,12 @@ public class LandscapeNoRotateContractTest {
 
     // ==================== A 组 · 源码文本契约 ====================
 
-    /** A1 意图：版本号已升 5.5.1(86)，旧号 5.5.0/85 彻底清除。 */
+    /** A1 意图：版本号已升 5.6.1(88)，旧号 5.5.0/85 彻底清除。 */
     @Test
     public void a1_versionBumpedTo5414Build79() {
-        assertTrue("A1 build.gradle 须含 versionCode 86", gradleSrc.contains("versionCode 86"));
-        assertTrue("A1 build.gradle 须含 versionName \"5.5.1\"",
-                gradleSrc.contains("versionName \"5.5.1\""));
+        assertTrue("A1 build.gradle 须含 versionCode 88", gradleSrc.contains("versionCode 88"));
+        assertTrue("A1 build.gradle 须含 versionName \"5.6.1\"",
+                gradleSrc.contains("versionName \"5.6.1\""));
         assertFalse("A1 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
         assertFalse("A1 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }
@@ -333,7 +333,7 @@ public class LandscapeNoRotateContractTest {
                 "5.4.8 的问题不是\"转90°\"本身错，而是 alignToWindow 把 90 折成 180 导致倒立。",
                 "本轮小窗横条绕过该规整直接给 deg=90；竖条仍 0、全屏横条不受本规则控制。",
                 "alignToWindow(x, true) 输出域恒为 {0,180}，此处仅作全屏横条兜底。",
-                "【5.4.14】小窗横条：画面顺时针转90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。",
+                "【5.4.14】小窗横条：画面顺时针转 90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。",
                 "全屏横条仍走原 alignToWindow，保证\"最大化/分屏不受本规则控制\"。"
         };
         for (int i = 0; i < intent.length; i++) {
@@ -355,7 +355,7 @@ public class LandscapeNoRotateContractTest {
         assertTrue("A3 竖条一律不转分支须在（!landscapeWindow -> 0）",
                 applyFramingCode.contains("!landscapeWindow -> 0"));
         assertTrue("A3 核心新分支：小窗横条直给 90（style.mode == MODE_SMALLWINDOW -> 90）",
-                applyFramingCode.contains("style.mode == MODE_SMALLWINDOW -> 90"));
+                applyFramingCode.contains("style.mode == MODE_SMALLWINDOW -> LANDSCAPE_SMALLWINDOW_DEG"));
         assertTrue("A3 全屏横条兜底仍走 PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)",
                 applyFramingCode.contains(
                         "else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)"));

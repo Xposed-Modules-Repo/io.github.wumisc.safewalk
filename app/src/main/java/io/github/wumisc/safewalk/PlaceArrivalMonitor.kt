@@ -169,6 +169,20 @@ object PlaceArrivalMonitor {
     }
 
     private fun onLocation(loc: Location) {
+        // 【5.6.0 位移证据】这条定位流本来就开着（到达提醒 60s/150m），
+        // 顺手把每个点喂给 MotionContext：步态判定用它区分「真走路 / 原地不动 / 在车上」。
+        // 刻意放在 busy 检查之前 —— 判定线程忙不忙与「这个点算不算证据」无关。
+        // 不新增 provider、不新增唤醒，纯计算，旅途中零额外耗电。
+        try {
+            MotionContext.tracker.feed(
+                MotionContext.Fix(
+                    loc.time, loc.latitude, loc.longitude,
+                    loc.speed, loc.accuracy
+                )
+            )
+        } catch (_: Throwable) {
+            // 个别 ROM 的 Location 字段可能抛异常，证据链断了也不能影响到达提醒
+        }
         if (busy) return
         val c = appCtx ?: return
         busy = true

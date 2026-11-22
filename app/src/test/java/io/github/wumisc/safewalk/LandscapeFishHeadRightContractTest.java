@@ -319,7 +319,7 @@ public class LandscapeFishHeadRightContractTest {
         assertTrue("A1 竖条不转分支须在（!landscapeWindow -> 0）",
                 applyFramingCode.contains("!landscapeWindow -> 0"));
         assertTrue("A1 核心：小窗横条直给 90（style.mode == MODE_SMALLWINDOW -> 90）",
-                applyFramingCode.contains("style.mode == MODE_SMALLWINDOW -> 90"));
+                applyFramingCode.contains("style.mode == MODE_SMALLWINDOW -> LANDSCAPE_SMALLWINDOW_DEG"));
         assertTrue("A1 全屏横条兜底须在（else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)）",
                 applyFramingCode.contains(
                         "else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)"));
@@ -335,7 +335,7 @@ public class LandscapeFishHeadRightContractTest {
                 "5.4.8 的问题不是\"转90°\"本身错，而是 alignToWindow 把 90 折成 180 导致倒立。",
                 "本轮小窗横条绕过该规整直接给 deg=90；竖条仍 0、全屏横条不受本规则控制。",
                 "alignToWindow(x, true) 输出域恒为 {0,180}，此处仅作全屏横条兜底。",
-                "【5.4.14】小窗横条：画面顺时针转90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。",
+                "【5.4.14】小窗横条：画面顺时针转 90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。",
                 "全屏横条仍走原 alignToWindow，保证\"最大化/分屏不受本规则控制\"。"
         };
         for (int i = 0; i < intent.length; i++) {
@@ -371,9 +371,9 @@ public class LandscapeFishHeadRightContractTest {
     /** A4 意图：版本号升到 86/5.5.1，旧号 85/5.5.0 清干净。 */
     @Test
     public void a4_versionIs5414Build79NoOldNumbers() {
-        assertTrue("A4 build.gradle 须含 versionCode 86", gradleSrc.contains("versionCode 86"));
-        assertTrue("A4 build.gradle 须含 versionName \"5.5.1\"",
-                gradleSrc.contains("versionName \"5.5.1\""));
+        assertTrue("A4 build.gradle 须含 versionCode 88", gradleSrc.contains("versionCode 88"));
+        assertTrue("A4 build.gradle 须含 versionName \"5.6.1\"",
+                gradleSrc.contains("versionName \"5.6.1\""));
         assertFalse("A4 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
         assertFalse("A4 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }

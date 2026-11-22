@@ -42,10 +42,32 @@ object CameraLensPolicy {
     const val LENS_ULTRAWIDE = MODE_ULTRAWIDE
 
     /**
-     * 判定「有超广角」的焦距比阈值：最短焦距 ≤ 最长焦距 × 该值才算广角。
-     * 0.75 留足余量（超广角典型 0.5x），又不至于把同焦距的双摄误判成广角。
+     * 判定「有超广角」的**原始焦距**比阈值（降级判据）。
+     *
+     * 只有读不到传感器尺寸时才用它。0.75 留足余量（超广角典型 0.5x），
+     * 又不至于把同焦距的双摄误判成广角。
      */
     const val ULTRAWIDE_FOCAL_RATIO = 0.75f
+
+    /**
+     * 【5.6.0】判定「有超广角」的**等效焦距**比阈值（首选判据）。
+     *
+     * 为什么必须换掉原始焦距比：`LENS_INFO_AVAILABLE_FOCAL_LENGTHS` 是**物理焦距**，
+     * 它和传感器尺寸一起决定视角。长焦模组的传感器往往很小（1/3.5"），物理焦距
+     * 只有 3~5mm，数值上比主摄（1/1.3"，7mm）还短 —— 拿原始焦距比大小，
+     * 会把长焦误判成超广角，选出来就是「3 倍变焦当广角」，画面反而更窄。
+     *
+     * 等效焦距（35mm 全画幅口径）= `物理焦距 × 43.27 / 传感器对角尺寸(mm)`，
+     * 消除了传感器尺寸的干扰，跨厂商可比。0.8 对应「视野宽 25%」，
+     * 是 0.8x 档超广角的下限，足够区分主摄与超广，又不会把 0.9x 的副摄算进来。
+     */
+    const val ULTRAWIDE_EFL_RATIO = 0.8f
+
+    /** 35mm 全画幅画幅对角线长度（mm）：等效焦距换算常数 */
+    const val FULL_FRAME_DIAGONAL_MM = 43.2666f
+
+    /** 主摄的典型等效焦距（mm）。25mm 是 24~26mm 这一档的居中值 */
+    const val MAIN_CAMERA_EFL_MM = 25.0f
 
     /**
      * 逻辑摄像头切超广角要下发的 zoom ratio。0.6 ≈ 业界通称的「0.6x 超广角」，
@@ -130,19 +152,37 @@ object CameraLensPolicy {
      * @param back 是否后置
      * @param minFocalMm 该摄像头最短可用焦距（mm）；拿不到传 null
      * @param maxFocalMm 该摄像头最长可用焦距（mm）；拿不到传 null
+     * @param sensorDiagonalMm 传感器对角尺寸（mm，来自 `SENSOR_INFO_PHYSICAL_SIZE`）；
+     *        拿不到传 null。有它才能算等效焦距，失焦时退回原始焦距判据。
      */
-    data class Candidate(
+    data class Candidate @JvmOverloads constructor(
         val id: String,
         val back: Boolean,
         val minFocalMm: Float?,
-        val maxFocalMm: Float?
-    )
+        val maxFocalMm: Float?,
+        val sensorDiagonalMm: Float? = null
+    ) {
+        /**
+         * 等效焦距（35mm 口径，mm）。缺焦距或传感器尺寸时返回 null ——
+         * 此时调用方必须退回 [minFocalMm] 做降级判断，而不是当它不存在。
+         */
+        val eflMm: Float?
+            get() {
+                val f = minFocalMm ?: return null
+                val d = sensorDiagonalMm ?: return null
+                if (f <= 0f || d <= 0f) return null
+                return f * FULL_FRAME_DIAGONAL_MM / d
+            }
+    }
 
     /**
      * 按用户选择的镜头，从候选里挑出一个摄像头 id。
      *
-     * 主摄 = 相机 id 列表里第一颗后置（跨机型最稳的约定，也是旧行为）。
-     * 超广角 = 焦距最短、且短到 [ULTRAWIDE_FOCAL_RATIO] 以下的后置；没有就回退主摄。
+     * 主摄：有等效焦距时取「最接近 25mm」那颗（这是跨厂商最稳的主摄特征，
+     * 不依赖 id 顺序 —— 三星部分机型 id"0" 是逻辑多摄、Pixel 的 id 顺序也各不同）；
+     * 所有机型的等效焦距都算不出来时，退回「第一颗后置」（这也是 5.5.1 的旧行为）。
+     * 超广角：等效焦距比主摄短到 [ULTRAWIDE_EFL_RATIO] 以下里最短那颗；
+     * 算不出等效焦距时退回原始焦距比 [ULTRAWIDE_FOCAL_RATIO]。没有就回退主摄。
      *
      * @return 选中的 id；没有任何后置摄像头时返回 null（调用方提示「无后置摄像头」）
      */
@@ -151,18 +191,77 @@ object CameraLensPolicy {
         val backs = candidates.filter { it.back }
         if (backs.isEmpty()) return null
 
-        // 主摄：第一颗后置。焦距读不到时两种模式都用它，保证再差的 ROM 也能出画面。
-        val main = backs[0]
+        val main = pickMain(backs)
         if (normalize(mode) == MODE_MAIN) return main.id
 
-        val mainFocal = main.minFocalMm
-        if (mainFocal == null || mainFocal <= 0f) return main.id
+        // 每个候选的「视野倍率」（相对主摄，越小越广）。优先等效焦距，缺失才退原始焦距。
+        val ratios = backs
+            .filter { it.id != main.id }
+            .mapNotNull { c ->
+                val r = wideRatio(c, main)
+                if (r == null || r <= 0f) null else c to r
+            }
+        // 主摄本身也要有可比数据，否则无法判「是否真有超广角」，直接回退
+        val mainComparable = main.eflMm != null && main.eflMm!! > 0f
+                || (main.minFocalMm != null && main.minFocalMm!! > 0f)
+        if (!mainComparable) return main.id
 
-        // 超广角：焦距比主摄短到阈值以下的后置里，挑最短那颗。
-        val ultrawide = backs
-            .mapNotNull { c -> c.minFocalMm?.takeIf { it > 0f }?.let { c to it } }
-            .filter { (_, f) -> f <= mainFocal * ULTRAWIDE_FOCAL_RATIO }
-            .minByOrNull { (_, f) -> f }
+        val threshold = if (main.eflMm != null) ULTRAWIDE_EFL_RATIO else ULTRAWIDE_FOCAL_RATIO
+        val ultrawide = ratios
+            .filter { (_, r) -> r <= threshold }
+            .minByOrNull { (_, r) -> r }
         return ultrawide?.first?.id ?: main.id
+    }
+
+    /**
+     * 主摄挑选。等效焦距最接近 [MAIN_CAMERA_EFL_MM] 的那颗。
+     *
+     * 只有一颗后置，或一颗都算不出等效焦距时，退回 `backs[0]`（旧行为）。
+     * 之所以不用「焦距最长那颗」：那会选到长焦（长焦的物理焦距通常更长），
+     * 主摄画面会被整段长焦压缩，用户以为「坏了」。
+     */
+    @JvmStatic
+    fun pickMain(backs: List<Candidate>): Candidate {
+        val withEfl = backs.filter { it.eflMm != null && it.eflMm!! > 0f }
+        if (withEfl.size < 2) return backs[0]
+        var best = withEfl[0]
+        var bestDiff = kotlin.math.abs(best.eflMm!! - MAIN_CAMERA_EFL_MM)
+        for (c in withEfl) {
+            val diff = kotlin.math.abs(c.eflMm!! - MAIN_CAMERA_EFL_MM)
+            if (diff < bestDiff) {
+                best = c
+                bestDiff = diff
+            }
+        }
+        return best
+    }
+
+    /** 候选相对主摄的视野倍率；无可用数据返回 null */
+    private fun wideRatio(c: Candidate, main: Candidate): Float? {
+        val cEfl = c.eflMm
+        val mEfl = main.eflMm
+        if (cEfl != null && mEfl != null && mEfl > 0f) return cEfl / mEfl
+        val cf = c.minFocalMm
+        val mf = main.minFocalMm
+        if (cf != null && cf > 0f && mf != null && mf > 0f) return cf / mf
+        return null
+    }
+
+    /**
+     * 【5.6.0 诊断】一行打印所有后摄的可判据数据。
+     *
+     * 三星 / 魅族 / Pixel / 类原生的 id 顺序与焦距上报各不相同，只看代码推不出来，
+     * 必须拿真机数据校准。这一行就是给用户回传用的：有它就能判断「有没有识别到
+     * 超广角、判据是等效焦距还是降级到原始焦距」。
+     */
+    @JvmStatic
+    fun describe(candidates: List<Candidate>): String {
+        return candidates.joinToString(" | ") { c ->
+            val efl = c.eflMm?.let { String.format(java.util.Locale.US, "%.1fmm", it) } ?: "?"
+            val diag = c.sensorDiagonalMm?.let { String.format(java.util.Locale.US, "%.1f", it) } ?: "?"
+            val focal = c.minFocalMm?.let { String.format(java.util.Locale.US, "%.2f", it) } ?: "?"
+            val side = if (c.back) "(后)" else "(前)"
+            "id=${c.id}${side} 焦距=${focal}mm 对角=${diag}mm 等效=${efl}"
+        }
     }
 }

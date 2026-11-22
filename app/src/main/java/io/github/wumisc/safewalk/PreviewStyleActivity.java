@@ -653,12 +653,32 @@ public final class PreviewStyleActivity extends Activity {
     }
 
     private void selectBorder(int dp) {
+        if (!smallWindowOnly("描边")) return;
         sp.edit().putInt(SafeWalkPrefKey.previewBorderDp, dp).commit();
         SafeWalkConfig.exportConfig(this);
         DiagLog.log("[style] 小窗描边 → " + dp + "dp");
         takeOverFromAuto("描边");
         refreshAll();
         previewIfEnabled();
+    }
+
+    /**
+     * 只在「角落小窗」下有效的几组控件（描边 / 窗口形状 / 后摄转正）。
+     *
+     * 【5.6.0 功能性体检】这三组参数在渲染层有硬性 `style.mode == SMALLWINDOW` 门控
+     * （`RearCameraOverlay.isLandscapeWindowNow` / `applyFramingZoom` 的描边分支 /
+     * `finalDeg` 的手动覆盖），全屏时改了也不会生效。
+     *
+     * 5.5.1 的做法只是把它们调淡（alpha 0.45）但**仍然可点** —— 点了写配置、画面
+     * 纹丝不动，正是「无效功能」的典型观感。现在改成：全屏下点了直接说明原因，
+     * 配置也不写，避免留下「我明明调过」的困惑。
+     */
+    private boolean smallWindowOnly(String what) {
+        if (RearCameraOverlay.MODE_SMALLWINDOW.equals(rearMode)) return true;
+        android.widget.Toast.makeText(this,
+                "「" + what + "」只在角落小窗生效，先在行走模式页切到「角落小窗」",
+                android.widget.Toast.LENGTH_SHORT).show();
+        return false;
     }
 
     /**
@@ -689,6 +709,7 @@ public final class PreviewStyleActivity extends Activity {
      * @param label 只用于日志
      */
     private void selectWindowShape(String key, String shape, String label) {
+        if (!smallWindowOnly("窗口形状")) return;
         String v = ManualOrientation.normalizeShape(shape);
         sp.edit().putString(key, v).commit();
         SafeWalkConfig.exportConfig(this);
@@ -699,6 +720,7 @@ public final class PreviewStyleActivity extends Activity {
 
     /** 【5.4.15】后摄转正方向切档立即生效：改完服务重读配置，渲染层清锁重算重锁。 */
     private void selectFacing(String facing) {
+        if (!smallWindowOnly("后摄转正方向")) return;
         String v = ManualOrientation.normalizeFacing(facing);
         sp.edit().putString(SafeWalkPrefKey.rearCameraFacing, v).commit();
         SafeWalkConfig.exportConfig(this);
@@ -883,10 +905,12 @@ public final class PreviewStyleActivity extends Activity {
         setEnabledState(seekMargin, small);
         setEnabledState(tvWidth, small);
         setEnabledState(tvMargin, small);
-        // 描边只作用于小窗（全屏描边会贴在屏幕边缘，像画面没铺满），全屏时置灰
-        for (TextView chip : borderChips) {
-            chip.setAlpha(small ? 1f : 0.45f);
-        }
+        // 描边 / 窗口形状 / 后摄转正都只作用于小窗：全屏时渲染层有硬门控，
+        // 这里同步调淡，点下去由 [smallWindowOnly] 给出原因（不是静默无效）。
+        for (TextView chip : borderChips) chip.setAlpha(small ? 1f : 0.45f);
+        for (TextView chip : landscapeShapeChips) chip.setAlpha(small ? 1f : 0.45f);
+        for (TextView chip : portraitShapeChips) chip.setAlpha(small ? 1f : 0.45f);
+        for (TextView chip : facingChips) chip.setAlpha(small ? 1f : 0.45f);
 
         boolean hudOn = swHud.isChecked();
         setEnabledState(etHudText, hudOn);

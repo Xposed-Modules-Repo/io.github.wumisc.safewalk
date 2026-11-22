@@ -158,11 +158,22 @@ object PreviewOrientationPolicy {
      * @return 命中的 `[w, h]`；没有任何可用尺寸时返回 null（调用方退回窗口尺寸）
      */
     @JvmStatic
+    /**
+     * 从 HAL 支持的预览档位里挑一个与窗口比例最接近的。
+     *
+     * @param maxShortSide 【5.6.0 省电】短边上限（px）。小窗只有 150~260dp，
+     *        1080p 源对小窗**没有任何可见收益**，但要多搬 2.25 倍的像素：
+     *        解码 → SurfaceTexture 上传 → GPU 采样，全程都在相机与 GPU 的
+     *        高功耗区间。默认 1080 保持旧行为，渲染层按小窗传 720。
+     *        传 0 或负数表示不限制。
+     */
+    @JvmOverloads
     fun pickPreviewSize(
         candidates: Array<IntArray>?,
         viewW: Int,
         viewH: Int,
-        rotationDeg: Int
+        rotationDeg: Int,
+        maxShortSide: Int = 1080
     ): IntArray? {
         if (candidates == null || candidates.isEmpty()) return null
         if (viewW <= 0 || viewH <= 0) return null
@@ -191,7 +202,16 @@ object PreviewOrientationPolicy {
 
         // 1080p 以内优先：4K 预览对这颗小窗没有任何好处，只是白烧电和带宽
         val budget = usable.filter { it[0].toLong() * it[1] <= 1920L * 1080L }
-        val pool = if (budget.isNotEmpty()) budget else usable
+        val basePool = if (budget.isNotEmpty()) budget else usable
+        // 【5.6.0】短边上限（小窗传 720）。若该机型没有 ≤720 的等价档位，
+        // 退回 1080p 池 —— 宁可比目标大一点，也不能因为挑不到尺寸而黑屏。
+        val pool = if (maxShortSide > 0) {
+            val capped = ArrayList<IntArray>(basePool.size)
+            for (c in basePool) if (minOf(c[0], c[1]) <= maxShortSide) capped.add(c)
+            if (capped.isNotEmpty()) capped else basePool
+        } else {
+            basePool
+        }
 
         var best: IntArray? = null
         var bestDiff = Double.MAX_VALUE

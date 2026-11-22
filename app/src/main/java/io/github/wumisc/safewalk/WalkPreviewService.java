@@ -346,9 +346,31 @@ public final class WalkPreviewService extends Service {
             } catch (Throwable t) {
                 DiagLog.logThrottled("night.solo", "err", "[night-solo] 评估异常: " + t.getMessage());
             }
-            gaitHandler.postDelayed(this, 1000L);
+            gaitHandler.postDelayed(this, nextGaitIntervalMs());
         }
     };
+
+    /** 行走中 / 正在显示预览：判停与收窗要看住，1 秒一次 */
+    private static final long GAIT_TICK_ACTIVE_MS = 1000L;
+
+    /** 静止且未显示：3 秒一次就够，省掉 2/3 的唤醒 */
+    private static final long GAIT_TICK_IDLE_MS = 3000L;
+
+    /**
+     * 【5.6.0 省电】gaitTick 自适应节拍。
+     *
+     * 5.5.1 里这个 tick 是**无条件 1 秒**：从 onCreate 起跑到服务销毁，不管用户
+     * 有没有开自动跟随、有没有在显示预览、是不是一整天躺在桌上 —— 一天 8.6 万次唤醒，
+     * 每次还要读一圈 SharedPreferences 并写一条日志。
+     *
+     * 关键前提：判停用的是 `elapsedRealtime()` 精确时间戳（静置门槛 12s），
+     * 不是靠 tick 累加，所以把节拍放宽到 3 秒**不改变任何判据**，只让「执行判停
+     * 的那一刻」最多晚到 2 秒。行走中与显示中仍保持 1 秒，用户能感知的路径零变化。
+     */
+    private long nextGaitIntervalMs() {
+        boolean active = gaitWalking || overlay.getShowing();
+        return active ? GAIT_TICK_ACTIVE_MS : GAIT_TICK_IDLE_MS;
+    }
     /**
      * 被 Hook 让路（手电/相机应用/总开关关闭）强制收起时置 true，
      * 期间 evaluateShow 不再主动显示，等 Hook 发 ACTION_HOOK_SHOW 恢复。
@@ -654,6 +676,7 @@ public final class WalkPreviewService extends Service {
             reportPreviewState();
             stopForeground(STOP_FOREGROUND_REMOVE);
             foregroundEstablished = false;  // 已撤掉前台，下次启动允许重新提起
+            DiagLog.flushNow();            // 【5.6.0】批量日志，停止前刷盘
             stopSelf();
             // 预览服务停掉 = 磁贴该变回「关」；面板没展开时也要及时对齐
             WalkTileService.refresh(this);
@@ -1118,17 +1141,47 @@ public final class WalkPreviewService extends Service {
                 boolean layFlat = attitude == PhoneAttitude.LAY_FLAT;
                 boolean stable = gait.hasStableGait();
                 int hwSteps = stepCountInWindow();
+                // 【5.6.0 位移证据】与波形正交的第二条证据：到底有没有在移动、是不是坐在车上。
+                // 数据来自 PlaceArrivalMonitor 已有的 60s/150m 定位流，不新增任何唤醒。
+                MotionContext.Verdict motion = MotionContext.verdictNow();
+                boolean motionWalks = MotionContext.allowsFlatWalking(motion);
                 boolean credible;
-                if (stepTick) {
-                    credible = true;                        // 主路径：采集模块已判合格步
+                if (stepTick && !gait.lastPeakWasFlat()) {
+                    credible = true;                        // 主路径：采集模块已判合格步（且不是平放帧）
+                } else if (stepTick) {
+                    // 【5.6.0 平放修复】平放帧不再无条件可信。
+                    // 5.5.1 这里恒 true，于是床上平放抖动只要凑满步数就弹窗；
+                    // 而采集层的 LAY_FLAT 否决又在另一处把「兜里走路」一并杀掉。
+                    // 现在改成「平放帧必须有一条独立证据」：
+                    //   ① 硬件计步器真出步数（最强证据：真迈步才计数）；
+                    //   ② 或定位证明你真的在移动（补上无计步权限机型的唯一出路）。
+                    // 两条都没有 → 按未可信处理，不显示。
+                    credible = hwSteps >= STEP_CONFIRM_MIN || motionWalks;
                 } else if (!layFlat && stable) {
                     credible = true;                        // 解卡路径：非平躺 + 节律稳定
                 } else if (layFlat && stable && hwSteps >= STEP_CONFIRM_MIN) {
                     // 水平持握 / 放包里走路也可能判 LAY_FLAT，但硬件计步器真出了步数，
                     // 这是「确实在走路」的硬证据，放行，避免误杀正常行走。
                     credible = true;
+                } else if (layFlat && stable && motionWalks) {
+                    // 【5.6.0】无计步器权限的机型（计步通道 NONE/DENIED/STALE，hwSteps 恒 0）
+                    // 在这里得到唯一放行路径：平放 + 节律稳 + 定位显示真在移动。
+                    credible = true;
                 } else {
                     credible = false;                       // 平躺抖动 / 无节律乱动
+                }
+                // 车载硬否决：在驾驶/乘车时波形再像走路也不能弹。
+                // 放在 credible 之后是为了让上面的分支保持「证据判断」的单一语义，
+                // 由这一条统一收口。
+                if (MotionContext.vetoesActivation(motion)) {
+                    if (credible) {
+                        DiagLog.logThrottled("gait.motion", "vehicle",
+                                "[MOTION] ⛔ 判定在车上（" + MotionContext.describe(motion)
+                                        + "）→ 抑制激活 | 累计=" + gait.confirmedStepCount()
+                                        + "/" + gait.getConfirmSteps(),
+                                3_000L, 30_000L);
+                    }
+                    credible = false;
                 }
                 boolean countReached = credible
                         && gait.confirmedStepCount() >= gait.getConfirmSteps();
@@ -1593,8 +1646,21 @@ public final class WalkPreviewService extends Service {
                     + " 通道=" + ch.name()
                     + " | " + StepHealthPolicy.describe(ch));
         }
+        // 【5.6.0 位移证据】纯加速度路径同样先看环境结论：
+        //   · 在车上 → 直接否（波形再像走路也不算）；
+        //   · 平放 + 定位证明在移动 → 不再被「姿态平放」这一票否决。
+        MotionContext.Verdict mv = MotionContext.verdictNow();
+        if (MotionContext.vetoesActivation(mv)) {
+            DiagLog.logThrottled("gait.motion", "vehicle-accel",
+                    "[MOTION] ⛔ 判定在车上（" + MotionContext.describe(mv)
+                            + "）→ 纯加速度判定直接不出手",
+                    3_000L, 30_000L);
+            return false;
+        }
+        boolean flatBlocked = gait.getAttitude() == PhoneAttitude.LAY_FLAT
+                && !MotionContext.allowsFlatWalking(mv);
         WalkConfirmPolicy.Verdict v = accelPolicy.evaluate(
-                gait.getAttitude() == PhoneAttitude.LAY_FLAT,
+                flatBlocked,
                 gait.confirmedStepCount(),
                 new java.util.ArrayList<>(accelStepTs),
                 System.currentTimeMillis());
@@ -2009,6 +2075,9 @@ public final class WalkPreviewService extends Service {
         }
         stopGait();
         stopHeartbeat();
+        // 【5.6.0】日志改成批量落盘后，退出前必须把缓冲刷下去，否则最后几条（
+        // 往往正是「为什么被拦/为什么收起」的原因）会留在内存里随进程消失。
+        DiagLog.flushNow();
         // 进程可能还活着而服务已销毁：不清掉弱引用，isAlive() 会短暂误报，
         // 让划任务自检以为服务还在、放弃恢复。
         INSTANCE = null;

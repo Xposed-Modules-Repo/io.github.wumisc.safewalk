@@ -88,6 +88,25 @@ class RearCameraOverlay(
          */
         private const val LANDSCAPE_UPRIGHT_ROT_DEG = 0
 
+        /**
+         * 【5.6.0】横条小窗「自动/跟随系统」档的画面旋转角。
+         *
+         * 真机实测唯一正立值：270（左 270°）。历史 90 是在另一台传感器标定相反的
+         * 机型上定的，搬到本机就是上下颠倒。手动档（上/右/下/左）仍可直接覆盖它。
+         */
+        private const val LANDSCAPE_SMALLWINDOW_DEG = 270
+
+        /**
+         * 【5.6.0 省电】角落小窗的预览短边上限（px）。
+         *
+         * 窗口本身只有 150~260dp，1080p 源在上面显示与 720p 肉眼无差，
+         * 但像素搬运量差 2.25 倍，全部落在相机与 GPU 的高功耗区间。
+         */
+        private const val SMALLWINDOW_MAX_SHORT_SIDE = 720
+
+        /** 【5.6.0 省电】预览锁 30fps：路况观察 30fps 完全够，60fps 白烧一倍电 */
+        private const val PREFERRED_FPS = 30
+
         /** 画面增强实际生效路径（仅用于日志与诊断，不参与判定） */
         private const val PATH_AGSL = "AGSL"
         private const val PATH_MATRIX = "COLOR_MATRIX"
@@ -412,6 +431,9 @@ class RearCameraOverlay(
      */
     private var requestedZoomRatio: Float? = null
 
+    /** 【5.6.0 省电】本次会话锁定的 AE 目标帧率区间；null=不干预（HAL 未上报可用区间） */
+    private var aeFpsRange: android.util.Range<Int>? = null
+
     /**
      * 【省电专项】当前已打开相机对应的物理 id，以及它是否支持逻辑 zoom（下限<1）。
      * 镜头切换时据此判断是否只需原地切 zoom、而不用 close→open 相机。
@@ -639,19 +661,47 @@ class RearCameraOverlay(
      */
     private fun applyPoseChange() {
         if (!isShowing) return
-        // 【5.4.5 方向锁定】小窗已锁定构图：忽略传感器姿态变化，窗口形状/角度/取景一律不动。
-        // 短路只在这一行——下方的窗口重排、圆角轮廓失效、refreshRotation、applyFraming
-        // 全部保留原文，供全屏路径照常执行（契约测试按源码文本断言，故一行都不删）。
-        if (style.mode == MODE_SMALLWINDOW && smallLock != null) return
         val view = tv ?: return
         if (view.width <= 0 || view.height <= 0) return
+        var relocking = false
+        // 【5.4.5 方向锁定】同一朝向内的姿态抖动不重建窗口：小窗已锁定构图时忽略。
+        //
+        // 【5.6.1 横屏必横】但「横 ↔ 竖」这种真翻转必须放行一次——原来这里对 any 姿态变化
+        // 一刀切 return，于是在游戏里（display rotation 不跟着变、只有重力显示横着）小窗
+        // 会被首帧的竖条锁死，后摄画面在竖条里横躺，用户看到的就是「路里预览变竖了」。
+        // 判据用同一份 [liveWindowLandscape]，与窗口尺寸、画面角度同源；
+        // 姿态本身已过 PoseTracker 的 45° 容忍带 + 驻留去抖，不会来回跳。
+        if (style.mode == MODE_SMALLWINDOW && smallLock != null) {
+            val lock0 = smallLock!!
+            val lockedLandscape = lock0.winW > lock0.winH
+            val wantLandscape = liveWindowLandscape()
+            if (wantLandscape == lockedLandscape) return
+            diag(
+                "姿态真翻转 → 解锁重排 | 锁定=" + (if (lockedLandscape) "横条" else "竖条")
+                    + " " + lock0.winW + "x" + lock0.winH
+                    + " 目标=" + (if (wantLandscape) "横条" else "竖条")
+                    + " 姿态=" + poseDeg + "°"
+            )
+            smallLock = null
+            lockScreenLandscape = wantLandscape
+            relocking = true
+        }
+        val lp = buildParams()
         rootView?.let { root ->
-            try { wm.updateViewLayout(root, buildParams()) } catch (_: Throwable) {}
+            try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
             // 5.4.3 旋转重建后重算圆角轮廓：post 等 updateViewLayout 的异步布局完成、view 宽高刷新
             root.post { root.invalidateOutline() }
         }
         refreshRotation()
-        applyFraming()
+        // 用目标尺寸喂 framing：updateViewLayout 异步，此刻 view 宽高还是旧的
+        applyFraming(lp.width, lp.height)
+        if (relocking) {
+            // 重算完成后在新朝向下重新建锁，否则下一次姿态抖动会把画面写回旧构图
+            lockFirstFrame()
+            diag("🔄 姿态翻转已重算并重锁 | 窗口="
+                + (if ((smallLock?.winW ?: 0) > (smallLock?.winH ?: 0)) "横条" else "竖条")
+                + " deg=" + (smallLock?.deg ?: -1))
+        }
     }
 
     /**
@@ -1305,9 +1355,15 @@ class RearCameraOverlay(
         val deg = when {
             appliedRotDeg < 0 -> 0
             !landscapeWindow -> 0
-            // 【5.4.14】小窗横条：画面顺时针转90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。
+            // 【5.4.14】小窗横条：画面顺时针转 90°（鱼头朝右），绕过 alignToWindow 的{0,180}输出域。
             // 全屏横条仍走原 alignToWindow，保证"最大化/分屏不受本规则控制"。
-            style.mode == MODE_SMALLWINDOW -> 90
+            //
+            // 【5.6.0 真机修正】这里从 90 改成 270。用户实测：手机横屏时只有「左 270°」
+            // 是正立的，90 会上下颠倒。5.4.14 的 90 来自一张「鱼头朝右」的截图，但
+            // 那台机器后摄是 SENSOR_ORIENTATION=270 的横装模组，与本机相反；
+            // 把机身转到横屏后，传感器方向与窗口形状的组合只留下 270 这一个正解。
+            // 因此「自动（跟随系统）」档的横条小窗值统一落到 270，手动档仍可覆盖。
+            style.mode == MODE_SMALLWINDOW -> LANDSCAPE_SMALLWINDOW_DEG
             else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)
         }
 
@@ -1524,13 +1580,17 @@ class RearCameraOverlay(
      * 【5.4.11 姿态滞后修复】系统方向优先：一旦收到可靠系统方向回调，一律以它为准
      * （横屏→横条 / 竖屏→竖条），滞后姿态不得盖过已明确的竖屏；姿态只在尚无
      * 回调（首帧）时兜底，与系统方向参考角的判定哲学同源。
+     *
+     * 【5.6.1】上面这条「系统方向优先」被反转成**姿态优先**，理由见 [liveWindowLandscape]：
+     * 系统方向在游戏与旋转锁定场景下会撒谎，而重力不会。5.4.11 要治的「姿态滞后盖过
+     * 已明确的竖屏」由 PoseTracker 的 45° 容忍带 + 驻留时间本身解决，不再需要靠优先级压制。
      */
     private fun isLandscapeWindowNow(): Boolean {
         // 【5.4.15 手动窗口形状】只作用于小窗：全屏 modal 不套任何手动覆盖。
-        // 按系统当前横/竖屏选对应那一组配置；显式选了横/竖就用它定窗口框形状，
+        // 按当前（实时）横/竖屏选对应那一组配置；显式选了横/竖就用它定窗口框形状，
         // auto 则返回 null 落回下方原判据，行为与 5.4.14 完全一致。
         if (style.mode == MODE_SMALLWINDOW) {
-            val shapeCfg = if (screenIsLandscape()) {
+            val shapeCfg = if (liveWindowLandscape()) {
                 style.landscapeWindowShape
             } else {
                 style.portraitWindowShape
@@ -1541,8 +1601,42 @@ class RearCameraOverlay(
         return if (PreviewOrientationPolicy.normalizeMode(style.rotationMode)
             == PreviewOrientationPolicy.MODE_FIXED
         ) false
-        else lastKnownScreenLandscape
-            ?: DevicePosePolicy.isLandscapePose(currentDisplayDegrees())
+        else liveWindowLandscape()
+    }
+
+    /**
+     * 【5.6.1 横屏必横】窗口该不该是横条 —— 以**重力姿态**为准。
+     *
+     * 为什么不能用系统 configuration / Display.getRotation()：
+     *  · 游戏（尤其强制横屏或自绘 Surface 的游戏）会把画面横过来，但 display rotation
+     *    可能仍是 0、configuration 也还是 portrait。此时只有重力能说明「手机确实横着」。
+     *    真机截图：游戏横屏下小窗被建成 488x845 竖条，后摄画面躺 90°，正是这个原因。
+     *  · 用户开着「旋转锁定」时 `Display.getRotation()` 恒为 0，横过来也不变
+     *    —— 5.3.1 已经因此弃用它，改用重力。
+     *
+     * 姿态轨迹由 [DevicePosePolicy.PoseTracker] 提供：45° 容忍带 + 驻留时间去抖，
+     * 因此这里读到的已经是「稳定朝向」，不会因为手抖在横竖之间来回跳。
+     * 只有完全没有姿态样本（传感器不可用）时，才退回系统方向兜底。
+     *
+     * 【判据取「任一为横即横」】两路信号各有各的失效场景：
+     *  · 系统方向会漏报：游戏自绘 Surface / 强制横屏，config 还是 portrait；
+     *  · 姿态会漏报：用户开着旋转锁定却把手机横过来看竖屏内容。
+     * 对路况预览来说，**漏横（竖条里塞横画面）比多横（横条里塞竖画面）严重得多**——
+     * 前者后摄画面躺着 90°，用户完全没法看；后者只是多裁一点。故取并集，宁可多横。
+     *
+     * 5.4.11 曾因「姿态滞后横持盖过已明确竖屏」改回系统优先；那个滞后现在由
+     * PoseTracker 的 45° 容忍带 + 驻留时间消除，不再需要靠优先级压制。
+     */
+    private fun liveWindowLandscape(): Boolean {
+        val pose = poseDeg
+        val poseLandscape = pose != DevicePosePolicy.NO_SAMPLE &&
+            DevicePosePolicy.isLandscapePose(pose)
+        // 系统方向取**实时** Configuration，不用 lastKnownScreenLandscape 缓存：
+        // 缓存只在 onConfigurationChanged 里更新，用户开着旋转锁定时它停在旧值，
+        // 会让「横过之后回正」卡在横条；onConfigurationChanged 里 super 已先行更新
+        // resources（见 screenIsLandscape 注释），实时读不滞后。
+        val systemLandscape = screenIsLandscape()
+        return poseLandscape || systemLandscape
     }
 
     /**
@@ -2178,6 +2272,8 @@ class RearCameraOverlay(
         val builder = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
         builder.addTarget(surface)
         builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+        // 【5.6.0 省电】锁帧率。null 表示 HAL 没报可用区间，保持原生（不干预）。
+        aeFpsRange?.let { builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
         if (style.torchWithPreview && flashAvailable) {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
@@ -2350,7 +2446,25 @@ class RearCameraOverlay(
             if (style.lowLight && aeCompTarget <= 0) {
                 diag("⚠️ 本机不支持曝光补偿，低光增强自动降级（预览照常显示）")
             }
-            diag("[cam] 能力探测 | flashAvailable=$flashAvailable aeCompTarget=$aeCompTarget")
+            // 【5.6.0 省电】帧率锁 30。相机是整套预览里最大的单项功耗，帧率直接乘在上面：
+            // 不锁的话 HAL 常给 [15,60] 的变范围，白天路面亮就自动顶到 60fps，
+            // 对「看清脚下路」毫无帮助，只是把 ISP + GPU 的功耗翻倍。
+            // 选档顺序：恰好 [30,30] → 上限 30 且下限最高 → 任意上限 30 → 不锁。
+            aeFpsRange = try {
+                val chars = cm.getCameraCharacteristics(id)
+                val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                if (ranges == null) null else {
+                    val exact = ranges.firstOrNull { it.lower == PREFERRED_FPS && it.upper == PREFERRED_FPS }
+                    if (exact != null) exact else {
+                        val capped = ranges.filter { it.upper == PREFERRED_FPS }
+                        capped.maxByOrNull { it.lower }
+                    }
+                }
+            } catch (_: Throwable) {
+                null
+            }
+            diag("[cam] 能力探测 | flashAvailable=$flashAvailable aeCompTarget=$aeCompTarget"
+                    + " fpsRange=" + (aeFpsRange?.let { "${it.lower}~${it.upper}" } ?: "不锁"))
             // 捕获发起时的代号：回调回来要是对不上，说明这次请求已经过期
             val gen = cameraGen
             opening = true
@@ -2581,7 +2695,11 @@ class RearCameraOverlay(
             appliedRotDeg = smallLock!!.rotDeg
         }
 
-        val picked = PreviewOrientationPolicy.pickPreviewSize(sizes, viewW, viewH, appliedRotDeg)
+        // 【5.6.0 省电】小窗只要 720p：短边 ≤720 的等价档位。全屏保持 1080p 预算。
+        val picked = PreviewOrientationPolicy.pickPreviewSize(
+            sizes, viewW, viewH, appliedRotDeg,
+            if (style.mode == MODE_SMALLWINDOW) SMALLWINDOW_MAX_SHORT_SIDE else 0
+        )
         if (picked != null && picked.size >= 2) {
             previewSrcW = picked[0]
             previewSrcH = picked[1]
@@ -2652,7 +2770,21 @@ class RearCameraOverlay(
                     if (lo != Float.MAX_VALUE) minF = lo
                     if (hi > 0f) maxF = hi
                 }
-                candidates.add(CameraLensPolicy.Candidate(id, true, minF, maxF))
+                // 【5.6.0 等效焦距】传感器物理尺寸（mm）。有了它才能把「物理焦距」
+                // 换算成 35mm 等效焦距，消掉不同 sensor 尺寸带来的不可比性
+                // （见 CameraLensPolicy.ULTRAWIDE_EFL_RATIO 的推导）。
+                // 读不到的机型（部分魅族 / 类原生精简 HAL）留 null，策略层自动降级。
+                var diagMm: Float? = null
+                try {
+                    val size = cc.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                    if (size != null && size.width > 0f && size.height > 0f) {
+                        diagMm = kotlin.math.sqrt(
+                            size.width * size.width + size.height * size.height
+                        )
+                    }
+                } catch (_: Throwable) {
+                }
+                candidates.add(CameraLensPolicy.Candidate(id, true, minF, maxF, diagMm))
             }
             val picked = CameraLensPolicy.select(candidates, style.cameraLens)
             if (picked != null) {
@@ -2668,6 +2800,15 @@ class RearCameraOverlay(
                         + " zoomRange=" + (zoomRange?.let { "${it.lower}~${it.upper}" } ?: "不支持")
                         + " | 候选=" + candidates.filter { it.back }
                         .joinToString { "${it.id}(${it.minFocalMm ?: "?"}~${it.maxFocalMm ?: "?"}mm)" })
+                // 【5.6.0 多厂商校准】设备清单一行输出，含焦距 / 传感器对角 / 等效焦距。
+                // 三星、魅族、Pixel、类原生的 id 顺序与上报字段各不相同，只能靠真机数据校准；
+                // 这一行就是用户回传的那行，节流避免每次开相机刷屏。
+                DiagLog.logThrottled(
+                    "lens.inventory", "dump",
+                    "[lens] 后摄清单 | " + CameraLensPolicy.describe(candidates)
+                            + " | 主摄=" + CameraLensPolicy.pickMain(candidates.filter { it.back }).id,
+                    5_000L, 120_000L
+                )
             } else {
                 requestedZoomRatio = null
             }

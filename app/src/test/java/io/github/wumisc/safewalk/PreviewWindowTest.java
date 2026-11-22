@@ -257,10 +257,15 @@ public class PreviewWindowTest {
         Context ctx = ApplicationProvider.getApplicationContext();
         float density = ctx.getResources().getDisplayMetrics().density;
         int screenH = ctx.getResources().getDisplayMetrics().heightPixels;
-        int uncapped = Math.round((180 * RearCameraOverlay.SMALL_ASPECT) * density);
-        assertEquals("宽度不受高度上限影响", Math.round(180 * density), recorder.params.width);
-        assertEquals("高度应压到屏高的 62%", (int) (screenH * 0.62f), recorder.params.height);
-        assertTrue("横屏下确实压矮了", recorder.params.height < uncapped);
+        // 【5.6.1 横屏必横】横屏下窗口是横条：短边（用户设置值）落在高度上，
+        // 宽度是短边 × 宽高比。411dp 屏的 62% 上限高于 180dp 短边，因此这里不该触发压矮。
+        int expectShort = Math.round(180 * density);
+        int maxH = (int) (screenH * 0.62f);
+        assertEquals("横条高 = 用户设置短边", expectShort, recorder.params.height);
+        assertEquals("横条宽 = 短边 × 宽高比",
+                Math.round((180 * RearCameraOverlay.SMALL_ASPECT) * density), recorder.params.width);
+        assertTrue("横条确实是横的", recorder.params.width > recorder.params.height);
+        assertTrue("180dp 短边未触到 62% 上限", expectShort < maxH);
     }
 
     /**

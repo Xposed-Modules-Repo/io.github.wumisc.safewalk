@@ -411,7 +411,7 @@ public class ManualOrientationContractTest {
         assertTrue("A4 deg when 判据仍在", applyFramingCode.contains("val deg = when"));
         assertTrue("A4 首帧 0 分支仍在", applyFramingCode.contains("appliedRotDeg < 0 -> 0"));
         assertTrue("A4 竖条 0 分支仍在", applyFramingCode.contains("!landscapeWindow -> 0"));
-        assertTrue("A4 小窗横条 90 分支仍在", applyFramingCode.contains("style.mode == MODE_SMALLWINDOW -> 90"));
+        assertTrue("A4 小窗横条 90 分支仍在", applyFramingCode.contains("style.mode == MODE_SMALLWINDOW -> LANDSCAPE_SMALLWINDOW_DEG"));
         assertTrue("A4 全屏兜底 alignToWindow 分支仍在",
                 applyFramingCode.contains("else -> PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)"));
         assertEquals("A4 alignToWindow(appliedRotDeg, true) 全文仍恰 1 处（未新增兜底）",
@@ -427,8 +427,8 @@ public class ManualOrientationContractTest {
     public void a5_manualShapeOnlyInSmallWindowInSource() {
         assertTrue("A5 isLandscapeWindowNow 须有小窗守卫",
                 isLandCode.contains("if (style.mode == MODE_SMALLWINDOW)"));
-        assertTrue("A5 按 screenIsLandscape() 选组",
-                isLandCode.contains("val shapeCfg = if (screenIsLandscape()) {"));
+        assertTrue("A5 按实时横竖判定选组（5.6.1 起由姿态+系统方向并集给出）",
+                isLandCode.contains("val shapeCfg = if (liveWindowLandscape()) {"));
         assertTrue("A5 横屏组读 landscapeWindowShape", isLandCode.contains("style.landscapeWindowShape"));
         assertTrue("A5 竖屏组读 portraitWindowShape", isLandCode.contains("style.portraitWindowShape"));
         assertTrue("A5 形状归一为三态",
@@ -436,8 +436,10 @@ public class ManualOrientationContractTest {
         assertTrue("A5 仅非 null 才覆盖返回", isLandCode.contains("if (manual != null) return manual"));
         assertTrue("A5 auto 落回 MODE_FIXED 原判据",
                 isLandCode.contains("PreviewOrientationPolicy.MODE_FIXED"));
-        assertTrue("A5 auto 落回 lastKnownScreenLandscape 原判据",
-                isLandCode.contains("lastKnownScreenLandscape"));
+        assertTrue("A5 auto 落回实时横竖判定（与窗口形状、画面角度同源）",
+                isLandCode.contains("else liveWindowLandscape()"));
+        assertTrue("A5 判定链仍覆盖系统方向项",
+                overlayCode.contains("lastKnownScreenLandscape"));
     }
 
     /** A6 意图（立即生效）：三键任一变化清锁 + 快路径重算，reapply 内完整清锁/重算/重锁链。 */

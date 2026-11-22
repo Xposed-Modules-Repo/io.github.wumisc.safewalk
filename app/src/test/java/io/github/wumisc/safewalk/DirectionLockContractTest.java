@@ -426,12 +426,18 @@ public class DirectionLockContractTest {
     /** A1 意图：applyPoseChange 内小窗短路 return 必须出现在 refreshRotation 之前（运行期短路而非删行）。 */
     @Test
     public void a1_applyPoseChange_shortCircuitBeforeRefreshRotation() {
-        String guard = "if (style.mode == MODE_SMALLWINDOW && smallLock != null) return";
+        // 【5.6.1 横屏必横】短路从「无条件 return」升级为「同朝向 return、真翻转放行」：
+        // 护栏意图不变——同一朝向内的姿态抖动绝不重建窗口；新增的是横↔竖真翻转必须放行。
+        String guard = "if (style.mode == MODE_SMALLWINDOW && smallLock != null) {";
         int g = poseBody.indexOf(guard);
+        int sameOrient = poseBody.indexOf("if (wantLandscape == lockedLandscape) return");
         int r = poseBody.indexOf("refreshRotation()");
-        assertTrue("A1 applyPoseChange 须含小窗短路 return", g >= 0);
+        assertTrue("A1 applyPoseChange 须含小窗锁定入口", g >= 0);
+        assertTrue("A1 同朝向守卫须 return（姿态抖动不重排）", sameOrient > g);
         assertTrue("A1 applyPoseChange 须保留 refreshRotation() 原文", r >= 0);
-        assertTrue("A1 短路 return 必须在 refreshRotation 之前", g < r);
+        assertTrue("A1 守卫 return 必须在 refreshRotation 之前", sameOrient > 0 && sameOrient < r);
+        assertTrue("A1 真翻转须清锁", poseBody.contains("smallLock = null"));
+        assertTrue("A1 真翻转后须重锁", poseBody.contains("lockFirstFrame()"));
     }
 
     /** A2 意图：applyPoseChange 的 5.4.3 post 包裹 invalidateOutline 仍在（短路不影响全屏）。 */

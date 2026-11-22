@@ -784,7 +784,7 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
-                        android:text="自动"
+                        android:text="跟随系统"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
