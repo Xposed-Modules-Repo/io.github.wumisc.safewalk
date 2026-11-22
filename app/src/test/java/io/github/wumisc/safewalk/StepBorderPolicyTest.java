@@ -99,6 +99,24 @@ public class StepBorderPolicyTest {
     }
 
     @Test
+    public void switchOff_forcesDefaultWhiteAndNoFlag() {
+        // 用户在「小窗自定义」里关掉步数奖励后，任何步数都必须是白描边、不挂旗
+        assertEquals(StepBorderPolicy.COLOR_DEFAULT, StepBorderPolicy.borderColor(3_000L, false));
+        assertEquals(StepBorderPolicy.COLOR_DEFAULT, StepBorderPolicy.borderColor(8_000L, false));
+        assertEquals(StepBorderPolicy.COLOR_DEFAULT, StepBorderPolicy.borderColor(20_000L, false));
+        assertEquals(StepBorderPolicy.COLOR_DEFAULT, StepBorderPolicy.borderColor(30_000L, false));
+        assertFalse(StepBorderPolicy.showFlag(20_000L, false));
+        assertFalse(StepBorderPolicy.showFlag(30_000L, false));
+        // 开关打开时必须与不带参数的旧行为完全一致，避免两套口径分叉
+        for (long steps : new long[]{0L, 3_000L, 8_000L, 20_000L, 30_000L}) {
+            assertEquals(StepBorderPolicy.borderColor(steps),
+                    StepBorderPolicy.borderColor(steps, true));
+            assertEquals(StepBorderPolicy.showFlag(steps),
+                    StepBorderPolicy.showFlag(steps, true));
+        }
+    }
+
+    @Test
     public void tierNameIsNeverEmpty() {
         int[] tiers = {StepBorderPolicy.TIER_NONE, StepBorderPolicy.TIER_ORANGE,
                 StepBorderPolicy.TIER_LIGHT_RED, StepBorderPolicy.TIER_FLAG_RED,

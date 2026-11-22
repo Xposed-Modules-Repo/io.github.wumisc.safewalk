@@ -280,6 +280,16 @@ object SafeWalkPrefKey {
     /** 【5.0.0】小窗描边宽度（dp），0~4，默认 0（不描边）。 */
     const val previewBorderDp = "previewBorderDp"
 
+    /**
+     * 【5.6.5】步数奖励开关，默认 **true**。
+     *
+     * 开着时小窗描边按「今日步数」换色（3000 橙 / 8000 淡红 / 20000 国旗红 + 小红旗 /
+     * 30000 淡蓝）；关掉后描边回到原来的白色、不挂旗。
+     * 只影响**奖励表现**，不影响 HUD 里那行「今日 N 步」—— 想看数字的用户
+     * 不该为了保留数字而被迫接受颜色变化。
+     */
+    const val stepRewardEnabled = "stepRewardEnabled"
+
     /** 【5.0.0】低光增强：预览请求下发正向曝光补偿。默认关。 */
     const val previewLowLight = "previewLowLight"
 

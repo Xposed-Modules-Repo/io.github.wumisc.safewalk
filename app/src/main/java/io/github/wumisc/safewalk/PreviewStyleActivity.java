@@ -31,7 +31,7 @@ public final class PreviewStyleActivity extends Activity {
 
     private SharedPreferences sp;
 
-    private SwitchCompat swHud, swContrast, swLowLight;
+    private SwitchCompat swHud, swContrast, swLowLight, swStepReward;
     /**
      * 【5.1.0】智能方案：开启后白天/夜间由系统深色模式 + 夜间时段自动判定，
      * 下面三个 chip 只作为「手动覆盖」的入口。
@@ -198,6 +198,7 @@ public final class PreviewStyleActivity extends Activity {
         seekHudSize = findViewById(R.id.seek_hud_size);
 
         swContrast = findViewById(R.id.sw_contrast);
+        swStepReward = findViewById(R.id.sw_step_reward);
         tvContrastLevel = findViewById(R.id.tv_contrast_level);
         seekContrastLevel = findViewById(R.id.seek_contrast_level);
     }
@@ -232,6 +233,9 @@ public final class PreviewStyleActivity extends Activity {
                 Math.min(9, sizeSp - RearCameraOverlay.HUD_TEXT_SIZE_MIN_SP)));
 
         swContrast.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.enablePreviewContrast, false));
+        // 【5.6.5】步数奖励默认开：颜色反馈是这一版新加的亮点，默认就该看得见；
+        // 不想要的人可以在这里关回白色描边。
+        swStepReward.setChecked(SafePrefs.getBool(sp, SafeWalkPrefKey.stepRewardEnabled, true));
         int level = SafePrefs.getInt(sp, SafeWalkPrefKey.previewContrastLevel, 50);
         seekContrastLevel.setProgress(Math.max(0, Math.min(100, level)));
 
@@ -420,6 +424,21 @@ public final class PreviewStyleActivity extends Activity {
             previewIfEnabled();
         });
         findViewById(R.id.card_hud).setOnClickListener(v -> swHud.toggle());
+
+        // 【5.6.5】步数奖励开关：只作用于「角落小窗」的描边（全屏没有描边），
+        // 全屏档位下点它由 [smallWindowOnly] 给出原因，不静默无效。
+        swStepReward.setOnCheckedChangeListener((v, c) -> {
+            if (binding) return;
+            sp.edit().putBoolean(SafeWalkPrefKey.stepRewardEnabled, c).commit();
+            SafeWalkConfig.exportConfig(this);
+            DiagLog.log("[style] 步数奖励 → " + (c ? "开" : "关（描边保持白色）"));
+            refreshSummary();
+            previewIfEnabled();
+        });
+        findViewById(R.id.card_step_reward).setOnClickListener(v -> {
+            if (!smallWindowOnly("步数奖励")) return;
+            swStepReward.toggle();
+        });
 
         // 文字内容：输入过程中不落盘（否则每敲一个字就重建一次 HUD），
         // 失焦与离开页面时各落一次，兜住「输完直接按返回」的路径。
@@ -912,6 +931,9 @@ public final class PreviewStyleActivity extends Activity {
         for (TextView chip : portraitShapeChips) chip.setAlpha(small ? 1f : 0.45f);
         for (TextView chip : facingChips) chip.setAlpha(small ? 1f : 0.45f);
 
+        // 步数奖励只画在描边上，全屏没有描边 → 与描边一并调淡/置灰
+        setEnabledState(swStepReward, small);
+
         boolean hudOn = swHud.isChecked();
         setEnabledState(etHudText, hudOn);
         setEnabledState(seekHudSize, hudOn);
@@ -947,6 +969,8 @@ public final class PreviewStyleActivity extends Activity {
                     + "：" + framingWord(readFraming());
         }
         if (small && readBorder() > 0) base += " · 描边 " + readBorder() + "dp";
+        // 关掉奖励时要留痕：否则用户会以为「为什么今天 2 万步也没有颜色」
+        if (small && !swStepReward.isChecked()) base += " · 步数奖励关";
         if (swLowLight.isChecked()) base += " · 低光增强";
         // 【5.3.0】方向只在非「自动」时写进摘要：自动是常态，天天显示等于噪音；
         // 而一旦用户动过它，就必须在摘要里留痕，否则「我上次是不是改过」只能靠猜。

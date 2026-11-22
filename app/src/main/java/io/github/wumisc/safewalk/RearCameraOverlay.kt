@@ -413,6 +413,14 @@ class RearCameraOverlay(
     private var todaySteps: Long = 0L
     /** ≥ 2 万步的奖励小红旗（窗口左上角内侧，自绘） */
     private var stepFlag: StepFlagView? = null
+    /**
+     * 【5.6.5】「步数奖励」总开关（小窗自定义里可关）。
+     *
+     * 关掉 = 描边退回原来的白色、不挂小红旗；步数徽章本身不受影响 ——
+     * 那是「看今天走了多少」的信息，奖励只是额外的颜色反馈，
+     * 不能因为不想要奖励就把数字也一起拿掉。
+     */
+    private var stepRewardEnabled: Boolean = true
 
     /**
      * 【5.1.0 画面增强】色矩阵兜底路径用的 Paint。
@@ -1399,6 +1407,13 @@ class RearCameraOverlay(
      * 只影响**描边颜色**与小红旗，不影响步数徽章的显隐 —— 后者仍由 [setStepText] 控制。
      * 档位变了才写一条日志，逐步调用不刷屏。
      */
+    fun setStepRewardEnabled(enabled: Boolean) {
+        if (stepRewardEnabled == enabled) return
+        stepRewardEnabled = enabled
+        applyBorder()
+        DiagLog.log("[step] 步数奖励 → " + (if (enabled) "开（描边按步数换色）" else "关（描边保持白色）"))
+    }
+
     fun setTodaySteps(steps: Long) {
         val v = if (steps < 0L) 0L else steps
         if (todaySteps == v) return
@@ -1415,7 +1430,7 @@ class RearCameraOverlay(
     /** 按当前 [todaySteps] 决定小红旗显隐；[allowed]=false 表示当前模式不放奖（全屏 / 无描边） */
     private fun applyStepFlag(allowed: Boolean) {
         val flag = stepFlag ?: return
-        val show = allowed && StepBorderPolicy.showFlag(todaySteps)
+        val show = allowed && StepBorderPolicy.showFlag(todaySteps, stepRewardEnabled)
         val vis = if (show) View.VISIBLE else View.GONE
         if (flag.visibility != vis) flag.visibility = vis
     }
@@ -2055,7 +2070,7 @@ class RearCameraOverlay(
             shape = GradientDrawable.RECTANGLE
             // 圆角跟窗口裁剪保持一致，否则描边会在圆角处露出尖角
             cornerRadius = if (style.mode == MODE_SMALLWINDOW) dp(24).toFloat() else 0f
-            setStroke(dp(style.borderDp), StepBorderPolicy.borderColor(todaySteps))
+            setStroke(dp(style.borderDp), StepBorderPolicy.borderColor(todaySteps, stepRewardEnabled))
         }
         root.foreground = d
         applyStepFlag(true)

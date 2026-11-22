@@ -107,7 +107,9 @@ class ConfigProvider : ContentProvider() {
             SafeWalkPrefKey.portraitWindowShape,
             SafeWalkPrefKey.rearCameraFacing,
             // 路况预览镜头选择：纯显示参数，进白名单只为「导出配置带全」。
-            SafeWalkPrefKey.rearCameraLens
+            SafeWalkPrefKey.rearCameraLens,
+            // 5.6.5 步数奖励开关：纯显示参数，进白名单只为导出配置带全。
+            SafeWalkPrefKey.stepRewardEnabled
         )
 
         /**

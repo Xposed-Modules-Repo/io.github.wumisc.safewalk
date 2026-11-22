@@ -1053,6 +1053,10 @@ public final class WalkPreviewService extends Service {
                 SafePrefs.getString(sp, SafeWalkPrefKey.rearCameraLens,
                         CameraLensPolicy.MODE_AUTO));
 
+        // 【5.6.5】步数奖励开关：小窗自定义里能关，关掉后描边保持白色、不挂小红旗。
+        // 每次显示前读一次，改完配置下一次显示就生效（不需要重启服务）。
+        overlay.setStepRewardEnabled(
+                SafePrefs.getBool(sp, SafeWalkPrefKey.stepRewardEnabled, true));
         overlay.show(mode, opacity, corner, contrast, torchWithPreview, contrastLevel,
                 hudText, hudSize, smallWidth, smallMargin, framing, border, lowLight,
                 screenEnhance, screenContrast, screenShadow, screenSat, rotationMode,

@@ -79,7 +79,16 @@ object StepBorderPolicy {
 
     /** 今日步数 → 描边 ARGB（含 0xCC 透明度） */
     @JvmStatic
-    fun borderColor(steps: Long): Int = when (tier(steps)) {
+    fun borderColor(steps: Long): Int = borderColor(steps, true)
+
+    /**
+     * 今日步数 → 描边 ARGB；[enabled]=false 时一律回默认白。
+     *
+     * 「步数奖励」开关关掉后，颜色不由步数决定 —— 但仍走同一个入口，
+     * 避免渲染层出现「开关关着却还在算档位」的分支。
+     */
+    @JvmStatic
+    fun borderColor(steps: Long, enabled: Boolean): Int = when (if (enabled) tier(steps) else TIER_NONE) {
         TIER_ORANGE -> COLOR_ORANGE
         TIER_LIGHT_RED -> COLOR_LIGHT_RED
         TIER_FLAG_RED -> COLOR_FLAG_RED
@@ -89,7 +98,12 @@ object StepBorderPolicy {
 
     /** 是否挂小红旗（≥ 20000，含 30000 淡蓝档） */
     @JvmStatic
-    fun showFlag(steps: Long): Boolean = steps >= FLAG_RED_STEPS
+    fun showFlag(steps: Long): Boolean = showFlag(steps, true)
+
+    /** 是否挂小红旗；开关关掉时无论多少步都不放 */
+    @JvmStatic
+    fun showFlag(steps: Long, enabled: Boolean): Boolean =
+        enabled && steps >= FLAG_RED_STEPS
 
     /** 档位名，只用于诊断日志 */
     @JvmStatic
