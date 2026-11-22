@@ -190,8 +190,11 @@ public class PreviewWindowTest {
         assertNotNull(recorder.params);
         assertTrue("窗口根必须是 FrameLayout 容器", recorder.view instanceof ViewGroup);
         ViewGroup root = (ViewGroup) recorder.view;
-        // 【5.4.2】root 直属只剩 rotLayer 一个子节点，rotLayer 内含画面层 + HUD 文字层。
-        assertEquals("root 直属只有 rotLayer 一个子节点", 1, root.getChildCount());
+        // 【5.4.2】root 第 0 个子节点是 rotLayer，rotLayer 内含画面层 + HUD 文字层。
+        // 【5.6.5】root 直属 = rotLayer + 奖励小红旗（旗子在后，rotLayer 仍是第 0 个子）
+        assertEquals("root 直属 = rotLayer + 小红旗两个子节点", 2, root.getChildCount());
+        assertEquals("第 0 个子必须是 rotLayer（旗子后加，不改变旋转层下标）",
+                RearCameraOverlay.TAG_STEP_FLAG, root.getChildAt(1).getTag());
         assertTrue("rotLayer 内应含画面层 + HUD 文字层",
                 ((ViewGroup) root.getChildAt(0)).getChildCount() >= 2);
         View hud = recorder.findHudView(root);
@@ -334,7 +337,10 @@ public class PreviewWindowTest {
         assertEquals("窗口根自身不能旋转", 0.0f, root.getRotation(), 0.001f);
         // 【5.4.2 Bug B】HUD 已移入 rotLayer：root 直属只剩 rotLayer 一个子节点，
         // rotLayer 内含画面层 + HUD 两层。下方 rot 仍是 root.getChildAt(0) 即 rotLayer。
-        assertEquals("root 直属只有 rotLayer 一个子节点", 1, root.getChildCount());
+        // 【5.6.5】root 直属 = rotLayer + 奖励小红旗（旗子在后，rotLayer 仍是第 0 个子）
+        assertEquals("root 直属 = rotLayer + 小红旗两个子节点", 2, root.getChildCount());
+        assertEquals("第 0 个子必须是 rotLayer（旗子后加，不改变旋转层下标）",
+                RearCameraOverlay.TAG_STEP_FLAG, root.getChildAt(1).getTag());
         assertTrue("rotLayer 内应含画面层 + HUD 文字层",
                 ((ViewGroup) root.getChildAt(0)).getChildCount() >= 2);
 

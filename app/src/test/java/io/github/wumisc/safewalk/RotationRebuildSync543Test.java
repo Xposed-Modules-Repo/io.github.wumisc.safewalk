@@ -26,7 +26,7 @@ import org.junit.Test;
  *       {@code applyFraming()} 四个方法体，锁住三处改法的<b>结构与写法</b>：
  *       P1 两条重建路径各一次 {@code root.post { root.invalidateOutline() }}（且先提交 lp 后失效）；
  *       P2 高度裁剪行带 {@code maxH > w} 门控；
- *       P3 {@code hudView?.rotation = -deg.toFloat()} 紧随 {@code layer.rotation = deg.toFloat()}。
+ *       P3 {@code hudColumn?.rotation = -deg.toFloat()} 紧随 {@code layer.rotation = deg.toFloat()}。
  *       另设硬边界组，锁住方向公式 / 竖屏固定不转 / 折中 2.0f / 正方形防御 / 5.4.3 注释。</li>
  *   <li><b>P2-纯函数组</b>：从生产裁剪判据抽出等价纯函数
  *       {@code shouldClampHeight(h,maxH,w) = maxH>0 && h>maxH && maxH>w}，穷举真值表。
@@ -316,22 +316,22 @@ public class RotationRebuildSync543Test {
 
     // ==================== P3 组 · HUD 反向旋转 + 布局参数未动 ====================
 
-    /** 正则：两行相邻（去注释后中间只允许空白），layer.rotation 之后紧跟 hudView?.rotation 反向抵消。 */
+    /** 正则：两行相邻（去注释后中间只允许空白），layer.rotation 之后紧跟 hudColumn?.rotation 反向抵消。 */
     private static final Pattern ADJACENT_ROTATIONS = Pattern.compile(
             "layer\\.rotation\\s*=\\s*deg\\.toFloat\\(\\)\\s*"
-            + "hudView\\?\\.rotation\\s*=\\s*-deg\\.toFloat\\(\\)");
+            + "hudColumn\\?\\.rotation\\s*=\\s*-deg\\.toFloat\\(\\)");
 
     /** P3-A 意图：HUD 反向旋转紧随 layer.rotation 之后（两者相邻，防止被挪走/插队）。输入=applyFraming 体；预期相邻匹配。 */
     @Test
     public void p3a_hudInverseRotationImmediatelyAfterLayerRotation() {
-        assertTrue("P3-A hudView?.rotation = -deg.toFloat() 必须紧随 layer.rotation = deg.toFloat() 之后",
+        assertTrue("P3-A hudColumn?.rotation = -deg.toFloat() 必须紧随 layer.rotation = deg.toFloat() 之后",
                 ADJACENT_ROTATIONS.matcher(framingBody).find());
     }
 
     /** P3-B 意图：HUD 旋转用空安全 ?.，不得改成 !! 或裸点调用。输入=applyFraming 体；预期仅 ?. 写法。 */
     @Test
     public void p3b_hudRotationUsesNullSafeCall() {
-        assertTrue("P3-B 须用空安全 hudView?.rotation", framingBody.contains("hudView?.rotation = -deg.toFloat()"));
+        assertTrue("P3-B 须用空安全 hudColumn?.rotation", framingBody.contains("hudColumn?.rotation = -deg.toFloat()"));
         assertFalse("P3-B 不得改成 hudView!!.rotation（未创建帧会崩）", framingBody.contains("hudView!!"));
         assertFalse("P3-B 不得改成非空安全 hudView.rotation",
                 Pattern.compile("hudView(?!\\?)\\s*\\.\\s*rotation").matcher(framingBody).find());
@@ -353,7 +353,7 @@ public class RotationRebuildSync543Test {
     /** P3-E 意图：HUD 挂载调用与 hudLp 构造仍未改。输入=全文；预期两个关键串存在。 */
     @Test
     public void p3e_hudMountCallAndLayoutParamsUnchanged() {
-        assertTrue("P3-E 须保留 addView(hudView, hudLp)", codeOnly.contains("addView(hudView, hudLp)"));
+        assertTrue("P3-E 须保留 addView(hudColumn, hudLp)", codeOnly.contains("addView(hudColumn, hudLp)"));
         assertTrue("P3-E 须保留 val hudLp = FrameLayout.LayoutParams(",
                 codeOnly.contains("val hudLp = FrameLayout.LayoutParams("));
     }

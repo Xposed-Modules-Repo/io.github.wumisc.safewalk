@@ -90,6 +90,15 @@ public final class WalkPreviewService extends Service {
     private boolean gaitWalking = false;
     /** 上一帧有效步的时间戳，用于静置超时判停 */
     private long lastStepTs = 0L;
+    // 【5.6.5】今日步数：dayKey / 当天基线 / 当天加速度累计 / 最近一次硬件绝对值
+    private String stepDayKey = "";
+    private long stepBaseTotal = TodayStepPolicy.NO_BASE;
+    private long stepAccelToday = 0L;
+    private long stepHwTotalLatest = -1L;
+    private long todayStepsCache = 0L;
+    /** 最近一次「真实步」的时间（硬件回调或加速度合格步），只用于步数徽章的隐显 */
+    private long lastMotionStepTs = 0L;
+    private long lastStepFlushTs = 0L;
     /** 【沙发误触修复】连续行走步流的起始时间戳，计步器不可用时用它卡「连续走够久」 */
     private long walkingStreakStartTs = 0L;
     /** 判定停下（静置超时收起）的时刻，用于「收起后冷却」防秒开死循环 */
@@ -181,6 +190,23 @@ public final class WalkPreviewService extends Service {
      * 都是瞬时动作，3 秒后就散了，过不了这条。
      */
     private static final long LIVE_CONFIRM_STREAK_MS = 3_000L;
+    // ==================== 【5.6.5】今日步数 ====================
+
+    /** 今日步数状态落盘键（值可能是跨天前的，读出后按 dayKey 判定是否作废） */
+    private static final String SP_KEY_STEP_DAY = "step_today_day";
+    private static final String SP_KEY_STEP_BASE = "step_today_base";
+    private static final String SP_KEY_STEP_ACCEL = "step_today_accel";
+
+    /**
+     * 步数徽章「不动就隐藏」的时长：最近一次真实步过去这么久之后，HUD 下方的小框收起来。
+     *
+     * 小窗本身就可能在判停后收起，但手动常显 / 调试场景下窗口会一直在，
+     * 静止时还挂着一个不变化的「今日 N 步」没有意义，还挡画面。
+     */
+    private static final long STEP_BADGE_HIDE_MS = 60_000L;
+
+    /** 步数状态落盘节流：走路时每步都写 SP 太重，攒够间隔再写一次 */
+    private static final long STEP_STATE_FLUSH_MS = 30_000L;
     /**
      * 【沙发误触修复 v3 · 真机日志 2026-11-10 13:48~14:02】
      *
@@ -347,6 +373,7 @@ public final class WalkPreviewService extends Service {
             } catch (Throwable t) {
                 DiagLog.logThrottled("night.solo", "err", "[night-solo] 评估异常: " + t.getMessage());
             }
+            updateStepBadge(now);
             gaitHandler.postDelayed(this, nextGaitIntervalMs());
         }
     };
@@ -534,6 +561,7 @@ public final class WalkPreviewService extends Service {
         // 否则开机自启时会按空 SP 的默认值（行走模式=关）判断，导致「开机后是关闭的」。
         ConfigBackup.restoreIfNeeded(getApplicationContext());
         sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
+        loadStepState();
         // 【到达提醒】证件 / 到场提示不再由「确认步行」触发，改由 App 侧低频定位
         // 判定「到达某类场所」后再发（见 PlaceArrivalMonitor）。
         // 服务是常驻的，挂在这里最稳；start 内部幂等，多入口重复调用无害。
@@ -1043,6 +1071,8 @@ public final class WalkPreviewService extends Service {
                 + " 手动[横窗=" + landscapeWindowShape + " 竖窗=" + portraitWindowShape
                 + " 后摄=" + rearCameraFacing + "]"
                 + " 镜头=" + rearCameraLens);
+        // 【5.6.5】窗口刚挂上就按当前状态算一次步数徽章：不等下一次 gaitTick（最长 3 秒）
+        updateStepBadge(System.currentTimeMillis());
         reportPreviewState();
     }
 
@@ -1189,6 +1219,11 @@ public final class WalkPreviewService extends Service {
                 int accelCnt = gait.confirmedStepCount();
                 if (stepTick || (accelCnt > lastAccelCountSeen && accelCnt > 0)) {
                     recordAccelStep(now);
+                }
+                // 【5.6.5】硬件计步通道不可用时，把加速度合格步当作今日步数的兜底来源；
+                // 通道 LIVE 时不重复累加（硬件绝对值会对齐，重复只会把数字顶高）。
+                if (stepTick && stepChannel() != StepHealthPolicy.Channel.LIVE) {
+                    onStepObserved(1L, null);
                 }
                 lastAccelCountSeen = accelCnt;
 
@@ -1432,6 +1467,7 @@ public final class WalkPreviewService extends Service {
                 everSteppedTotal++;
                 stepEventQueue.addLast(now);
                 trimStepQueue(now, StepHealthPolicy.MAX_WINDOW_MS);
+                onStepObserved(1L, null);
             }
 
             @Override
@@ -1465,8 +1501,10 @@ public final class WalkPreviewService extends Service {
                 // TYPE_STEP_COUNTER 是累计传感器：values[0]=总步数，按增量计步
                 long total = (long) e.values[0];
                 if (lastTotalSteps < 0L) {
-                    // 首次回调只记基线，不算一步
+                    // 首次回调只记基线，不算一步；但今日步数的基线要在这里建立，
+                    // 否则第一次走完还得等下一次回调才显示
                     lastTotalSteps = total;
+                    onStepObserved(0L, total);
                     return;
                 }
                 if (total > lastTotalSteps) {
@@ -1479,6 +1517,7 @@ public final class WalkPreviewService extends Service {
                         stepEventQueue.addLast(now);
                     }
                     trimStepQueue(now, StepHealthPolicy.MAX_WINDOW_MS);
+                    onStepObserved(delta, total);
                 }
             }
 
@@ -1599,6 +1638,106 @@ public final class WalkPreviewService extends Service {
             n++;
         }
         return n;
+    }
+
+    // ==================== 【5.6.5】今日步数 ====================
+
+    /** 当天 key（本地时区 yyyyMMdd）：跨天即重置今日步数 */
+    private static String stepDayKeyOf(long ms) {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.setTimeInMillis(ms);
+        return String.format(java.util.Locale.US, "%04d%02d%02d",
+                c.get(java.util.Calendar.YEAR),
+                c.get(java.util.Calendar.MONTH) + 1,
+                c.get(java.util.Calendar.DAY_OF_MONTH));
+    }
+
+    /** 从 SP 恢复今日步数；跨天的旧记录直接作废（基线清空，重新建立） */
+    private void loadStepState() {
+        try {
+            stepDayKey = SafePrefs.getString(sp, SP_KEY_STEP_DAY, "");
+            stepBaseTotal = sp.getLong(SP_KEY_STEP_BASE, TodayStepPolicy.NO_BASE);
+            stepAccelToday = sp.getLong(SP_KEY_STEP_ACCEL, 0L);
+        } catch (Throwable t) {
+            stepDayKey = "";
+            stepBaseTotal = TodayStepPolicy.NO_BASE;
+            stepAccelToday = 0L;
+        }
+        long now = System.currentTimeMillis();
+        String today = stepDayKeyOf(now);
+        if (TodayStepPolicy.shouldReset(stepDayKey, today)) {
+            stepDayKey = today;
+            stepBaseTotal = TodayStepPolicy.NO_BASE;
+            stepAccelToday = 0L;
+            flushStepState();
+        }
+        recomputeTodaySteps();
+    }
+
+    /** 把「当天基线 + 加速度累计」落盘（节流由调用方控制） */
+    private void flushStepState() {
+        if (sp == null) return;
+        try {
+            sp.edit()
+                    .putString(SP_KEY_STEP_DAY, stepDayKey)
+                    .putLong(SP_KEY_STEP_BASE, stepBaseTotal)
+                    .putLong(SP_KEY_STEP_ACCEL, stepAccelToday)
+                    .apply();
+            lastStepFlushTs = System.currentTimeMillis();
+        } catch (Throwable t) {
+            DiagLog.logThrottled("step.state", "save", "[step] 今日步数落盘失败: " + t.getMessage(),
+                    5_000L, 60_000L);
+        }
+    }
+
+    private void recomputeTodaySteps() {
+        // stepHwTotalLatest < 0 时原样交给策略层（它把负数按「拿不到」处理）
+        todayStepsCache = TodayStepPolicy.today(
+                stepHwTotalLatest, stepBaseTotal, stepAccelToday);
+    }
+
+    /**
+     * 记录一次「步」并更新今日总量。
+     *
+     * @param delta  本次新增步数（DETECTOR 恒为 1；COUNTER 为增量，可为 0）
+     * @param hwTotal STEP_COUNTER 的绝对值；null 表示这次不是硬件累计通道报的
+     */
+    private void onStepObserved(long delta, Long hwTotal) {
+        long now = System.currentTimeMillis();
+        String today = stepDayKeyOf(now);
+        if (TodayStepPolicy.shouldReset(stepDayKey, today)) {
+            stepDayKey = today;
+            stepBaseTotal = TodayStepPolicy.NO_BASE;
+            stepAccelToday = 0L;
+        }
+        if (hwTotal != null) {
+            stepHwTotalLatest = hwTotal;
+            // 基线未建立 / 设备重启导致回落：以当前值为新起点
+            if (stepBaseTotal == TodayStepPolicy.NO_BASE || hwTotal < stepBaseTotal) {
+                stepBaseTotal = TodayStepPolicy.freshBase(hwTotal);
+            }
+        } else if (delta > 0L) {
+            stepAccelToday += delta;
+        }
+        if (delta > 0L) lastMotionStepTs = now;
+        recomputeTodaySteps();
+        if (now - lastStepFlushTs > STEP_STATE_FLUSH_MS) flushStepState();
+    }
+
+    /**
+     * 把今日步数画到 HUD 下方的小框里；静止超过 [STEP_BADGE_HIDE_MS] 就藏起来。
+     * 只在预览正在显示时下发，不显示时什么也不做（避免无意义的 View 调用）。
+     */
+    private void updateStepBadge(long now) {
+        if (overlay == null || !overlay.getShowing()) return;
+        // 【5.6.5 步数奖励】描边颜色 / 小红旗跟今日步数全天绑定：
+        // 这里每 tick 下发一次绝对值，由悬浮窗自己按档位换色（同值早退，零开销）。
+        overlay.setTodaySteps(todayStepsCache);
+        boolean fresh = lastMotionStepTs > 0L && now - lastMotionStepTs <= STEP_BADGE_HIDE_MS;
+        String text = (fresh && todayStepsCache > 0L)
+                ? "今日 " + TodayStepPolicy.format(todayStepsCache) + " 步"
+                : null;
+        overlay.setStepText(text);
     }
 
     /** 当前连续步流已持续的毫秒数；未起步返回 0 */
@@ -2155,6 +2294,7 @@ public final class WalkPreviewService extends Service {
         }
         stopGait();
         stopHeartbeat();
+        flushStepState();
         // 【5.6.0】日志改成批量落盘后，退出前必须把缓冲刷下去，否则最后几条（
         // 往往正是「为什么被拦/为什么收起」的原因）会留在内存里随进程消失。
         DiagLog.flushNow();

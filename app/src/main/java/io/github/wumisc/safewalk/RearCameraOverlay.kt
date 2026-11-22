@@ -9,6 +9,8 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.graphics.SurfaceTexture
@@ -39,6 +41,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.jvm.JvmOverloads
 
@@ -133,6 +136,18 @@ class RearCameraOverlay(
         const val HUD_TEXT_SIZE_MIN_SP = 11
         const val HUD_TEXT_SIZE_MAX_SP = 20
         const val HUD_TEXT_SIZE_DEFAULT_SP = 13
+
+        /** 【5.6.5】步数徽章默认字号（sp）：比 HUD 标签小一档，不抢主体 */
+        const val STEP_BADGE_TEXT_SIZE_DEFAULT_SP = 12
+        /** 【5.6.5】步数徽章字号下限（sp）：再小在高 DPI 屏上读不清 */
+        const val STEP_BADGE_TEXT_SIZE_MIN_SP = 9
+
+        /** 【5.6.5 步数奖励】小红旗尺寸（dp）：够小不挡路况，够大能看出是旗子 */
+        const val STEP_FLAG_WIDTH_DP = 30
+        const val STEP_FLAG_HEIGHT_DP = 22
+
+        /** 小红旗 View 的 tag：UI 自动化 / 单测用它定位，不依赖子节点下标 */
+        const val TAG_STEP_FLAG = "stepFlag"
 
         /** 取景范围 0~100：见 [Style.framingPct] */
         const val FRAMING_MIN_PCT = 0
@@ -372,6 +387,32 @@ class RearCameraOverlay(
     private var actualBufferH = 0
     /** 增强对比度开启时显示的 HUD 文字层；关闭时置 GONE，不移除（避免频繁重建） */
     private var hudView: HudTextView? = null
+    /**
+     * 【5.6.5 今日步数】HUD 文字下方的一行「今日 N,NNN 步」徽章。
+     *
+     * 与 [hudView] 同款描边/衬底（[HudTextView]），字号小一档；放在同一个垂直列里，
+     * 静止时由服务层下发空文案隐藏，走路时才出现。
+     */
+    private var stepBadge: HudTextView? = null
+    /**
+     * HUD 垂直列（文字 + 步数徽章）。
+     *
+     * 旋转只转这一列，而不是分别转两个子 View —— 列内相对位置（步数在文字下方）
+     * 在画面旋转后依然成立，不会出现「文字转了、步数没转」的错位。
+     */
+    private var hudColumn: LinearLayout? = null
+    /** 今日步数文案；null / 空串 = 隐藏徽章。由 [setStepText] 写入 */
+    private var stepText: String? = null
+    /**
+     * 【5.6.5 步数奖励】今日步数本身（0 = 还没数据）。
+     *
+     * 与 [stepText] 分开存：文案会因「静止 60 秒」被服务层下发成 null 而隐藏，
+     * 但**描边颜色是全天成绩**，不该跟着一起退回白色 —— 停下歇会儿就把奖励色收走，
+     * 反而像「走了一天白走了」。[setTodaySteps] 只更新这个，不碰文案可见性。
+     */
+    private var todaySteps: Long = 0L
+    /** ≥ 2 万步的奖励小红旗（窗口左上角内侧，自绘） */
+    private var stepFlag: StepFlagView? = null
 
     /**
      * 【5.1.0 画面增强】色矩阵兜底路径用的 Paint。
@@ -1070,8 +1111,11 @@ class RearCameraOverlay(
             }
         }
         rootView = null
+        stepFlag = null
         rotLayer = null
         hudView = null
+        stepBadge = null
+        hudColumn = null
         tv = null
         surfaceTexture = null
         // 老 View 连同它的 RenderEffect 一起被丢掉，记录也跟着清空，
@@ -1099,6 +1143,20 @@ class RearCameraOverlay(
                 clipToPadding = false
                 // HUD 文字层：底部居中，带描边/阴影/半透明深色衬底
                 hudView = buildHudView()
+                // 【5.6.5】步数徽章：HUD 下方独立一行，独占一个小圆角框
+                stepBadge = buildStepBadge()
+                hudColumn = LinearLayout(ctx.applicationContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    clipChildren = false
+                    clipToPadding = false
+                    addView(hudView, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT))
+                    addView(stepBadge, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+                }
                 val hudLp = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1109,13 +1167,27 @@ class RearCameraOverlay(
                     addView(texture, FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT))
-                    // HUD 放进旋转层，跟随画面一起转（5.4.2）
-                    addView(hudView, hudLp)
+                    // HUD 列放进旋转层，跟随画面一起转（5.4.2）
+                    addView(hudColumn, hudLp)
                 }
                 addView(rotLayer, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     Gravity.CENTER))
+                // 【5.6.5 步数奖励】小红旗挂在左上角内侧：贴边太近会被圆角裁掉一截，
+                // 所以留 dp(10) 内缩。刻意挂在 root 而不是 rotLayer ——
+                // 它要「直立」，跟着画面旋转 90° 就成了一面躺着的旗。
+                // 挂在 rotLayer 之后，保证 root 第 0 个子仍是 rotLayer（契约测试依赖这个顺序）。
+                stepFlag = StepFlagView(ctx.applicationContext).apply {
+                    visibility = View.GONE
+                    tag = TAG_STEP_FLAG
+                }
+                addView(stepFlag, FrameLayout.LayoutParams(
+                    dp(STEP_FLAG_WIDTH_DP), dp(STEP_FLAG_HEIGHT_DP),
+                    Gravity.TOP or Gravity.START).apply {
+                    leftMargin = dp(10)
+                    topMargin = dp(10)
+                })
             }
         }
 
@@ -1167,9 +1239,12 @@ class RearCameraOverlay(
             // 没挂上去的 View 必须丢掉：留着它，下一轮 show 会发现
             // 「tv 非空但 parent 为空」又去重建，每 2 秒抖一次，白折腾
             rootView = null
+            stepFlag = null
             rotLayer = null
             tv = null
             hudView = null
+            stepBadge = null
+            hudColumn = null
             surfaceTexture = null
         }
         // 【5.3.1 姿态】窗口挂上之后才开始测姿态：挂之前测出来也改不了形状，
@@ -1248,6 +1323,134 @@ class RearCameraOverlay(
     private fun buildHudView(): HudTextView = HudTextView(ctx.applicationContext)
 
     /**
+     * 【5.6.5】步数徽章：和 HUD 文字同款描边/衬底，字号小一档、内边距更紧凑，
+     * 视觉上像「挂在标签下面的一个小框」，而不是第二行正文。
+     */
+    private fun buildStepBadge(): HudTextView = HudTextView(ctx.applicationContext).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, STEP_BADGE_TEXT_SIZE_DEFAULT_SP.toFloat())
+        setPadding(dp(10), dp(5), dp(10), dp(5))
+        visibility = View.GONE
+    }
+
+    /**
+     * 【5.6.5 步数奖励】小红旗：≥ 2 万步时挂在窗口左上角，与「国旗红」描边配套。
+     *
+     * 为什么自绘而不是写 "🇨🇳"：区域旗帜符号在部分 ROM 的 emoji 字体里没有字形，
+     * 会退化成「CN」两个字母或豆腐块；它挂在成绩奖励上，显示错比不显示更糟。
+     * 自绘只有杆、旗面、五颗星三笔，任何机型都一样。
+     *
+     * 尺寸小（30×22dp）时不做严格制式比例，只保证「一眼认得出是红旗」。
+     */
+    private inner class StepFlagView(context: Context) : View(context) {
+        private val polePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFBDBDBD.toInt()
+            style = Paint.Style.STROKE
+            strokeWidth = dpf(1.5f)
+            strokeCap = Paint.Cap.ROUND
+        }
+        private val flagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = StepBorderPolicy.COLOR_FLAG_RED
+        }
+        private val starPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFDE00.toInt()
+        }
+        private val flagRect = RectF()
+        private val star = Path()
+
+        override fun onDraw(canvas: Canvas) {
+            val poleX = dpf(2.0f)
+            val top = dpf(2.0f)
+            val bottom = height.toFloat() - dpf(2.0f)
+            canvas.drawLine(poleX, top, poleX, bottom, polePaint)
+            // 旗面从杆右侧铺到右边界，底部留出下缘（旗子下半截是空的，像真的飘着）
+            flagRect.set(poleX, top, width.toFloat() - dpf(1.0f),
+                    height.toFloat() - dpf(6.0f))
+            canvas.drawRoundRect(flagRect, dpf(2.0f), dpf(2.0f), flagPaint)
+            val fw = flagRect.width()
+            val fh = flagRect.height()
+            // 一大四小：位置按国旗构图简化
+            drawStar(canvas, flagRect.left + fw * 0.24f, flagRect.top + fh * 0.32f, fh * 0.20f)
+            val sr = fh * 0.10f
+            drawStar(canvas, flagRect.left + fw * 0.46f, flagRect.top + fh * 0.12f, sr)
+            drawStar(canvas, flagRect.left + fw * 0.56f, flagRect.top + fh * 0.28f, sr)
+            drawStar(canvas, flagRect.left + fw * 0.56f, flagRect.top + fh * 0.54f, sr)
+            drawStar(canvas, flagRect.left + fw * 0.46f, flagRect.top + fh * 0.70f, sr)
+        }
+
+        /** 五角星：外接圆半径 [r]，内半径按 0.38 取，起点朝上 */
+        private fun drawStar(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+            star.reset()
+            val inner = r * 0.38f
+            for (i in 0 until 10) {
+                val rad = Math.toRadians((-90 + i * 36).toDouble())
+                val rr = if (i % 2 == 0) r else inner
+                val x = cx + (rr * Math.cos(rad)).toFloat()
+                val y = cy + (rr * Math.sin(rad)).toFloat()
+                if (i == 0) star.moveTo(x, y) else star.lineTo(x, y)
+            }
+            star.close()
+            canvas.drawPath(star, starPaint)
+        }
+    }
+
+    /**
+     * 【5.6.5 步数奖励】服务层下发今日步数（0 = 无数据 / 还不到档）。
+     *
+     * 只影响**描边颜色**与小红旗，不影响步数徽章的显隐 —— 后者仍由 [setStepText] 控制。
+     * 档位变了才写一条日志，逐步调用不刷屏。
+     */
+    fun setTodaySteps(steps: Long) {
+        val v = if (steps < 0L) 0L else steps
+        if (todaySteps == v) return
+        val oldTier = StepBorderPolicy.tier(todaySteps)
+        todaySteps = v
+        applyBorder()
+        val newTier = StepBorderPolicy.tier(v)
+        if (newTier != oldTier) {
+            DiagLog.log("[step] 描边奖励档位 | 今日=" + TodayStepPolicy.format(v)
+                    + " → " + StepBorderPolicy.tierName(newTier))
+        }
+    }
+
+    /** 按当前 [todaySteps] 决定小红旗显隐；[allowed]=false 表示当前模式不放奖（全屏 / 无描边） */
+    private fun applyStepFlag(allowed: Boolean) {
+        val flag = stepFlag ?: return
+        val show = allowed && StepBorderPolicy.showFlag(todaySteps)
+        val vis = if (show) View.VISIBLE else View.GONE
+        if (flag.visibility != vis) flag.visibility = vis
+    }
+
+    /**
+     * 【5.6.5】服务层下发今日步数文案（null / 空串 = 隐藏）。
+     *
+     * 只存值并立即刷新样式，不重建视图、不碰相机；窗口若还没挂上，
+     * 下次 [apply] 里的 [applyHudStyle] 会把它一起应用。
+     */
+    fun setStepText(text: String?) {
+        if (stepText == text) return
+        stepText = text
+        applyHudStyle()
+    }
+
+    /** 把 [stepText] 应用到徽章：可见性、文案、字号（跟随 HUD 字号小一档）与描边强度 */
+    private fun applyStepBadge() {
+        val badge = stepBadge ?: return
+        val text = stepText
+        if (text.isNullOrBlank()) {
+            badge.visibility = View.GONE
+            return
+        }
+        badge.visibility = View.VISIBLE
+        if (badge.text?.toString() != text) badge.text = text
+        val sp = (style.hudTextSizeSp - 1).coerceAtLeast(STEP_BADGE_TEXT_SIZE_MIN_SP)
+        val currentSp = badge.textSize / ctx.resources.displayMetrics.scaledDensity
+        if (Math.abs(currentSp - sp) > 0.5f) {
+            badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat())
+        }
+        badge.level = if (style.enhanceContrast) style.contrastLevel else 0
+    }
+
+    /**
      * 把当前 style 应用到 HUD 文字层。
      *
      * 【4.9.0 语义变更】可见性只由 [Style.hudText] 决定，不再由 [Style.enhanceContrast]
@@ -1260,17 +1463,22 @@ class RearCameraOverlay(
     private fun applyHudStyle() {
         val hud = hudView ?: return
         val text = style.hudText
+        // 【5.6.5】文字与步数是同一个列：文字关掉时整列一起收，不留一个孤零零的步数框。
         if (text.isNullOrBlank()) {
             hud.visibility = View.GONE
+            stepBadge?.visibility = View.GONE
+            hudColumn?.visibility = View.GONE
             return
         }
         hud.visibility = View.VISIBLE
+        hudColumn?.visibility = View.VISIBLE
         if (hud.text?.toString() != text) hud.text = text
         val currentSp = hud.textSize / ctx.resources.displayMetrics.scaledDensity
         if (Math.abs(currentSp - style.hudTextSizeSp) > 0.5f) {
             hud.setTextSize(TypedValue.COMPLEX_UNIT_SP, style.hudTextSizeSp.toFloat())
         }
         hud.level = if (style.enhanceContrast) style.contrastLevel else 0
+        applyStepBadge()
     }
 
     /**
@@ -1392,7 +1600,7 @@ class RearCameraOverlay(
             }
             layer.rotation = deg.toFloat()
             // 5.4.3 HUD 位置跟随旋转层换边，但文字反向旋转保持正立可读
-            hudView?.rotation = -deg.toFloat()
+            hudColumn?.rotation = -deg.toFloat()
             // 矩阵一律不碰。系统把 buffer 拉伸铺满布局框，铺满比例由
             // (boxW/srcW, boxH/srcH) 决定；源与框的比例本来就接近（1920:1080 对 845:488），
             // 2~3% 的非等比拉伸肉眼看不出来，换来的是一条没有任何坐标歧义的渲染路径。
@@ -1425,7 +1633,7 @@ class RearCameraOverlay(
             rootView?.requestLayout()
         }
         layer.rotation = lock.layerRot
-        hudView?.rotation = lock.hudRot
+        hudColumn?.rotation = lock.hudRot
         view.setTransform(null)
         view.pivotX = lock.pivotX
         view.pivotY = lock.pivotY
@@ -1465,7 +1673,7 @@ class RearCameraOverlay(
             deg = layer.rotation.toInt(),
             boxW = lp.width, boxH = lp.height,
             layerRot = layer.rotation,
-            hudRot = hudView?.rotation ?: 0f,
+            hudRot = hudColumn?.rotation ?: 0f,
             pivotX = view.pivotX, pivotY = view.pivotY,
             scaleX = view.scaleX, scaleY = view.scaleY,
             bufferW = actualBufferW, bufferH = actualBufferH,
@@ -1838,15 +2046,19 @@ class RearCameraOverlay(
         // 看起来像「画面没铺满」，反而像故障。
         if (style.mode != MODE_SMALLWINDOW || style.borderDp <= 0) {
             root.foreground = null
+            applyStepFlag(false)
             return
         }
+        // 【5.6.5 步数奖励】描边颜色跟今日步数走（<3000 仍是原来的白色）。
+        // 颜色集中在 [StepBorderPolicy]，这里只问「今天该是什么色」，不在渲染层写阈值。
         val d = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             // 圆角跟窗口裁剪保持一致，否则描边会在圆角处露出尖角
             cornerRadius = if (style.mode == MODE_SMALLWINDOW) dp(24).toFloat() else 0f
-            setStroke(dp(style.borderDp), Color.argb(204, 255, 255, 255))
+            setStroke(dp(style.borderDp), StepBorderPolicy.borderColor(todaySteps))
         }
         root.foreground = d
+        applyStepFlag(true)
     }
 
     /**
@@ -2083,6 +2295,9 @@ class RearCameraOverlay(
 
     private fun dp(v: Int): Int = Math.round(v * ctx.resources.displayMetrics.density)
 
+    /** 浮点 dp：自绘小图标的线宽、圆角需要小数，[dp] 的整数四舍五入会把 1.5dp 变成 2dp */
+    private fun dpf(v: Float): Float = v * ctx.resources.displayMetrics.density
+
     /**
      * 整屏像素尺寸。
      *
@@ -2119,8 +2334,11 @@ class RearCameraOverlay(
             }
         }
         rootView = null
+        stepFlag = null
         rotLayer = null
         hudView = null
+        stepBadge = null
+        hudColumn = null
         tv = null
         surfaceTexture = null
         // 【5.4.1】切断跨会话污染：overlay 在服务里是单例，hide() 只清 View。

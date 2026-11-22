@@ -375,7 +375,7 @@ public class TorchWhiteoutContractTest {
         // 四个结构 token：全文与去注释计数一致
         assertEquals("A8 全文 invalidateOutline 须恰好 3 次", 3, countOccurrences(codeOnly, "invalidateOutline"));
         assertEquals("A8 全文 setDefaultBufferSize( 须恰好 1 次", 1, countOccurrences(codeOnly, "setDefaultBufferSize("));
-        assertEquals("A8 全文 hudView?.rotation = -deg 须恰好 1 次", 1, countOccurrences(codeOnly, "hudView?.rotation = -deg"));
+        assertEquals("A8 全文 hudColumn?.rotation = -deg 须恰好 1 次", 1, countOccurrences(codeOnly, "hudColumn?.rotation = -deg"));
         assertEquals("A8 全文 addView(hudView 须恰好 1 次", 1, countOccurrences(codeOnly, "addView(hudView"));
         // FLASH_MODE_TORCH：全文口径锁基线 8（含注释），去注释口径锁唯一真实下发点 1
         assertEquals("A8 全文 FLASH_MODE_TORCH 须恰好 8 次（与实现报告 SC4 基线一致，未新增 token）",

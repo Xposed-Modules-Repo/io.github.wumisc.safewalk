@@ -376,8 +376,8 @@ public class LandscapeNoRotateContractTest {
                 3, countOccurrences(codeOnly, "invalidateOutline"));
         assertEquals("A4 setDefaultBufferSize( 须恰好 1 次",
                 1, countOccurrences(codeOnly, "setDefaultBufferSize("));
-        assertEquals("A4 hudView?.rotation = -deg 须恰好 1 次",
-                1, countOccurrences(codeOnly, "hudView?.rotation = -deg"));
+        assertEquals("A4 hudColumn?.rotation = -deg 须恰好 1 次",
+                1, countOccurrences(codeOnly, "hudColumn?.rotation = -deg"));
         assertEquals("A4 addView(hudView 须恰好 1 次",
                 1, countOccurrences(codeOnly, "addView(hudView"));
         assertEquals("A4 全文 FLASH_MODE_TORCH 须恰好 8 次（基线，未新增 token）",

@@ -395,11 +395,11 @@ public class FixedCameraBuffer544Test {
         assertTrue("须保留正方形防御 if (w == h)", framingBody.contains("if (w == h)"));
     }
 
-    /** C5 意图：5.4.2 HUD 反向旋转 hudView?.rotation = -deg.toFloat() 仍在。 */
+    /** C5 意图：5.4.2 HUD 反向旋转 hudColumn?.rotation = -deg.toFloat() 仍在。 */
     @Test
     public void c5_hudInverseRotationIntact() {
-        assertTrue("须保留 hudView?.rotation = -deg.toFloat()",
-                framingBody.contains("hudView?.rotation = -deg.toFloat()"));
+        assertTrue("须保留 hudColumn?.rotation = -deg.toFloat()",
+                framingBody.contains("hudColumn?.rotation = -deg.toFloat()"));
     }
 
     /** C6 意图：5.4.0 setTransform(null) 矩阵路线原样（不得改走 setTransform(matrix)）。 */

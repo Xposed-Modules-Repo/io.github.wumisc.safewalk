@@ -360,12 +360,12 @@ public class LandscapeFishHeadRightContractTest {
                 applyFramingCode.contains("val boxH = if (swap) w else h"));
         assertTrue("A3 layer 旋转须取 deg（layer.rotation = deg.toFloat()）",
                 applyFramingCode.contains("layer.rotation = deg.toFloat()"));
-        assertTrue("A3 HUD 反向角须取 -deg（hudView?.rotation = -deg.toFloat()）",
-                applyFramingCode.contains("hudView?.rotation = -deg.toFloat()"));
+        assertTrue("A3 HUD 反向角须取 -deg（hudColumn?.rotation = -deg.toFloat()）",
+                applyFramingCode.contains("hudColumn?.rotation = -deg.toFloat()"));
         assertFalse("A3 负向：不得写死 layer 旋转 90（角度必须随 deg 变量）",
                 applyFramingCode.contains("layer.rotation = 90"));
         assertFalse("A3 负向：不得写死 HUD 反向角 -90（必须随 -deg）",
-                applyFramingCode.contains("hudView?.rotation = -90"));
+                applyFramingCode.contains("hudColumn?.rotation = -90"));
     }
 
     /** A4 意图：版本号升到 86/5.5.1，旧号 85/5.5.0 清干净。 */
@@ -384,8 +384,8 @@ public class LandscapeFishHeadRightContractTest {
     public void a5_hardBoundaryTokenCountsUnchanged() {
         assertEquals("A5 invalidateOutline 须恰好 3 次", 3, countOccurrences(codeOnly, "invalidateOutline"));
         assertEquals("A5 setDefaultBufferSize( 须恰好 1 次", 1, countOccurrences(codeOnly, "setDefaultBufferSize("));
-        assertEquals("A5 hudView?.rotation = -deg 须恰好 1 次",
-                1, countOccurrences(codeOnly, "hudView?.rotation = -deg"));
+        assertEquals("A5 hudColumn?.rotation = -deg 须恰好 1 次",
+                1, countOccurrences(codeOnly, "hudColumn?.rotation = -deg"));
         assertEquals("A5 addView(hudView 须恰好 1 次", 1, countOccurrences(codeOnly, "addView(hudView"));
         assertEquals("A5 全文 FLASH_MODE_TORCH 须恰好 8 次（基线）",
                 8, countOccurrences(overlaySrc, "FLASH_MODE_TORCH"));

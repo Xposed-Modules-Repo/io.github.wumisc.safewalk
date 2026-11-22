@@ -22,7 +22,7 @@ import org.junit.Test;
  * 本文件全部为<b>源码契约测试</b>：直接读取 {@code RearCameraOverlay.kt} 文本，
  * 按花括号配平截取 {@code rootView} / {@code rotLayer} 两个 apply 块，锁住四处改法：
  * <ol>
- *   <li>HUD 的 {@code addView(hudView, hudLp)} 归属 {@code rotLayer} 块内，
+ *   <li>HUD 的 {@code addView(hudColumn, hudLp)} 归属 {@code rotLayer} 块内，
  *       不再出现在 {@code rootView} 的直属层级；</li>
  *   <li>该调用在 {@code addView(texture, ...)} <b>之后</b>（FrameLayout 后加者在上，HUD 盖住画面）；</li>
  *   <li>{@code hudView = buildHudView()} 与 {@code hudLp} 的 Gravity / bottomMargin 参数一字未动；</li>
@@ -214,8 +214,8 @@ public class HudRotationContractTest {
     @Test
     public void a1_hudAddedInsideRotLayerBlock() {
         String rotBlock = blockOf(codeOnly, ROT_SIG);
-        assertTrue("A1 addView(hudView, hudLp) 必须位于 rotLayer 的 apply 块内",
-                rotBlock.contains("addView(hudView, hudLp)"));
+        assertTrue("A1 addView(hudColumn, hudLp) 必须位于 rotLayer 的 apply 块内",
+                rotBlock.contains("addView(hudColumn, hudLp)"));
     }
 
     /** A2 意图：rootView 直属层级（切除 rotLayer 子块后）不得再直接 addView HUD。 */
@@ -223,8 +223,10 @@ public class HudRotationContractTest {
     public void a2_hudNotDirectChildOfRootView() {
         String rootBlock = blockOf(codeOnly, ROOT_SIG);
         String rootDirect = withoutNestedBlock(rootBlock, ROT_SIG);
-        assertFalse("A2 HUD 不得再挂在 rootView 直属层级（必须已移进 rotLayer）",
-                rootDirect.contains("addView(hudView"));
+        // 【5.6.5】root 直属新增了奖励小红旗（addView(stepFlag,...)），
+        // 但 HUD 列本身仍必须在 rotLayer 里：这里只锁「hudColumn 不得由 root 直接挂」。
+        assertFalse("A2 hudColumn 不得再挂在 rootView 直属层级（必须已移进 rotLayer）",
+                rootDirect.contains("addView(hudColumn"));
     }
 
     /** A3 意图：rootView 仍把 rotLayer 加入窗口根，层级链未断（HUD 的新父仍是窗口根子树）。 */
@@ -242,9 +244,11 @@ public class HudRotationContractTest {
     public void b4_hudAddedAfterTexture() {
         String rotBlock = blockOf(codeOnly, ROT_SIG);
         int tex = rotBlock.indexOf("addView(texture");
-        int hud = rotBlock.indexOf("addView(hudView");
+        // 【5.6.5】HUD 文字层包进了垂直列 hudColumn（文字 + 步数徽章），
+        // 挂载点因此变成 addView(hudColumn, hudLp)，z 序要求不变。
+        int hud = rotBlock.indexOf("addView(hudColumn, hudLp)");
         assertTrue("B4 rotLayer 内须先有 addView(texture,...)（前置条件）", tex >= 0);
-        assertTrue("B4 addView(hudView,...) 必须在 addView(texture,...) 之后（HUD 盖在画面上）",
+        assertTrue("B4 addView(hudColumn,...) 必须在 addView(texture,...) 之后（HUD 盖在画面上）",
                 hud > tex);
     }
 
@@ -337,7 +341,10 @@ public class HudRotationContractTest {
     @Test
     public void e2_singleHudAddInsideRotLayer() {
         String rotBlock = blockOf(codeOnly, ROT_SIG);
-        assertEquals("E2 rotLayer 块内 addView(hudView 必须恰好 1 个",
-                1, countOccurrences(rotBlock, "addView(hudView"));
+        assertEquals("E2 rotLayer 块内 addView(hudColumn, hudLp) 必须恰好 1 个",
+                1, countOccurrences(rotBlock, "addView(hudColumn, hudLp)"));
+        // 防回归：HUD 文字层只由 hudColumn 内部挂载一次（徽章同理），不会重复 addView
+        assertEquals("E2b hudColumn 内 addView(hudView 必须恰好 1 个",
+                1, countOccurrences(codeOnly, "addView(hudView,"));
     }
 }

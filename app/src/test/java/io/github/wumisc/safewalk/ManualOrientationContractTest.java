@@ -419,7 +419,7 @@ public class ManualOrientationContractTest {
         assertTrue("A4 layer.rotation 仍随 deg 变量（未写死手动角）",
                 applyFramingCode.contains("layer.rotation = deg.toFloat()"));
         assertTrue("A4 HUD 反向角仍随 -deg（未写死手动角）",
-                applyFramingCode.contains("hudView?.rotation = -deg.toFloat()"));
+                applyFramingCode.contains("hudColumn?.rotation = -deg.toFloat()"));
     }
 
     /** A5 意图：手动窗口形状覆盖只在 MODE_SMALLWINDOW 内，按系统朝向选组，auto 落回原判据。 */

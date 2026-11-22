@@ -362,7 +362,7 @@ public class PortraitRestoreContractTest {
         // 四个结构 token：全文与去注释计数一致
         assertEquals("A6 invalidateOutline 须恰好 3 次", 3, countOccurrences(codeOnly, "invalidateOutline"));
         assertEquals("A6 setDefaultBufferSize( 须恰好 1 次", 1, countOccurrences(codeOnly, "setDefaultBufferSize("));
-        assertEquals("A6 hudView?.rotation = -deg 须恰好 1 次", 1, countOccurrences(codeOnly, "hudView?.rotation = -deg"));
+        assertEquals("A6 hudColumn?.rotation = -deg 须恰好 1 次", 1, countOccurrences(codeOnly, "hudColumn?.rotation = -deg"));
         assertEquals("A6 addView(hudView 须恰好 1 次", 1, countOccurrences(codeOnly, "addView(hudView"));
         // 闪光灯/曝光 token：全文锁基线 8/2，去注释锁真实下发点唯一 1/1
         assertEquals("A6 全文 FLASH_MODE_TORCH 须恰好 8 次（基线，未新增 token）",

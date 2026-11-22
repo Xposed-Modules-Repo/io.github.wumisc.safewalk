@@ -644,8 +644,8 @@ public class LandscapeRotationContractTest {
         assertTrue("A6 D4 正方形防御 if (w == h)", framingBody.contains("if (w == h)"));
         assertTrue("A6 D5 方向公式 alignToWindow(appliedRotDeg, true)",
                 framingBody.contains("PreviewOrientationPolicy.alignToWindow(appliedRotDeg, true)"));
-        assertTrue("A6 D6 HUD 反向 hudView?.rotation = -deg.toFloat()",
-                framingBody.contains("hudView?.rotation = -deg.toFloat()"));
+        assertTrue("A6 D6 HUD 反向 hudColumn?.rotation = -deg.toFloat()",
+                framingBody.contains("hudColumn?.rotation = -deg.toFloat()"));
         assertFalse("A6 HUD 不得改成非空断言 hudView!!", framingBody.contains("hudView!!"));
         assertTrue("A6 5.4.4 buffer minOf 原文",
                 codeOnly.contains("actualBufferW = minOf(bw0, bh0)"));

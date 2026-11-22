@@ -651,7 +651,7 @@ public class DirectionLockContractTest {
                 && replayBody.contains("lastWindowH = lock.winH"));
         assertTrue("A18 恢复 rotDeg", replayBody.contains("appliedRotDeg = lock.rotDeg"));
         assertTrue("A18 恢复角度对", replayBody.contains("layer.rotation = lock.layerRot")
-                && replayBody.contains("hudView?.rotation = lock.hudRot"));
+                && replayBody.contains("hudColumn?.rotation = lock.hudRot"));
         assertTrue("A18 恢复锚点/缩放", replayBody.contains("view.pivotX = lock.pivotX")
                 && replayBody.contains("view.scaleX = lock.scaleX"));
         assertTrue("A18 恢复 buffer", replayBody.contains("actualBufferW = lock.bufferW")
@@ -847,8 +847,8 @@ public class DirectionLockContractTest {
     public void c6_hudInverseRotationIntact() {
         Pattern adjacent = Pattern.compile(
                 "layer\\.rotation\\s*=\\s*deg\\.toFloat\\(\\)\\s*"
-                + "hudView\\?\\.rotation\\s*=\\s*-deg\\.toFloat\\(\\)");
-        assertTrue("C6 hudView?.rotation = -deg.toFloat() 须紧随 layer.rotation",
+                + "hudColumn\\?\\.rotation\\s*=\\s*-deg\\.toFloat\\(\\)");
+        assertTrue("C6 hudColumn?.rotation = -deg.toFloat() 须紧随 layer.rotation",
                 adjacent.matcher(framingBody).find());
         assertFalse("C6 不得改成非空断言 hudView!!", framingBody.contains("hudView!!"));
     }
