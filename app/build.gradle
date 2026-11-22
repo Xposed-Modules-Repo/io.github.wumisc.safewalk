@@ -23,8 +23,8 @@ android {
         // miuix-blur 的 AGSL RuntimeShader 要 Android 13+，minSdk 提到 33
         minSdk 33
         targetSdk 35
-        versionCode 93
-        versionName "5.6.6"
+        versionCode 95
+        versionName "5.6.8"
     }
 
     compileOptions {
@@ -64,7 +64,14 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false  // Xposed hook 依赖固定类名/反射，混淆会破坏注入，必须关闭
+            // 【5.6.8 包体裁剪】dex 曾占 33.5MB：release 一直没开 shrink，
+            // Compose / Material / miuix 里没用到的代码全打进了包。
+            // 现在只做 shrink、不混淆（见 proguard-rules.pro 的 -dontobfuscate）：
+            // 体积砍半的同时，类名/反射行为与 5.6.7 完全一致，风险最低。
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
             // 【私有密钥】有 keystore.properties 时用项目自有 release 密钥；
             // 缺失（他人 clone）则回退 debug 签名，保证可编译。
             signingConfig keystorePropsFile.exists() ? signingConfigs.release : signingConfigs.debug

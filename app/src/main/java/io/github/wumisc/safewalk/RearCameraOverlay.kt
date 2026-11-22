@@ -421,6 +421,16 @@ class RearCameraOverlay(
      * 不能因为不想要奖励就把数字也一起拿掉。
      */
     private var stepRewardEnabled: Boolean = true
+    /**
+     * 【5.6.7 功耗】描边 drawable 缓存。
+     *
+     * 旧写法每次 applyBorder 都 new 一个 GradientDrawable 并赋给 foreground：
+     * 步数每涨一步就要重建一次（走路时 1~2 次/秒），一天几千次无意义分配，
+     * 还会让 WindowManager 重新合成前景层。现在只在「宽度 / 颜色」真变了才重建。
+     */
+    private var borderDrawable: GradientDrawable? = null
+    /** 缓存键：`宽度dp#颜色`，任一项变化才重建 */
+    private var borderKey: String = ""
 
     /**
      * 【5.1.0 画面增强】色矩阵兜底路径用的 Paint。
@@ -1120,6 +1130,8 @@ class RearCameraOverlay(
         }
         rootView = null
         stepFlag = null
+        borderDrawable = null
+        borderKey = ""
         rotLayer = null
         hudView = null
         stepBadge = null
@@ -1284,7 +1296,11 @@ class RearCameraOverlay(
         /** 0~100；写入时立即重算描边/阴影/衬底并 invalidate */
         var level: Int = 50
             set(value) {
-                field = value.coerceIn(0, 100)
+                val v = value.coerceIn(0, 100)
+                // 【5.6.7 功耗】同值早退：步数每变一次就会重设 level，不比较的话
+                // 每一步都要重算描边/衬底并 invalidate 一次，静止看画面时纯属白烧电。
+                if (field == v) return
+                field = v
                 applyLevel()
             }
 
@@ -1419,9 +1435,11 @@ class RearCameraOverlay(
         if (todaySteps == v) return
         val oldTier = StepBorderPolicy.tier(todaySteps)
         todaySteps = v
-        applyBorder()
         val newTier = StepBorderPolicy.tier(v)
+        // 【5.6.7 功耗】档位没变就不碰描边：步数每涨一步都重建一次 GradientDrawable
+        // 是纯浪费。颜色只在跨过 3000/8000/20000/30000 时才会变。
         if (newTier != oldTier) {
+            applyBorder()
             DiagLog.log("[step] 描边奖励档位 | 今日=" + TodayStepPolicy.format(v)
                     + " → " + StepBorderPolicy.tierName(newTier))
         }
@@ -1452,10 +1470,10 @@ class RearCameraOverlay(
         val badge = stepBadge ?: return
         val text = stepText
         if (text.isNullOrBlank()) {
-            badge.visibility = View.GONE
+            if (badge.visibility != View.GONE) badge.visibility = View.GONE
             return
         }
-        badge.visibility = View.VISIBLE
+        if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
         if (badge.text?.toString() != text) badge.text = text
         val sp = (style.hudTextSizeSp - 1).coerceAtLeast(STEP_BADGE_TEXT_SIZE_MIN_SP)
         val currentSp = badge.textSize / ctx.resources.displayMetrics.scaledDensity
@@ -2061,18 +2079,30 @@ class RearCameraOverlay(
         // 看起来像「画面没铺满」，反而像故障。
         if (style.mode != MODE_SMALLWINDOW || style.borderDp <= 0) {
             root.foreground = null
+            borderDrawable = null
+            borderKey = ""
             applyStepFlag(false)
             return
         }
         // 【5.6.5 步数奖励】描边颜色跟今日步数走（<3000 仍是原来的白色）。
         // 颜色集中在 [StepBorderPolicy]，这里只问「今天该是什么色」，不在渲染层写阈值。
-        val d = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            // 圆角跟窗口裁剪保持一致，否则描边会在圆角处露出尖角
-            cornerRadius = if (style.mode == MODE_SMALLWINDOW) dp(24).toFloat() else 0f
-            setStroke(dp(style.borderDp), StepBorderPolicy.borderColor(todaySteps, stepRewardEnabled))
+        val color = StepBorderPolicy.borderColor(todaySteps, stepRewardEnabled)
+        val key = style.borderDp.toString() + "#" + color
+        val d = borderDrawable
+        if (d == null || key != borderKey) {
+            val fresh = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                // 圆角跟窗口裁剪保持一致，否则描边会在圆角处露出尖角
+                cornerRadius = if (style.mode == MODE_SMALLWINDOW) dp(24).toFloat() else 0f
+                setStroke(dp(style.borderDp), color)
+            }
+            borderDrawable = fresh
+            borderKey = key
+            root.foreground = fresh
+        } else if (root.foreground !== d) {
+            // drawable 没变但窗口重建过（root 换了新对象），只需重新挂一次
+            root.foreground = d
         }
-        root.foreground = d
         applyStepFlag(true)
     }
 

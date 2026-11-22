@@ -98,7 +98,17 @@ public final class WalkPreviewService extends Service {
     private long todayStepsCache = 0L;
     /** 最近一次「真实步」的时间（硬件回调或加速度合格步），只用于步数徽章的隐显 */
     private long lastMotionStepTs = 0L;
+    /**
+     * 【5.6.8 功耗】徽章文案缓存：`今日 N 步` 只在步数真的变了才重新拼一次。
+     * 旧实现每个 tick 都 format + 拼接（哪怕这一秒一步没走），走路时每秒一次无谓分配。
+     */
+    private String stepBadgeTextCache = null;
+    /** [stepBadgeTextCache] 对应的步数；-1 = 未构建 */
+    private long stepBadgeStepsBuilt = -1L;
     private long lastStepFlushTs = 0L;
+    /** dayKey 缓存：上次算出的日 key 与其时间戳（见 [DAY_KEY_CACHE_MS]） */
+    private String stepDayKeyCache = "";
+    private long stepDayKeyCacheTs = 0L;
     /** 【沙发误触修复】连续行走步流的起始时间戳，计步器不可用时用它卡「连续走够久」 */
     private long walkingStreakStartTs = 0L;
     /** 判定停下（静置超时收起）的时刻，用于「收起后冷却」防秒开死循环 */
@@ -192,6 +202,14 @@ public final class WalkPreviewService extends Service {
     private static final long LIVE_CONFIRM_STREAK_MS = 3_000L;
     // ==================== 【5.6.5】今日步数 ====================
 
+    /**
+     * 【5.6.7 功耗】dayKey 计算缓存窗口。
+     *
+     * 旧写法每记一步都 new 一个 Calendar + String.format：走路时 1~2 次/秒、
+     * 一天几千次分配，只为判断「是不是换天了」。日期只在 0 点变一次，
+     * 缓存 30 秒完全够用 —— 跨天最多晚 30 秒归零，用户不可能察觉。
+     */
+    private static final long DAY_KEY_CACHE_MS = 30_000L;
     /** 今日步数状态落盘键（值可能是跨天前的，读出后按 dayKey 判定是否作废） */
     private static final String SP_KEY_STEP_DAY = "step_today_day";
     private static final String SP_KEY_STEP_BASE = "step_today_base";
@@ -324,16 +342,16 @@ public final class WalkPreviewService extends Service {
             // 这里只负责取数与发通知，不碰任何步态 / 防误触判据。
             try {
                 boolean headDownOn = SafePrefs.getBool(sp, SafeWalkPrefKey.enableHeadDownRemind, false);
-                boolean screenOn = true;
-                android.os.PowerManager pm =
-                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
-                // isInteractive=false 即息屏；拿不到时按亮屏处理（宁可漏拦，不误拦）
-                if (pm != null) screenOn = pm.isInteractive();
-                float tilt = gait == null ? -1f : gait.tiltDegrees();
-                if (HeadDownPolicy.evaluate(headDownOn, gaitWalking, screenOn, tilt, now, headDownState)) {
-                    new SafeWalkNotificationManager(WalkPreviewService.this).headDownRemind();
-                    DiagLog.log("[head-down] 行走中持续低头 → 已提醒抬头 | tilt="
-                            + Math.round(tilt) + "°");
+                // 【5.6.8 功耗】开关关着就整段跳过：旧写法无论开没开都要取 PowerManager、
+                // 打一次 isInteractive() IPC、再算一遍 tilt，一天上万次全是为一个关着的功能。
+                if (headDownOn) {
+                    boolean screenOn = screenInteractive;
+                    float tilt = gait == null ? -1f : gait.tiltDegrees();
+                    if (HeadDownPolicy.evaluate(true, gaitWalking, screenOn, tilt, now, headDownState)) {
+                        new SafeWalkNotificationManager(WalkPreviewService.this).headDownRemind();
+                        DiagLog.log("[head-down] 行走中持续低头 → 已提醒抬头 | tilt="
+                                + Math.round(tilt) + "°");
+                    }
                 }
             } catch (Throwable t) {
                 DiagLog.logThrottled("head.down", "err", "[head-down] 评估异常: " + t.getMessage());
@@ -448,6 +466,15 @@ public final class WalkPreviewService extends Service {
 
     /** 【锁屏误报修复】亮屏/解锁/熄屏状态接收器，用于收起与恢复后视预览 */
     private BroadcastReceiver screenReceiver;
+    /**
+     * 【5.6.8 功耗】亮屏状态缓存。
+     *
+     * `PowerManager.isInteractive()` 是 binder 调用：旧实现每个 gaitTick 都问一次
+     * （1~3 秒一次，一天上万次），而屏幕亮灭事件本来就由 [screenReceiver] 送上门。
+     * 现在只在「本次 service 启动」与「收到 SCREEN_ON/OFF」时更新，tick 里读字段。
+     * 取不到时按亮屏处理（宁可漏拦低头提醒，也不误拦）。
+     */
+    private boolean screenInteractive = true;
 
     /** Hook 端指挥广播（SystemUI → App，跨进程必须 EXPORTED + 令牌） */
     public static final String ACTION_HOOK_SHOW = "io.github.wumisc.safewalk.REAR_CAM_HOOK_SHOW";
@@ -557,6 +584,13 @@ public final class WalkPreviewService extends Service {
         INSTANCE = new java.lang.ref.WeakReference<>(this);
         // 预览服务可能在主界面之前被拉起（Hook 广播唤醒），独立初始化日志出口
         DiagLog.init(getApplicationContext());
+        // 【5.6.8】亮屏状态初值：之后由 screenReceiver 的 SCREEN_ON/OFF 维护
+        try {
+            android.os.PowerManager pm0 =
+                    (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm0 != null) screenInteractive = pm0.isInteractive();
+        } catch (Throwable ignored) {
+        }
         // 【配置防丢】服务可能先于主界面被拉起：先尝试从外部备份恢复配置，
         // 否则开机自启时会按空 SP 的默认值（行走模式=关）判断，导致「开机后是关闭的」。
         ConfigBackup.restoreIfNeeded(getApplicationContext());
@@ -658,9 +692,11 @@ public final class WalkPreviewService extends Service {
                 String a = (i == null) ? null : i.getAction();
                 DiagLog.log("[screen] " + a + " → 重新评估后视预览");
                 if (Intent.ACTION_SCREEN_OFF.equals(a)) {
+                    screenInteractive = false;
                     if (overlay != null) overlay.hide();
                     reportPreviewState();
                 } else {
+                    screenInteractive = true;
                     // ACTION_SCREEN_ON 时可能仍锁屏，isScreenUsable() 会挡住；
                     // ACTION_USER_PRESENT（真正解锁）才放行。
                     evaluateShow();
@@ -753,6 +789,9 @@ public final class WalkPreviewService extends Service {
             stopGait();
         }
         evaluateShow();
+        // 【5.6.8】自动/手动切换会改副标题语义（检测中 vs 持续显示中），
+        // 而 reportPreviewState 只对「显示状态变化」去重，这里补一次刷新。
+        refreshWalkNotification();
     }
 
     /**
@@ -1646,14 +1685,26 @@ public final class WalkPreviewService extends Service {
 
     // ==================== 【5.6.5】今日步数 ====================
 
-    /** 当天 key（本地时区 yyyyMMdd）：跨天即重置今日步数 */
-    private static String stepDayKeyOf(long ms) {
+    /**
+     * 当天 key（本地时区 yyyyMMdd）：跨天即重置今日步数。
+     *
+     * 【5.6.7 功耗】成果缓存 [DAY_KEY_CACHE_MS]：30 秒内复用同一个字符串，
+     * 避免每一步都建 Calendar 再格式化。跨天最多晚 30 秒识别，可接受。
+     */
+    private String stepDayKeyOf(long ms) {
+        long dt = ms - stepDayKeyCacheTs;
+        if (dt >= 0L && dt < DAY_KEY_CACHE_MS && !stepDayKeyCache.isEmpty()) {
+            return stepDayKeyCache;
+        }
         java.util.Calendar c = java.util.Calendar.getInstance();
         c.setTimeInMillis(ms);
-        return String.format(java.util.Locale.US, "%04d%02d%02d",
+        String key = String.format(java.util.Locale.US, "%04d%02d%02d",
                 c.get(java.util.Calendar.YEAR),
                 c.get(java.util.Calendar.MONTH) + 1,
                 c.get(java.util.Calendar.DAY_OF_MONTH));
+        stepDayKeyCache = key;
+        stepDayKeyCacheTs = ms;
+        return key;
     }
 
     /** 从 SP 恢复今日步数；跨天的旧记录直接作废（基线清空，重新建立） */
@@ -1738,10 +1789,16 @@ public final class WalkPreviewService extends Service {
         // 这里每 tick 下发一次绝对值，由悬浮窗自己按档位换色（同值早退，零开销）。
         overlay.setTodaySteps(todayStepsCache);
         boolean fresh = lastMotionStepTs > 0L && now - lastMotionStepTs <= STEP_BADGE_HIDE_MS;
-        String text = (fresh && todayStepsCache > 0L)
-                ? "今日 " + TodayStepPolicy.format(todayStepsCache) + " 步"
-                : null;
-        overlay.setStepText(text);
+        if (!fresh || todayStepsCache <= 0L) {
+            overlay.setStepText(null);
+            return;
+        }
+        // 【5.6.8 功耗】步数没变就复用上次的字符串；跨天 / 走新一步才重建。
+        if (stepBadgeTextCache == null || stepBadgeStepsBuilt != todayStepsCache) {
+            stepBadgeTextCache = "今日 " + TodayStepPolicy.format(todayStepsCache) + " 步";
+            stepBadgeStepsBuilt = todayStepsCache;
+        }
+        overlay.setStepText(stepBadgeTextCache);
     }
 
     /** 当前连续步流已持续的毫秒数；未起步返回 0 */
@@ -1962,9 +2019,9 @@ public final class WalkPreviewService extends Service {
      */
     private boolean isScreenUsable() {
         try {
-            android.os.PowerManager pm =
-                    (android.os.PowerManager) getSystemService(POWER_SERVICE);
-            if (pm != null && !pm.isInteractive()) return false;
+            // 【5.6.8 功耗】读缓存而不是每次 IPC：缓存初值在 onCreate 取一次，
+            // SCREEN_ON/OFF 广播会同步更新，不存在读旧值的窗口。
+            if (!screenInteractive) return false;
             android.app.KeyguardManager km =
                     (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
             if (km != null && km.isKeyguardLocked()) return false;
@@ -2026,6 +2083,45 @@ public final class WalkPreviewService extends Service {
         if (showing == lastReportedShowing) return;
         lastReportedShowing = showing;
         notifyPreviewState(showing);
+        // 【5.6.8】小窗显示/收起时同步刷新常驻通知副标题：
+        // 旧实现通知文案在服务启动时写死，收起后仍宣称「持续显示中」。
+        refreshWalkNotification();
+    }
+
+    /** 常驻通知副标题（三态，纯逻辑见 [WalkNotifText]） */
+    private String walkNotifSubtitle() {
+        boolean showing = overlay != null && overlay.getShowing();
+        boolean auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false);
+        return WalkNotifText.subtitle(showing, auto);
+    }
+
+    /** 上次写进常驻通知的副标题；同文案不重发（reportPreviewState 高频调用） */
+    private String lastWalkNotifText = null;
+
+    /**
+     * 刷新常驻通知副标题。只在「前台已提起 + 文案真的变了」时 notify 一次；
+     * 失败不抛（通知被 ROM 限流/渠道被关都属正常，不影响服务本体）。
+     */
+    private void refreshWalkNotification() {
+        if (!foregroundEstablished) return;
+        try {
+            String text = walkNotifSubtitle();
+            if (text.equals(lastWalkNotifText)) return;
+            lastWalkNotifText = text;
+            PendingIntent openPi = PendingIntent.getActivity(this, 0,
+                    new Intent(this, MainActivity.class)
+                            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Notification n = new Notification.Builder(this, CHANNEL_WALK)
+                    .setSmallIcon(android.R.drawable.ic_menu_camera)
+                    .setContentTitle("行走模式运行中")
+                    .setContentText(text)
+                    .setContentIntent(openPi)
+                    .setOngoing(true)
+                    .build();
+            nmBase().notify(NOTIF_ID, n);
+        } catch (Throwable ignored) {
+        }
     }
 
     // ========== 保活：心跳 + 被杀后自动恢复 ==========
@@ -2183,7 +2279,9 @@ public final class WalkPreviewService extends Service {
         Notification n = new Notification.Builder(this, CHANNEL_WALK)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("行走模式运行中")
-                .setContentText("身后路况持续显示中 · 点击查看")
+                // 【5.6.8】副标题按三态生成（显示中 / 步态检测等待 / 手动常显），
+                // 不再写死「持续显示中」——自动跟随用户看到那句话会以为小窗一直挂着。
+                .setContentText(walkNotifSubtitle())
                 .setContentIntent(openPi)
                 .setOngoing(true)
                 .build();
@@ -2195,6 +2293,7 @@ public final class WalkPreviewService extends Service {
                     startForeground(NOTIF_ID, n, type);
                     fgsType = type;
                     foregroundEstablished = true;
+                    lastWalkNotifText = walkNotifSubtitle();
                     DiagLog.log("[FGS] 前台服务已提起｜type=" + fgsTypeName(type) + "｜" + osTag);
                     if (type != ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) {
                         // 降级后相机在后台会被拒，这一点必须写进日志，
@@ -2224,6 +2323,7 @@ public final class WalkPreviewService extends Service {
             startForeground(NOTIF_ID, n);
             fgsType = -1;
             foregroundEstablished = true;
+            lastWalkNotifText = walkNotifSubtitle();
             DiagLog.log("[FGS] 已用无 type 方式提起前台｜" + osTag);
         } catch (Throwable t) {
             fgsType = -2;
