@@ -1,5 +1,6 @@
 package io.github.wumisc.safewalk;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -126,6 +127,54 @@ public class GaitDetectorPureTest {
         }
         assertTrue("瞬态之后正常散步（confirmSteps=5）必须仍能触发，"
                 + "说明过滤没有误伤正常步行（debug=" + g.debugInfo() + "）", triggered);
+    }
+
+    /**
+     * 【5.6.4 垂直轴闸门】重力在 X 轴（手机竖持），晃动发生在水平面（Z 轴）：
+     * 幅值与 1.2Hz 间隔都落在「像步」的区间里，但能量不沿重力方向，
+     * 必须一个合格步都不产生 —— 这就是「手机在手里晃两下就弹预览」的物理分界。
+     */
+    @Test
+    public void horizontalSway_noQualifiedStep() {
+        GaitDetector g = new GaitDetector();
+        g.setConfirmSteps(5);
+        g.reset();
+        long t = settleFeed(g, 0L);
+        boolean triggered = false;
+        for (int i = 0; i < 600; i++) {
+            double sec = i / 50.0;
+            float sway = (float) (2.5 * Math.sin(2 * Math.PI * 1.2 * sec));
+            if (g.feedAcc(GRAVITY, 0f, sway, t)) { triggered = true; break; }
+            t += FRAME_MS;
+        }
+        assertFalse("水平往复（1.2Hz / 2.5m/s²，能量不沿重力）不得产生合格步；垂直占比="
+                + g.verticalRatio(), triggered);
+        assertEquals("合格步队列必须保持空（实际=" + g.confirmedStepCount() + "）",
+                0, g.confirmedStepCount());
+    }
+
+    /**
+     * 【5.6.4 高抬/翻转手机】绕水平轴大幅翻转（抬起来拍照找角度）：
+     * 大瞬态本就被 MAX_PEAK_VALUE 拦，叠加垂直占比闸门后更不得攒步。
+     */
+    @Test
+    public void raiseAndFlipPhone_noQualifiedStep() {
+        GaitDetector g = new GaitDetector();
+        g.setConfirmSteps(5);
+        g.reset();
+        long t = settleFeed(g, 0L);
+        boolean triggered = false;
+        for (int i = 0; i < 300; i++) {
+            double sec = i / 50.0;
+            // 0.8Hz 的绕 Y 轴翻转：X/Z 两轴大幅交替（4m/s²），既不沿重力也不超瞬态上限
+            float flip = (float) (4.0 * Math.sin(2 * Math.PI * 0.8 * sec));
+            if (g.feedAcc(GRAVITY * 0.6f + flip, 0f, GRAVITY * 0.8f - flip, t)) {
+                triggered = true; break;
+            }
+            t += FRAME_MS;
+        }
+        assertFalse("举手机/翻转找角度不得算成步；垂直占比=" + g.verticalRatio()
+                + " debug=" + g.debugInfo(), triggered);
     }
 
     private static long settleFeed(GaitDetector g, long t) {

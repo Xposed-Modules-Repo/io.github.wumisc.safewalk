@@ -408,9 +408,10 @@ public class LandscapeRotationContractTest {
      */
     private static boolean refIsLandscapeWindowNow(Boolean screenLandscape, int poseDeg, String mode) {
         if ("fixed".equals(mode)) return false;
-        // 5.6.1 语义：系统方向与重力姿态取并集——任一为横即横，宁可多横不可漏横。
-        boolean sysLandscape = screenLandscape != null && screenLandscape.booleanValue();
-        return sysLandscape || refIsLandscapePose(poseDeg);
+        // 5.6.4 语义：只认系统界面方向（Configuration / Display.rotation 任一为横），
+        // 姿态不再参与窗口形状——否则「竖屏界面 + 姿态 270」会把窗口锁成横条且再也回不来
+        // （真机日志 2026-11-22 15:44:35~15:50:05）。poseDeg 形参保留，供参考角断言共用。
+        return screenLandscape != null && screenLandscape.booleanValue();
     }
 
     /**
@@ -738,23 +739,27 @@ public class LandscapeRotationContractTest {
 
     // ==================== A 组续 · 5.4.8 统一形状判据 + 防重兜底结构断言 ====================
 
-    /** A14 意图（5.4.11 核心）：isLandscapeWindowNow 形状真源须为「系统方向优先、姿态仅 null 兜底」的 Elvis 判据，且 MODE_FIXED 强制竖条。 */
+    /**
+     * A14 意图（5.6.4 反转）：窗口形状只认**系统界面方向**（Configuration 或 Display.rotation 任一为横），
+     * 姿态不参与；MODE_FIXED 仍强制竖条。
+     *
+     * 5.6.1 的并集判据（姿态也算）已被真机证伪：竖屏界面 + 姿态 270 会锁成横条且永不回来，
+     * 用户明确要求「横屏就是横屏，竖屏就是竖屏」。
+     */
     @Test
     public void a14_shapeSourceUsesScreenLandscapeFirst() {
         assertTrue("A14 形状真源须含系统方向项（实时 Configuration 读取）",
                 landscapeBody.contains("screenIsLandscape()"));
-        assertTrue("A14 形状真源须取实时系统方向 screenIsLandscape()（缓存会卡旧值）",
-                landscapeBody.contains("val systemLandscape = screenIsLandscape()"));
-        assertTrue("A14 形状真源须含姿态兜底项 DevicePosePolicy.isLandscapePose(",
-                landscapeBody.contains("DevicePosePolicy.isLandscapePose("));
+        assertTrue("A14 形状真源须含物理旋转项（Display.rotation 90/270）",
+                landscapeBody.contains("displayRotationLandscape()"));
+        assertTrue("A14 判据须为两路系统信号并集",
+                landscapeBody.contains("return screenIsLandscape() || displayRotationLandscape()"));
         assertTrue("A14 形状真源须保留 MODE_FIXED 强制竖条分支",
                 landscapeBody.contains("MODE_FIXED") && landscapeBody.contains(") false"));
-        // 防退回旧 OR 判据：不得出现 || 或旧的 == true 判据文本（姿态滞后会盖过系统竖屏）。
-        assertTrue("A14 判据须为并集（任一为横即横），横条判定函数在真源区间内",
-                landscapeBody.contains("return poseLandscape || systemLandscape"));
+        assertFalse("A14 5.6.4：姿态不得再参与窗口形状（手一横就锁成横条是用户明确否掉的）",
+                landscapeBody.contains("poseLandscape"));
         assertFalse("A14 形状真源不得残留旧判据 lastKnownScreenLandscape == true",
                 landscapeBody.contains("lastKnownScreenLandscape == true"));
-        // 防本根因回归：形状真源不得退回「仅姿态 isLandscapeWindow(pose)」单一来源。
         assertFalse("A14 形状真源不得再单独用 isLandscapeWindow(currentDisplayDegrees(), ...) 决定",
                 landscapeBody.contains("isLandscapeWindow(currentDisplayDegrees()"));
     }
@@ -1129,8 +1134,10 @@ public class LandscapeRotationContractTest {
         assertTrue("E1 形状真源须含系统方向项（实时 Configuration 读取）",
                 landscapeBody.contains("screenIsLandscape()"));
         assertTrue("E1 形状真源须取实时系统方向 screenIsLandscape()",
-                landscapeBody.contains("val systemLandscape = screenIsLandscape()"));
-        assertTrue("E1 形状真源须含姿态兜底项", landscapeBody.contains("isLandscapePose("));
+                landscapeBody.contains("screenIsLandscape()"));
+        assertTrue("E1 形状真源须含物理旋转项（5.6.4 两路系统信号）",
+                landscapeBody.contains("displayRotationLandscape()"));
+        assertFalse("E1 5.6.4 形状真源不得再让姿态参与", landscapeBody.contains("poseLandscape"));
         assertTrue("E1 参考角真源须含系统横屏钉 90°", refDegreesBody.contains("lastKnownScreenLandscape == true) 90"));
 
         // —— 独立参考实现复算：pose=0（姿态竖持冻结）+ 系统横屏=true ——
@@ -1156,23 +1163,24 @@ public class LandscapeRotationContractTest {
     }
 
     /**
-     * E2 意图（5.4.11 语义同步）：pose=90°（横持）+ 系统竖屏=false → 判竖条。
-     * 旧契约（OR）下姿态横持会盖过系统竖屏判横条（5.3.x 历史诉求），5.4.11 改为系统方向优先后，
-     * 该场景一律竖条——正是本 bug 修复点的对称见证。文本断言（isLandscapePose 仍在、referenceDegrees
-     * 的 normalize 兜底未改）复核保留，仅形状判定期望值按 Elvis 语义重算。
+     * E2 意图（5.6.4 反转，用户诉求核心）：pose=90°（横持）+ 系统竖屏=false → 必须判竖条。
+     *
+     * 5.6.1 曾在此断言横条（并集「任一为横即横」），真机结果是竖屏界面被锁成横条且回不来；
+     * 用户明确要求竖屏就出竖条，所以 5.6.4 把这组期望值整体反转。参考角仍取 normalize(姿态 90)=90
+     * （姿态继续服务于画面角度，只是不再决定窗口形状）。
      */
     @Test
     public void e2_screenPortraitEvenIfPoseLandscape_forcesPortraitBar() {
-        assertTrue("E2 形状真源须含姿态兜底项 isLandscapePose(", landscapeBody.contains("isLandscapePose("));
+        assertFalse("E2 5.6.4 形状真源不得再让姿态参与", landscapeBody.contains("poseLandscape"));
         assertTrue("E2 参考角真源须含 normalize(姿态角) 兜底",
                 refDegreesBody.contains("DevicePosePolicy.normalize(currentDisplayDegrees())"));
 
         Boolean screenLandscape = Boolean.FALSE;
         int poseDeg = 90;
         boolean landscape = refIsLandscapeWindowNow(screenLandscape, poseDeg, ROT_MODE);
-        assertTrue("E2 系统竖屏 + 姿态横持(90) 须判横条（5.6.1 任一为横即横）", landscape);
+        assertFalse("E2 系统竖屏 + 姿态横持(90) 须判竖条（5.6.4 只认界面方向）", landscape);
         int[] shape = refWindowShape(landscape);
-        assertTrue("E2 finalW>finalH（横条 845×488）", shape[0] > shape[1]);
+        assertTrue("E2 finalH>finalW（竖条 488×845）", shape[1] > shape[0]);
         assertEquals("E2 系统竖屏时参考角取 normalize(姿态90)=90（referenceDegrees 未改）",
                 90, refReferenceDegrees(screenLandscape, poseDeg, ROT_MODE));
 
@@ -1180,7 +1188,7 @@ public class LandscapeRotationContractTest {
         int applied = refAppliedFromReference(refReferenceDegrees(screenLandscape, poseDeg, ROT_MODE),
                 landscape, calib);
         RefComposition frame = capture(applied, shape[0], shape[1], FRAMING_PCT, ROT_MODE);
-        assertEquals("E2 横条窗口 deg=0", 0, frame.deg);
+        assertEquals("E2 竖条窗口 deg=0（竖条恒不交换宽高）", 0, frame.deg);
         assertEquals("E2 净朝向 ≡0", 0f, normAngle(frame.layerRot + frame.hudRot), 0.0001f);
     }
 
@@ -1200,8 +1208,8 @@ public class LandscapeRotationContractTest {
         // screenLandscape: null=首帧尚无回调（缓存 null）；poseDeg: 0 竖持 / 90 横持。
         Boolean[] screenLandscape = { null, Boolean.TRUE, Boolean.FALSE, Boolean.FALSE, Boolean.FALSE };
         int[] poseDeg = { 0, 0, 0, 90, 0 };
-        // 5.6.1 并集判据：轮3 系统竖屏(false) 但姿态横持(90) → 横条（任一为横即横）。
-        boolean[] expectLandscape = { false, true, false, true, false }; // 竖/横/竖/横/竖
+        // 5.6.4 只认界面方向：轮3 系统竖屏(false)，姿态横持(90) 不参与 → 竖条。
+        boolean[] expectLandscape = { false, true, false, false, false }; // 竖/横/竖/竖/竖
         int[] expectRefDeg = { 0, 90, 0, 90, 0 }; // referenceDegrees 未改，参考角期望不变
 
         for (int i = 0; i < screenLandscape.length; i++) {
@@ -1227,13 +1235,11 @@ public class LandscapeRotationContractTest {
             assertEquals("F1 轮" + i + " finalW", expectLandscape[i] ? W_LANDSCAPE : W_PORTRAIT, shape[0]);
             assertEquals("F1 轮" + i + " finalH", expectLandscape[i] ? H_LANDSCAPE : H_PORTRAIT, shape[1]);
             if (ls != null) {
-                // 5.6.1 并集判据：系统横屏必横条；系统竖屏时看姿态，姿态横持也判横条。
+                // 5.6.4：窗口形状完全跟随界面方向，姿态不参与。
                 if (ls.booleanValue()) {
                     assertTrue("F1 轮" + i + " 系统横屏须横条（与系统方向一致）", landscape);
-                } else if (refIsLandscapePose(pose)) {
-                    assertTrue("F1 轮" + i + " 系统竖屏 + 姿态横持须横条（任一为横即横）", landscape);
                 } else {
-                    assertFalse("F1 轮" + i + " 双侧皆竖须竖条", landscape);
+                    assertFalse("F1 轮" + i + " 系统竖屏须竖条（姿态横持不参与）", landscape);
                 }
             }
 
@@ -1260,18 +1266,17 @@ public class LandscapeRotationContractTest {
     public void poseLagAfterSystemPortraitMustBePortrait() {
         // —— 源码文本双保险 ——
         assertTrue("防回归：判定链须取实时系统方向 screenIsLandscape()",
-                landscapeBody.contains("val systemLandscape = screenIsLandscape()"));
-        // 5.6.1 判据已改为并集：姿态横持 + 系统竖屏同时成立时判横条。
-        // 5.4.11 担心的「姿态滞后盖过竖屏」由 PoseTracker 的 45° 容忍带 + 驻留消除。
+                landscapeBody.contains("screenIsLandscape()"));
+        // 5.6.4 判据只认界面方向：姿态横持 + 系统竖屏同时成立时判竖条（5.6.1 的并集已反转）。
 
         // —— 独立参考实现复算 ——
         Boolean screenLandscape = Boolean.FALSE;  // 系统已回调明确竖屏（非 null）
         int poseDeg = 90;                          // 滞后姿态仍报横持
         boolean landscape = refIsLandscapeWindowNow(screenLandscape, poseDeg, ROT_MODE);
-        assertTrue("防回归：系统竖屏 + 姿态横持(90) 须判横条（5.6.1 任一为横即横）", landscape);
+        assertFalse("防回归：系统竖屏 + 姿态横持(90) 须判竖条（5.6.4 只认界面方向）", landscape);
         int[] shape = refWindowShape(landscape);
-        assertEquals("防回归：窗口须为横条宽 845", W_LANDSCAPE, shape[0]);
-        assertEquals("防回归：窗口须为横条高 488", H_LANDSCAPE, shape[1]);
+        assertEquals("防回归：窗口须为竖条宽 488", W_PORTRAIT, shape[0]);
+        assertEquals("防回归：窗口须为竖条高 845", H_PORTRAIT, shape[1]);
     }
 
     /**

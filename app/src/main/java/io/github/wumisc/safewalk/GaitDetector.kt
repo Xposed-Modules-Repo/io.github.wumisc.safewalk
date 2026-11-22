@@ -45,6 +45,13 @@ object MotionConfig {
      * 在 15s 里最多 8 个峰，撑不到 10 格，窗口自然掉出满格。
      */
     const val STEP_WINDOW_MS = 15_000L
+    /**
+     * 【5.6.4】垂直/水平能量占比的 EMA 系数。
+     *
+     * 50Hz 采样下 0.9 对应约 0.2s 时间常数：够快，能在「晃两下」的窗口内建立统计；
+     * 也够稳，不会被单帧的轴向瞬时抖动带偏。
+     */
+    const val VERTICAL_EMA = 0.9f
     const val MIN_WALK_SPEED = 0.3f
     const val MAX_WALK_SPEED = 2.5f
     const val LOCATION_QUEUE_SIZE = 3
@@ -198,6 +205,37 @@ class GaitDetector {
     private var currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
 
     /**
+     * 【5.6.4 垂直轴占比】线性加速度在「重力方向」上的能量占比（EMA，0~1）。
+     *
+     * 为什么需要这一项：峰值检测只看**幅值**，而手机在手里的任何一次前后/左右晃动、
+     * 转身、举起来拍照，幅值都能轻松越过阈值、间隔也常落在 0.5~2.5Hz 的步频窗口里，
+     * 于是「晃两下就攒够步数弹小窗」。可物理上二者完全不同：
+     *  · 走路是脚落地给的**上下冲击**，能量几乎全部沿重力方向；
+     *  · 手里晃动 / 翻转是**水平面内的往复**，能量几乎全在垂直于重力的平面上。
+     * 所以用「沿重力方向能量 / 全部线性能量」这个比值做第二道闸，是幅值之外唯一
+     * 有物理意义、又不依赖机型标定的区分维度。
+     *
+     * 以重力向量为参考（而非机身的某个固定轴），所以手机竖着拿、横着拿、在口袋里斜着
+     * 都不影响：只要人在走，重力轴上的分量就始终占主导。
+     */
+    private var emaVertical = 0f
+    private var emaHorizontal = 0f
+
+    /**
+     * 合格峰所需的垂直能量占比下限。
+     *
+     * 0.5 是二者「等能量」的分界：真走路（含手臂摆动）实测占比通常在 0.65~0.95，
+     * 手持横向晃动在 0.1~0.35，平放抖动更低。取 0.5 留足余量，只拦「明显不是上下冲击」的峰。
+     */
+    private val MIN_VERTICAL_RATIO = 0.5f
+
+    /** 当前垂直能量占比（诊断用，0~1；无样本时返回 0） */
+    fun verticalRatio(): Float {
+        val sum = emaVertical + emaHorizontal
+        return if (sum <= 1e-6f) 0f else emaVertical / sum
+    }
+
+    /**
      * 姿态稳定器：滞回 + 700ms 驻留。
      *
      * 【5.2.0 为什么必须加这一层】
@@ -291,6 +329,18 @@ class GaitDetector {
         val linY = ay - gravityY
         val linZ = az - gravityZ
 
+        // —— 1.2 垂直（重力方向）能量占比 ——
+        // 见 [emaVertical]：走路是沿重力的上下冲击，手持晃动是水平面内的往复。
+        // 这里把线性加速度投影到重力方向，分别统计垂直/水平能量，做 EMA 平滑，
+        // 供下面的峰闸门使用（采样 50Hz，0.9 的系数对应约 0.2s 的时间常数）。
+        val gNorm = sqrt(gravityX * gravityX + gravityY * gravityY + gravityZ * gravityZ)
+        if (gNorm > 1e-3f) {
+            val linG = (linX * gravityX + linY * gravityY + linZ * gravityZ) / gNorm
+            val linH2 = (linX * linX + linY * linY + linZ * linZ) - linG * linG
+            emaVertical = MotionConfig.VERTICAL_EMA * emaVertical + (1f - MotionConfig.VERTICAL_EMA) * linG * linG
+            emaHorizontal = MotionConfig.VERTICAL_EMA * emaHorizontal + (1f - MotionConfig.VERTICAL_EMA) * max(0f, linH2)
+        }
+
         updateAttitude(gravityX, gravityY, gravityZ, now)
 
         // —— 1.5 预热：等重力收敛，别让启动瞬态污染包络 ——
@@ -326,7 +376,12 @@ class GaitDetector {
         currentAdaptiveThreshold = threshold
 
         // —— 4. 上升沿计峰（仅限正常步行幅值区间，>MAX_PEAK_VALUE 的瞬态不计） ——
-        if (value > threshold && value <= MotionConfig.MAX_PEAK_VALUE) {
+        // 【5.6.4 垂直轴闸门】幅值够了还不够，能量还必须主要沿重力方向：
+        // 手持前后/左右晃动、转身、举起来拍照，幅值和间隔都像步，但能量在水平面，
+        // 占比会明显低于 0.5；真走路的上下冲击则以垂直能量为主。
+        if (value > threshold && value <= MotionConfig.MAX_PEAK_VALUE
+            && verticalRatio() >= MIN_VERTICAL_RATIO
+        ) {
             if (!aboveThreshold) {
                 aboveThreshold = true
                 val since = if (lastPeakTime == 0L) Long.MAX_VALUE else now - lastPeakTime
@@ -528,7 +583,7 @@ class GaitDetector {
     fun debugInfo(): String {
         val freqText = if (peakIntervals.isEmpty()) "无"
         else peakIntervals.joinToString(",") { "%.2fHz".format(1000.0 / it) }
-        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 姿态=$currentAttitude"
-            .format(currentAdaptiveThreshold, envelope)
+        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 垂直=%.2f 姿态=$currentAttitude"
+            .format(currentAdaptiveThreshold, envelope, verticalRatio())
     }
 }

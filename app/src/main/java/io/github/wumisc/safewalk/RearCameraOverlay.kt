@@ -1605,38 +1605,44 @@ class RearCameraOverlay(
     }
 
     /**
-     * 【5.6.1 横屏必横】窗口该不该是横条 —— 以**重力姿态**为准。
+     * 【5.6.4 方向严格跟随界面】窗口该不该是横条 —— 只认**系统界面方向**。
      *
-     * 为什么不能用系统 configuration / Display.getRotation()：
-     *  · 游戏（尤其强制横屏或自绘 Surface 的游戏）会把画面横过来，但 display rotation
-     *    可能仍是 0、configuration 也还是 portrait。此时只有重力能说明「手机确实横着」。
-     *    真机截图：游戏横屏下小窗被建成 488x845 竖条，后摄画面躺 90°，正是这个原因。
-     *  · 用户开着「旋转锁定」时 `Display.getRotation()` 恒为 0，横过来也不变
-     *    —— 5.3.1 已经因此弃用它，改用重力。
+     * 【5.6.1 的并集判据已被真机证伪，这里反转】
+     * 5.6.1 把姿态并入判据（「任一为横即横」），理由是游戏场景下 config 可能仍是 portrait。
+     * 真机日志（2026-11-22 15:44:35~15:50:05，Redmi / HyperOS 4）证明这个并集会被**手持姿态**
+     * 骗：竖屏界面下姿态报 270°，窗口被建成横条 845x488 并锁死，
+     * `applyPoseChange` 拿同一份判据比较也永远是「没翻转」，于是**再也回不到竖条**，
+     * 用户整整 5 分钟只能对着一个横条小窗，直到手动重开服务才恢复。
+     * 「手机转两下就变成横条、还倒不回来」正是这个机制的产物。
      *
-     * 姿态轨迹由 [DevicePosePolicy.PoseTracker] 提供：45° 容忍带 + 驻留时间去抖，
-     * 因此这里读到的已经是「稳定朝向」，不会因为手抖在横竖之间来回跳。
-     * 只有完全没有姿态样本（传感器不可用）时，才退回系统方向兜底。
+     * 用户对方向的定义也很明确：**横屏就是横屏，竖屏就是竖屏**——横屏玩游戏/看视频用横条，
+     * 竖屏用竖条，两者不能因为手的姿势互相串台。窗口贴在屏幕上，用户看到的是界面，
+     * 不是重力向量。
      *
-     * 【判据取「任一为横即横」】两路信号各有各的失效场景：
-     *  · 系统方向会漏报：游戏自绘 Surface / 强制横屏，config 还是 portrait；
-     *  · 姿态会漏报：用户开着旋转锁定却把手机横过来看竖屏内容。
-     * 对路况预览来说，**漏横（竖条里塞横画面）比多横（横条里塞竖画面）严重得多**——
-     * 前者后摄画面躺着 90°，用户完全没法看；后者只是多裁一点。故取并集，宁可多横。
-     *
-     * 5.4.11 曾因「姿态滞后横持盖过已明确竖屏」改回系统优先；那个滞后现在由
-     * PoseTracker 的 45° 容忍带 + 驻留时间消除，不再需要靠优先级压制。
+     * 所以判据改回系统方向，且取两路**系统**信号（都与手怎么拿无关）：
+     *  · [screenIsLandscape]：实时 Configuration；
+     *  · [displayRotationLandscape]：Display.rotation 为 90/270。
+     * 任一为横即横，两路同时竖才竖 —— 游戏/视频这类真横屏场景，这两路至少有一路会跟着变。
+     * 姿态不参与窗口形状，只继续参与**画面旋转角**（[referenceDegrees]/[refreshRotation]），
+     * 保证竖条里的画面不躺。
      */
     private fun liveWindowLandscape(): Boolean {
-        val pose = poseDeg
-        val poseLandscape = pose != DevicePosePolicy.NO_SAMPLE &&
-            DevicePosePolicy.isLandscapePose(pose)
-        // 系统方向取**实时** Configuration，不用 lastKnownScreenLandscape 缓存：
-        // 缓存只在 onConfigurationChanged 里更新，用户开着旋转锁定时它停在旧值，
-        // 会让「横过之后回正」卡在横条；onConfigurationChanged 里 super 已先行更新
-        // resources（见 screenIsLandscape 注释），实时读不滞后。
-        val systemLandscape = screenIsLandscape()
-        return poseLandscape || systemLandscape
+        return screenIsLandscape() || displayRotationLandscape()
+    }
+
+    /**
+     * 系统屏幕的物理旋转是否为横（rotation 90/270）。
+     *
+     * 与 [screenIsLandscape] 互补：Configuration 描述「界面按什么方向排」，
+     * Display.rotation 描述「屏幕相对机身转了多少」。强制横屏的 Activity 两者都会变，
+     * 而个别自绘 Surface 的游戏可能只改其中一路，所以取并集。
+     * 两者都与「手怎么拿」无关，因此不会出现 5.6.1 那种「手一横、窗口就再也回不来」。
+     */
+    private fun displayRotationLandscape(): Boolean = try {
+        val r = wm.defaultDisplay.rotation
+        r == android.view.Surface.ROTATION_90 || r == android.view.Surface.ROTATION_270
+    } catch (_: Throwable) {
+        false
     }
 
     /**

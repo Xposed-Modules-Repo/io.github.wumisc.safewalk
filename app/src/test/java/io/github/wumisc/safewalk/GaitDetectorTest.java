@@ -192,8 +192,13 @@ public class GaitDetectorTest {
     }
 
     /**
-     * 手机平放在包里：重力全落在 Z 轴，晃动发生在 X 轴。
-     * 固定只看某一轴的实现在这里会完全失效，必须靠主轴自适应。
+     * 手机平放在包里：重力全落在 Z 轴。固定只认 X 轴的实现在这里会完全失效。
+     *
+     * 【5.6.4 语义修正】原用例把「走路冲击」整段放在 X 轴（与重力垂直），
+     * 这在物理上就是**水平面内的往复**，与「晃手机」无法区分 —— 也正是本轮要挡掉的那类信号。
+     * 真实场景里手机平放时，脚步冲击沿世界垂直 ≈ 机身 Z 轴，另有一小部分包里随步的水平分量。
+     * 所以这里改为「Z 轴主导 + 少量 X 轴分量」：既保留「判据不硬编码 X 轴」的原意，
+     * 也符合重力方向与冲击方向一致的物理事实。
      */
     @Test
     public void walkingWithGravityOnZAxis_isRecognised() {
@@ -204,11 +209,12 @@ public class GaitDetectorTest {
         }
         for (int i = 0; i < 400; i++) {
             double sec = i / 50.0;
-            float ax = (float) (2.5 * Math.sin(2 * Math.PI * 1.5 * sec));
-            gait.feedAcc(ax, 0f, GRAVITY, t);
+            float az = (float) (2.5 * Math.sin(2 * Math.PI * 1.5 * sec));          // 沿重力轴的脚步冲击
+            float ax = (float) (0.5 * Math.sin(2 * Math.PI * 1.5 * sec + 1.2));    // 包里随步的少量水平晃动
+            gait.feedAcc(ax, 0f, GRAVITY + az, t);
             t += FRAME_MS;
         }
-        assertTrue("重力落在 Z 轴、晃动在 X 轴时也必须能识别（主轴自适应）",
+        assertTrue("重力落在 Z 轴时也必须能识别（判据按重力方向而非固定轴）",
                 gait.hasStableGait());
     }
 

@@ -169,6 +169,19 @@ public final class WalkPreviewService extends Service {
     private static final long STEP_CONFIRM_WINDOW_MS = 10_000L;
     private static final int STEP_CONFIRM_MIN = 8;
     /**
+     * 【5.6.4】硬件计步通道放行前要求的「连续步流时长」下限（毫秒）。
+     *
+     * 真机反馈「手机在手里晃一下、拿起来拍张照，小窗哐当就弹出来了」。
+     * 数量门槛（10 秒 8 步）挡不住这类动作：不少 ROM 的 STEP_DETECTOR 对重心位移敏感，
+     * 手心轻微往复也能数出 8~10 步；而波形侧的垂直轴占比闸门只能证明
+     * 「这一帧的峰是上下冲击」，证明不了「这件事持续了多久」。
+     *
+     * 真人走路必然是连续的：3 秒内至少再走 3~5 步。所以硬件通道达标后再要一条
+     * 时间证据 —— 连续步流已经持续满 3 秒，才允许放行。晃动/举手机拍照
+     * 都是瞬时动作，3 秒后就散了，过不了这条。
+     */
+    private static final long LIVE_CONFIRM_STREAK_MS = 3_000L;
+    /**
      * 【沙发误触修复 v3 · 真机日志 2026-11-10 13:48~14:02】
      *
      * v2 把纯加速度门槛定成「累计 ≥ max(确认步数×2, 15) 步」，但采集层
@@ -1624,7 +1637,22 @@ public final class WalkPreviewService extends Service {
         // 自适应窗口：COUNTER 上报越稀疏，窗口越宽，避免「10 秒窗口 / 30 秒回调」错配
         long window = StepHealthPolicy.windowMs(stepCallbackIntervalEma);
         int n = stepCountInWindow(window);
-        if (n >= STEP_CONFIRM_MIN) return true;
+        long streak = streakMs();
+        if (n >= STEP_CONFIRM_MIN) {
+            // 【5.6.4 瞬时动作闸门】数量够了不等于人在走：晃手机、举起来拍照、
+            // 情侣举着手机找角度，重心往复都可能被 STEP_DETECTOR 数成 8~10 步。
+            // 硬件计数只能算「数量证据」，再加一条「时间证据」：
+            // 连续步流已持续 ≥ [LIVE_CONFIRM_STREAK_MS]，证明这是一段走动而不是一个动作。
+            if (streak >= LIVE_CONFIRM_STREAK_MS) return true;
+            DiagLog.logThrottled("gait.hw", "brief",
+                    "[gait] ⛔ 计步 " + n + " 步达标但连续时长 " + (streak / 1000)
+                            + "s < " + (LIVE_CONFIRM_STREAK_MS / 1000)
+                            + "s → 判为瞬时动作（晃手机/拍照），不显示 | 垂直占比="
+                            + String.format(java.util.Locale.US, "%.2f", gait.verticalRatio())
+                            + " 姿态=" + gait.getAttitude(),
+                    2_000L, 10_000L);
+            return false;
+        }
 
         // 【沙发误触修复 v2 · 真机日志 13:08:15 / 13:08:52 / 13:09:56】
         // 通道 LIVE（刚刚还在正常上报）却在这个窗口里一步未出 —— 这才是「没在走路」
@@ -1648,7 +1676,6 @@ public final class WalkPreviewService extends Service {
         // 原式会变成**永不成立的死条件**，兜底整条失效 —— 这正是 5.1.0 那次
         // 「自动跟随全程一次没弹」的同款事故。用一个可达上限把它夹住，
         // 默认档（8）等价于「窗口满格 10 步」，与抬门槛前的放行强度完全一致。
-        long streak = streakMs();
         int sustainedSteps = Math.min(WalkConfirmPolicy.WINDOW_CAP,
                 gait.getConfirmSteps() * 2);
         if (gait.confirmedStepCount() >= sustainedSteps
