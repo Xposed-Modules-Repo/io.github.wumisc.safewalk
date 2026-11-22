@@ -382,4 +382,89 @@ public class GaitDetectorPureTest {
                         + g.stepActivityTs() + " debug=" + g.debugInfo() + "）",
                 g.stepActivityTs() == 0L);
     }
+
+    // ======================================================================
+    // 5.6.3 · B5 组：滑动窗口时效 —— 「蹲下后小窗一直不消失」的根因锁定
+    //
+    // 真机现象（2026-11-22 diag.log，13:11:31 达标触发后到用户截图 13:13 一直显示）：
+    // 走几步到厕所蹲下，路况预览不收起。根因是 peakIntervals 只按数量保留 10 个间隔、
+    // 没有时间上限 —— 蹲着时躯干/手机微动每隔 1~2s 也能产生一个越阈峰（频率 0.5~2.5Hz
+    // 正好在窗口内），只要间隔 <2.5s 就不清空，窗口永久停在满格 10。
+    // 于是 countReached / stepTick 恒真、lastStepTs 每帧刷成 now，判停永不触发。
+    //
+    // 修复：给窗口加 MotionConfig.STEP_WINDOW_MS（18s）时效，按绝对时间戳剔除陈旧峰。
+    // 真人走满 10 步 6~10s（慢走 0.55Hz 约 18s），正常步行完全不受影响。
+    // ======================================================================
+
+    /** 稀疏微动：每 periodMs 来一个 120ms 的小脉冲（模拟蹲着时身体/手机的轻微动作）。 */
+    private static long feedSparseBumps(GaitDetector g, long t0, long periodMs, int bumps, float amp) {
+        long t = t0;
+        int periodFrames = (int) (periodMs / FRAME_MS);
+        for (int k = 0; k < bumps; k++) {
+            for (int i = 0; i < periodFrames; i++) {
+                float ax = GRAVITY;
+                if (i < 6) {
+                    // 半正弦脉冲：6 帧 = 120ms，只在这个小窗口里越阈，其余时间纯重力
+                    ax = (float) (GRAVITY + amp * Math.sin(Math.PI * (i + 1) / 7.0));
+                }
+                g.feedAcc(ax, 0f, 0f, t);
+                t += FRAME_MS;
+            }
+        }
+        return t;
+    }
+
+    /** 同上，但统计「这一帧被判定成合格步（feedAcc 返回 true）」的次数。 */
+    private static int countSparseBumpTriggers(GaitDetector g, long t0, long periodMs,
+                                               int bumps, float amp) {
+        long t = t0;
+        int periodFrames = (int) (periodMs / FRAME_MS);
+        int triggered = 0;
+        for (int k = 0; k < bumps; k++) {
+            for (int i = 0; i < periodFrames; i++) {
+                float ax = GRAVITY;
+                if (i < 6) {
+                    ax = (float) (GRAVITY + amp * Math.sin(Math.PI * (i + 1) / 7.0));
+                }
+                if (g.feedAcc(ax, 0f, 0f, t)) triggered++;
+                t += FRAME_MS;
+            }
+        }
+        return triggered;
+    }
+
+    /** B5①：正常走路攒满窗口后，蹲着每 2s 一次微动 80s，窗口必须掉出满格。 */
+    @Test
+    public void b5_sparseBumps_doNotKeepWindowFull() {
+        GaitDetector g = new GaitDetector();
+        g.setConfirmSteps(10);
+        g.reset();
+        long t = feedWalkSine(g, TS_T0, 700, 0.9, 2.5f);   // 14s 正常走路，攒满 10 格
+        assertTrue("B5 前置：走路 14s 后窗口须满格（实际=" + g.confirmedStepCount()
+                + " debug=" + g.debugInfo() + "）", g.confirmedStepCount() >= 10);
+
+        t = feedSparseBumps(g, t, 2_000L, 40, 2.5f);      // 蹲下 80s，每 2s 一次微动
+        assertTrue("B5 修复点：稀疏微动 80s 后，15s 时效必须让窗口掉出满格（实际="
+                + g.confirmedStepCount() + " debug=" + g.debugInfo()
+                + "）；旧实现无时效，窗口会永久停在 10 → 判停永不触发", g.confirmedStepCount() < 10);
+    }
+
+    /** B5②：稀疏微动期间不得被判定成「还在走」的合格步（否则 lastStepTs 每帧被刷）。 */
+    @Test
+    public void b5_sparseBumps_doNotProduceStepTicks() {
+        GaitDetector g = new GaitDetector();
+        g.setConfirmSteps(10);
+        g.reset();
+        long t = feedWalkSine(g, TS_T0, 700, 0.9, 2.5f);   // 先攒满
+        assertTrue("B5② 前置：走路后窗口须满格（实际=" + g.confirmedStepCount() + "）",
+                g.confirmedStepCount() >= 10);
+
+        // 过渡期：刚停下的前 20s，窗口里还留着走路的旧峰，允许这几次仍为 true
+        t = feedSparseBumps(g, t, 2_000L, 10, 2.5f);
+        // 稳态：旧峰全部过时效后，稀疏微动不得再被判成「合格步」
+        int triggered = countSparseBumpTriggers(g, t, 2_000L, 30, 2.5f);
+        assertTrue("B5② 修复点：旧峰过期后 30 次稀疏微动期间 feedAcc 不得返回 true（实际触发 "
+                + triggered + " 次，debug=" + g.debugInfo()
+                + "）；旧实现窗口满格 + 主轴一致，每一帧都会返回 true", triggered == 0);
+    }
 }

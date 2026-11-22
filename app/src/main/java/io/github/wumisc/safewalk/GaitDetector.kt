@@ -30,6 +30,21 @@ object MotionConfig {
      * 计数永远攒不满 → 走了也不触发。
      */
     const val GAIT_RESET_MS = 2500L
+    /**
+     * 【5.6.3】合格步「滑动窗口」的时效（毫秒）。
+     *
+     * 旧实现只按数量保留最近 10 个间隔，**完全没有时间上限**：只要每隔 <2.5s 来一个
+     * 越阈峰（蹲着时躯干微动、手机在兜里随呼吸轻晃就够），窗口就永远不清，
+     * `confirmedStepCount()` 长期停在满格 10，于是
+     *   `countReached = credible && count >= confirmSteps` 恒成立、
+     *   `lastStepTs` 每帧被刷成 now → 判停永远不触发 → 小窗常挂不消失。
+     * 真机表现就是「走几步到厕所蹲下，路况预览一直显示」。
+     *
+     * 真人走满 10 步：正常步频 0.9~1.5Hz 只需 6.7~11s，慢走 0.7Hz 约 14s。
+     * 取 15s 作上限：正常与偏慢的步行都在窗口内，而「蹲着每 2s 一次微动」
+     * 在 15s 里最多 8 个峰，撑不到 10 格，窗口自然掉出满格。
+     */
+    const val STEP_WINDOW_MS = 15_000L
     const val MIN_WALK_SPEED = 0.3f
     const val MAX_WALK_SPEED = 2.5f
     const val LOCATION_QUEUE_SIZE = 3
@@ -160,6 +175,15 @@ class GaitDetector {
     /** 上一帧是否已经在阈值之上：只认「上穿」的那一刻，避免一个波峰算成好几步 */
     private var aboveThreshold = false
     private val peakIntervals = mutableListOf<Long>()
+
+    /**
+     * 【5.6.3】每个合格步的绝对时间戳，与 [peakIntervals] / [peakAxes] 一一对应。
+     *
+     * 只为给「滑动窗口」加时间上限（[MotionConfig.STEP_WINDOW_MS]）用：
+     * 数量上限解决不了「稀疏峰把满格状态永久吊住」，必须有绝对时间才能剔除陈旧峰。
+     * 三个队列严格等长、同进同出，长度一致性由 [dropStalePeaks] 与入队逻辑保证。
+     */
+    private val peakTs = mutableListOf<Long>()
 
     /**
      * 每个合格步所在的主轴（0/1/2）。
@@ -314,16 +338,22 @@ class GaitDetector {
                             // 防止「走 2 步 → 停 10 秒 → 抖 3 下」凑够步数误触发
                             peakIntervals.clear()
                             peakAxes.clear()
+                            peakTs.clear()
                         } else {
                             val freq = 1000.0 / since
                             if (freq in MotionConfig.MIN_STEP_FREQ..MotionConfig.MAX_STEP_FREQ) {
                                 peakIntervals.add(since)
                                 peakAxes.add(currentAxis)
+                                peakTs.add(now)
+                                // 先按时间剔除陈旧峰：久坐/蹲着时稀疏微动会把窗口吊在满格，
+                                // 让下面的数量上限永远命中不到，必须靠时效解除（见 STEP_WINDOW_MS）
+                                dropStalePeaks(now)
                                 // 队列上限必须 ≥ confirmSteps 的最大档（10），
                                 // 否则 confirmSteps=5 时 size 永远到不了 5，走了也不触发
                                 if (peakIntervals.size > 10) {
                                     peakIntervals.removeAt(0)
                                     peakAxes.removeAt(0)
+                                    peakTs.removeAt(0)
                                 }
                                 lastPeakTime = now
                                 // 【5.3.8 审查返工】判停时钟：本帧是「步频窗口内的合格步峰」，
@@ -375,6 +405,22 @@ class GaitDetector {
         gaitStateCallback?.onLongStaticDetected(isStatic)
 
         return false
+    }
+
+    /**
+     * 【5.6.3】按时间上限剔除陈旧合格峰：只保留最近 [MotionConfig.STEP_WINDOW_MS] 内的峰。
+     *
+     * 三个队列（间隔 / 主轴 / 绝对时间戳）同步从头部移除，任何时刻长度都必须相等。
+     * 语义是「窗口 = 最近一段时间内的连续步流」，而不是「最近 10 个峰，不管隔多久」——
+     * 后者是「蹲下后小窗不消失」的直接原因：稀疏到 2s 一个的微动峰也能把满格状态
+     * 无限维持，使 qualified / stepTick 恒真、判停时钟被逐帧刷新。
+     */
+    private fun dropStalePeaks(now: Long) {
+        while (peakTs.isNotEmpty() && now - peakTs.first() > MotionConfig.STEP_WINDOW_MS) {
+            peakTs.removeAt(0)
+            peakIntervals.removeAt(0)
+            peakAxes.removeAt(0)
+        }
     }
 
     /** 当前已累计的合格步数（诊断日志用，Java 侧读取） */
@@ -457,6 +503,7 @@ class GaitDetector {
     fun reset() {
         peakIntervals.clear()
         peakAxes.clear()
+        peakTs.clear()
         lastPeakTime = 0L
         lastStepActivityTs = 0L
         lastPeakFlat = false

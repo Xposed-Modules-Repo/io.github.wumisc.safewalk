@@ -1,5 +1,30 @@
 # 更新日志
 
+## [5.6.3] - 2026-11-22 蹲下后路况预览不消失：合格步滑动窗口没有时间上限
+
+真机日志（2026-11-22，5.6.1(88)，13:11:31「步数达标（窗口 50 步）直接触发」后一直到 13:13 截图，小窗一直在屏幕上）：走了几步到厕所蹲下，路况预览不收起，转两下手机也没用。
+
+根因不在「判停门槛设得太长」，而在判停时钟被**稀疏的孤立峰**一直续命：
+
+- `GaitDetector` 的合格步队列（`peakIntervals`）只按数量保留最近 10 个间隔，**没有任何时间上限**。只要每隔 < 2.5 s 来一个越阈峰（蹲着时躯干微动、手机在兜里随呼吸轻晃就够，间隔 1~2 s 正好落在 0.5~2.5 Hz 步频窗口内），队列就永远不会被清空。
+- 于是 `confirmedStepCount()` 长期停在满格，`countReached = credible && count >= confirmSteps` 恒成立、`stepTick` 也恒真；`lastStepTs` 每帧被刷成 now，`StaticStopPolicy` 的 `now - effectiveTs > stopMs` 永远不成立 → 判停不触发 → 小窗不收起。
+- 另外 `stepActivityTs()`（每个合格峰都推进）被直接当作判停的第 9 参 `observedStepTs`，等于给了孤立峰第二条续命通道。
+
+修法（三处，都不动峰值检测 / 步频窗口 / 平放判据本身）：
+
+1. **窗口加时间上限**：`MotionConfig.STEP_WINDOW_MS = 15 s`，新增与间隔 / 主轴一一对应的绝对时间戳队列，每次入队按时间剔除陈旧峰。正常步行攒 10 步 6.7~11 s，偏慢的 0.7 Hz 约 14 s，都在窗口内；蹲着每 2 s 一次微动在 15 s 里最多 8 个峰，凑不满 10 格。
+2. **观测时钟不再被孤立峰续命**：只有窗口攒满 `confirmSteps` 时才把 `stepActivityTs()` 交给 `StaticStopPolicy`，门槛之内不参与判停。
+3. **悬挂保险丝**：自动显示满 3 分钟、且最近 60 s 合格步数不足 6，直接按「确认停下」收起。这是与步态判据正交的兜底 —— 判据再被异常数据顶住，窗口也不会永久挂在屏幕上；真走路 60 s 内至少几十步，永不命中。
+
+判停收尾逻辑同时抽成 `onStopConfirmed()`，正常判停与保险丝走同一条复位路径（`gaitWalking / lastStepTs / gaitShowTs / lastStopTs` 一次清干净），避免以后再出现「walking=false、窗口还挂着」的半截状态。
+
+新增回归用例（`GaitDetectorPureTest` B5 组）：
+
+- `b5_sparseBumps_doNotKeepWindowFull`：走路攒满 → 蹲下每 2 s 微动 80 s → 窗口必须掉出满格；
+- `b5_sparseBumps_doNotProduceStepTicks`：旧峰过期后，稀疏微动期间 `feedAcc` 不得再返回 true。
+
+已知取舍：步频低于约 0.7 Hz（每步 1.4 s 以上）的极慢行走，在 10 步档位下可能攒不满窗口而不触发显示。这是「宁可少弹、不要挂着不走」的取舍；把「连续步数」调回 8 档可以覆盖。
+
 ## [5.6.2] - 2026-11-22 全量体检：超广角跨口径误判、包可见性、Locale
 
 本轮把主代码 28,600 行（86 个 .kt + 17 个 .java + 39 个 XML）过了一遍，跑完整 Android Lint（1 error / 641 warning 逐类分诊），连同既有 905 个单测一起验证。下面只列**真实缺陷**，风格类噪音（`ApplySharedPref`、`HardcodedText`、`ObsoleteSdkInt`）不动。

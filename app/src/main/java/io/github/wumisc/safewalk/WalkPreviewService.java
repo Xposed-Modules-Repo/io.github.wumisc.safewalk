@@ -229,6 +229,18 @@ public final class WalkPreviewService extends Service {
      * 15 秒能把这类正常停顿容纳进去，而不至于让误触发的小窗一闪就没。
      */
     private static final int DEFAULT_STOP_SEC = 15;
+    /**
+     * 【5.6.3】自动显示的悬挂保险丝时长（毫秒）。
+     *
+     * 自动模式的小窗只由「走起来」拉起、只由判停收起，判据一旦被异常数据顶住
+     * （历史上有过 gaitWalking=false 导致判停整体不生效的悬挂），窗口就永久挂在屏幕上。
+     * 这里加一道与步态正交的超时：自动显示满 3 分钟、且最近 60 秒合格步数不足 6
+     * （连 0.1Hz 都不到），直接按「确认停下」收起。真走路 60 秒内至少几十步，
+     * 永远不会命中这道兜底。
+     */
+    private static final long AUTO_SHOW_SAFETY_MS = 180_000L;
+    private static final long AUTO_SHOW_SAFETY_STEP_WINDOW_MS = 60_000L;
+    private static final int AUTO_SHOW_SAFETY_MIN_STEPS = 6;
     /** 本次自动显示的时刻，用于「显示驻留」判定（见 [StaticStopPolicy]） */
     private long gaitShowTs = 0L;
     private final Handler gaitHandler = new Handler(Looper.getMainLooper());
@@ -251,45 +263,21 @@ public final class WalkPreviewService extends Service {
                     && StaticStopPolicy.shouldStop(lastStepTs, sessionStartTs, now, stopMs,
                             StaticStopPolicy.SESSION_GRACE_MS, gaitShowTs,
                             StaticStopPolicy.DEFAULT_MIN_SHOW_MS, gaitWalking,
-                            gait != null ? gait.stepActivityTs() : 0L)) {
+                            observedForStop())) {
                 // 【5.3.8】判停诊断快照：下面会把 lastStepTs/gaitShowTs/gaitWalking 复位，
                 // 先留住「决策那一刻」的值，六元组才不会全变成复位后的 0 / false。
                 // 【审查返工 · M-2】观测步时钟也在此一次性快照，日志改用该快照，
                 // 禁止再直接读实时字段，同一行日志的时钟取值才自洽。
-                final long diagObservedStepTs = gait != null ? gait.stepActivityTs() : 0L;
-                // effectiveTs 与 StaticStopPolicy 一致，取两个时钟的较新者。
-                final long diagEffectiveTs = Math.max(lastStepTs, gait != null ? gait.stepActivityTs() : 0L);
-                final long diagQualifiedStepTs = lastStepTs;
-                final long diagShowTs = gaitShowTs;
-                final boolean diagWalking = gaitWalking;   // 能进本分支必然为 true
-                gaitWalking = false;
-                // 清零 lastStepTs：否则「超过 10s 无步」这个条件会一直成立，
-                // 每秒 tick 都重复打一条「判定停下」日志刷屏。下次真走会重新置位。
-                // 【审查返工】判停时钟来自 GaitDetector 的合格步峰时间戳，只有 gait.reset()
-                // 才归零；判停动作本身不触碰它，下次激活由 maxOf 取更新值。
-                lastStepTs = 0L;
-                gaitShowTs = 0L;
-                lastStopTs = now;
-                // 六元组 + 生效时钟 + 横竖屏：字段名保持一致便于下轮真机 grep 定位。
-                // getResources() 用 try/catch 兜底；整段吞异常，日志绝不影响判停与收起。
-                try {
-                    boolean portrait = getResources().getConfiguration().orientation
-                            == android.content.res.Configuration.ORIENTATION_PORTRAIT;
-                    DiagLog.log("[walk] 静置超时判停 | 生效上一步="
-                            + ((now - diagEffectiveTs) / 1000) + "s前"
-                            + " 合格步时钟=" + diagQualifiedStepTs
-                            + " 观测步时钟=" + diagObservedStepTs
-                            + " 显示驻留=" + ((now - diagShowTs) / 1000) + "s前"
-                            + " 门槛=" + (stopMs / 1000) + "s"
-                            + " walking=" + diagWalking
-                            + " 竖屏=" + portrait + " | 收起预览");
-                } catch (Throwable ignored) {
-                    // 日志取值/输出异常一律吞掉：判停已决策，收起与 1s 巡检循环照常进行
-                }
-                // 【5.3.3】这里必须直接收，不能再走 evaluateShow：
-                // 它已经不按 walking 收起了（那是为了避免「一步没踩准就闪一下」），
-                // 走它就等于判停之后窗口永远挂着。
-                hideAfterStopConfirmed();
+                onStopConfirmed(now, "静置超时判停", stopMs);
+            } else if (gaitWalking && gaitShowTs > 0L
+                    && now - gaitShowTs > AUTO_SHOW_SAFETY_MS
+                    && accelStepsInWindow(AUTO_SHOW_SAFETY_STEP_WINDOW_MS) < AUTO_SHOW_SAFETY_MIN_STEPS) {
+                // 【5.6.3】悬挂保险丝：判据被异常数据顶住时，窗口不能永远挂在屏幕上。
+                // 真走路时最近 60s 至少几十步，不可能命中；只有「久坐 / 蹲着但采集层
+                // 仍偶发报步」这类异常才会走到这里。
+                onStopConfirmed(now, "自动显示超时兜底（最近 "
+                        + (AUTO_SHOW_SAFETY_STEP_WINDOW_MS / 1000) + "s 合格步="
+                        + accelStepsInWindow(AUTO_SHOW_SAFETY_STEP_WINDOW_MS) + "）", stopMs);
             }
 
             // 低头提醒：仅在「已确认行走（gaitWalking）+ 亮屏 + 屏幕朝上偏水平」
@@ -809,6 +797,71 @@ public final class WalkPreviewService extends Service {
             overlay.hide();
             reportPreviewState();
         }
+    }
+
+    /**
+     * 【5.6.3】判停用的「观测峰时钟」：只有窗口内确有连续步流时才返回非 0。
+     *
+     * 背景：蹲下 / 坐下后，身体微动每隔 1~2 秒也会产生一个越阈峰，把
+     * [GaitDetector.stepActivityTs] 一路推新。旧实现把这个时钟直接交给
+     * [StaticStopPolicy]，于是 `now - effectiveTs` 永远小于门槛，判停永不触发 ——
+     * 用户看到的正是「走几步到厕所蹲下，路况预览一直显示不消失」。
+     *
+     * 现在要求窗口攒满 confirmSteps 才认作「还在走」：
+     * 真走路攒 10 步只需 6~11 秒，必然够数；稀疏微动（蹲着每 2 秒一次）
+     * 在 15s 时效窗口里最多 8 个峰，凑不满，判停时钟自然停住。
+     */
+    private long observedForStop() {
+        if (gait == null) return 0L;
+        long ts = gait.stepActivityTs();
+        if (ts == 0L) return 0L;
+        // 「还在走」要求窗口攒满 confirmSteps（用户档位 8~10）。门槛之内本来就没走起来，
+        // qualified 也不会推进 lastStepTs，观测时钟没有独立贡献；放开只会让蹲着时的
+        // 孤立峰把判停一直拖住（真机就是「蹲下后路况预览一直显示」）。
+        return gait.confirmedStepCount() >= gait.getConfirmSteps() ? ts : 0L;
+    }
+
+    /**
+     * 【5.6.3】确认停下后的统一收尾：复位判停状态 → 写诊断 → 收起预览。
+     *
+     * 抽出来是为了让「静置超时判停」与「悬挂保险丝」走同一条复位路径：
+     * 两处各写一遍，迟早有一处漏清 gaitShowTs / lastStepTs，留下的正是
+     * 「walking=false、窗口还挂在屏幕上」这种最难查的状态。
+     *
+     * 必须直接 overlay.hide()，不能借道 evaluateShow —— 后者只按 walking 显示、
+     * 不负责收起（见那里的注释），走它就等于判停之后窗口永远挂着。
+     */
+    private void onStopConfirmed(long now, String reason, long stopMs) {
+        final long diagObservedStepTs = gait != null ? gait.stepActivityTs() : 0L;
+        final long diagEffectiveTs = Math.max(lastStepTs, diagObservedStepTs);
+        final long diagQualifiedStepTs = lastStepTs;
+        final long diagShowTs = gaitShowTs;
+        final boolean diagWalking = gaitWalking;   // 能进本方法必然是「在走时走到收尾」
+        gaitWalking = false;
+        // 清零 lastStepTs：否则「超过门槛无步」这个条件会一直成立，
+        // 每秒 tick 都重复打一条判停日志刷屏。下次真走会重新置位。
+        // 判停时钟来自 GaitDetector 的合格步峰时间戳，只有 gait.reset() 才归零；
+        // 判停动作本身不触碰它，下次激活由 maxOf 取更新值。
+        lastStepTs = 0L;
+        gaitShowTs = 0L;
+        lastStopTs = now;
+        // 六元组 + 生效时钟 + 横竖屏：字段名保持一致便于下轮真机 grep 定位。
+        // getResources() 用 try/catch 兜底；整段吞异常，日志绝不影响判停与收起。
+        try {
+            boolean portrait = getResources().getConfiguration().orientation
+                    == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+            DiagLog.log("[walk] " + reason + " | 生效上一步="
+                    + ((now - diagEffectiveTs) / 1000) + "s前"
+                    + " 合格步时钟=" + diagQualifiedStepTs
+                    + " 观测步时钟=" + diagObservedStepTs
+                    + " 显示驻留=" + ((now - diagShowTs) / 1000) + "s前"
+                    + " 门槛=" + (stopMs / 1000) + "s"
+                    + " walking=" + diagWalking
+                    + " 竖屏=" + portrait + " | 收起预览");
+        } catch (Throwable ignored) {
+            // 日志取值/输出异常一律吞掉：判停已决策，收起与 1s 巡检循环照常进行
+        }
+        hideAfterStopConfirmed();
     }
 
     /**
