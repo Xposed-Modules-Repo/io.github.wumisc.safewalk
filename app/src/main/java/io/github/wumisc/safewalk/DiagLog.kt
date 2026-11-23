@@ -40,6 +40,16 @@ object DiagLog {
     private const val RING_MAX = 400
     private const val FILE_NAME = "diag.log"
 
+    /**
+     * 【5.6.9】日志所属版本号（SP int）。
+     *
+     * 用户痛点：覆盖安装新版本后，diag.log 里仍混着旧版本几千行日志，
+     * 每次抓日志都要先人肉找版本分界线。现在 App 进程 init 时发现
+     * versionCode 变了就把旧日志整个清掉、写一行升级头，之后文件里
+     * 只会有当前版本的内容。**只清日志，任何功能配置都不动。**
+     */
+    private const val SP_KEY_LOG_VER = "diag_log_ver"
+
     /** App 向 Hook 索要日志（Hook 收到后回 [ACTION_LOG_DUMP]） */
     const val ACTION_REQUEST_LOG = "io.github.wumisc.safewalk.REQUEST_LOG"
     /** Hook 回传日志正文 */
@@ -85,6 +95,14 @@ object DiagLog {
     /** 是否已经做过一次完整探测（失败也算，避免每写一条就重探一遍目录） */
     @Volatile
     private var resolved = false
+
+    /** 本次运行是否已完成「版本变更清日志」判定（含「版本没变」的情况） */
+    @Volatile
+    private var versionCleaned = false
+
+    /** init 时留存的 App Context：目录切换后补做版本判定要用 */
+    @Volatile
+    private var appCtx: Context? = null
 
     /** 最近一次失败原因，给页面/Toast 用 */
     @Volatile
@@ -168,6 +186,10 @@ object DiagLog {
             Log.i(TAG, "日志目录探测: ${report}选中=${logFile?.parentFile?.absolutePath ?: "无"}")
             Log.i(TAG, "所有文件访问权限: ${hasAllFilesAccess(app)}")
 
+            appCtx = app
+            // 【5.6.9】版本变更 → 清旧日志（只清日志，配置不动）
+            clearOnVersionChangeLocked(app)
+
             // 把探测结果落进日志本身，方便一眼确认（此时 logFile 已就绪）
             appendLine(stamp() + " 日志目录: ${logFile?.parentFile?.absolutePath ?: "不可写"}")
         }
@@ -206,8 +228,39 @@ object DiagLog {
         } catch (_: Throwable) {
         }
         logFile = target
+        // 【5.6.9】切到的用户目录里可能躺着旧版本的 diag.log（降级期间没清到它）：
+        // 版本判定还没做过就在这里补做，保证换目录后文件里也只有当前版本。
+        if (!versionCleaned) appCtx?.let { clearOnVersionChangeLocked(it) }
         appendLine(stamp() + " 日志目录已切换到 $USER_DIR（之前: ${cur ?: "无"}）")
         Log.i(TAG, "日志目录已切换到 $USER_DIR")
+    }
+
+    /**
+     * 【5.6.9】升级即清日志（调用方必须已持有 [ringLock]）。
+     *
+     * · 只在 **App 进程**执行：Hook 跑在 SystemUI 里，读不到本应用的 SP，
+     *   也不该由它清用户文件（ctx.packageName 不等于本应用 ID 时直接返回）。
+     * · versionCode 与 SP 记录一致 → 什么都不做；不一致 → 关流、删旧文件、
+     *   写一行升级头、记录新版本号。每次版本更新都会执行（用户确认的口径）。
+     * · **只动日志文件与这一个 SP key**，步态/小窗/白名单/急救卡等配置一律不碰。
+     */
+    private fun clearOnVersionChangeLocked(ctx: Context) {
+        try {
+            if (ctx.packageName != BuildConfig.APPLICATION_ID) return
+            val sp = ctx.getSharedPreferences("safewalk_xsp", Context.MODE_PRIVATE)
+            val old = sp.getInt(SP_KEY_LOG_VER, -1)
+            val cur = BuildConfig.VERSION_CODE
+            versionCleaned = true
+            if (old == cur) return
+            closeOut()
+            try { logFile?.delete() } catch (_: Throwable) {}
+            sp.edit().putInt(SP_KEY_LOG_VER, cur).apply()
+            val head = if (old < 0) "首次记录版本" else "版本升级 $old→$cur"
+            appendLine(stamp() + " [log] $head（v${BuildConfig.VERSION_NAME}）：旧版本日志已清空，本文件只含当前版本")
+            Log.i(TAG, "[log] $head：diag.log 已重置")
+        } catch (_: Throwable) {
+            // 清日志失败不影响日志功能本身：宁可留着旧内容，也不能让 init 崩
+        }
     }
 
     /**
