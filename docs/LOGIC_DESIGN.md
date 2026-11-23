@@ -796,7 +796,7 @@ App 的 LogBridgeReceiver → DiagLog.writeRaw() 落到同一个 diag.log
 | `SafeWalkNotificationManager.kt` | 6 类通知 + 按 ID 冷却 + 超级岛 extras |
 | `LocationModeEngine.kt` | 定位 → 地址 → 关键词投票 → 出行模式建议 |
 | `ReceiverCompat.kt` | API 33 `RECEIVER_EXPORTED` / `RECEIVER_NOT_EXPORTED` 兼容封装 |
-| `MainActivity` / `WalkModeActivity` / `SmartReminderActivity` / `LabActivity` / `EmergencyCardActivity` / `TipsActivity` | UI 与实验区（步态自检、日志 tail、重启 SystemUI） |
+| `MainActivity` / `WalkModeActivity` / `SmartReminderActivity` / `EmergencyCardActivity` / `TipsActivity` | UI 页面（日志 tail、重启 SystemUI 等调试入口） |
 
 ---
 

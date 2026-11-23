@@ -73,6 +73,8 @@ object EmergencyDiag {
         if (token.isNullOrEmpty()) return "----"
         var h = 0
         for (c in token) h = 31 * h + c.code
-        return java.lang.Integer.toHexString(h and 0xFFFF)
+        // 【5.6.10 bug 修复】toHexString 不补零：高四位为 0 时只输出 3 位甚至更短，
+        // 违反「恰好 4 位」契约（随机 token 约 1/16 概率命中，日志对齐也会乱）。
+        return java.lang.Integer.toHexString(h and 0xFFFF).padStart(4, '0')
     }
 }

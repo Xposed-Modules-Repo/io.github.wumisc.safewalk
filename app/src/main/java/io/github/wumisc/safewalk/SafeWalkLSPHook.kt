@@ -1034,7 +1034,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     stepProbeReported = true
                     diag("❌ 启动 ${(now - initTs) / 1000}s 传感器 0 次回调，疑似静默失效"
                             + " | 系统计步器注册=$stepSensorRegistered 加速度计兜底=$fallbackActive"
-                            + " | 请到「功能实验区 → 步态自检」确认传感器本身有没有数据")
+                            + " | 请确认传感器权限与加速度计/计步器是否可用")
                 }
                 StepProbePolicy.Verdict.OK -> {
                     // 已有合格步，链路正常，标记已判定，之后不再重复探

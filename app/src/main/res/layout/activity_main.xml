@@ -252,174 +252,135 @@
 
                 </LinearLayout>
 
-                <!-- 【系统 UI 适配】两行结构（4.3 起取代原来的「HyperOS 版本适配」卡片）：
-                     第一行：一行注明，讲清「本机被识别成哪一家」以及是不是手选的；
-                     第二行：七个芯片，自动 + 五家厂商（小米/荣耀/OPPO/vivo/华为）+ 原生。
-                     芯片上写厂商短名而不是 UI 全名：360dp 宽的机器每个芯片只有约 43dp，
-                     “OriginOS”“HarmonyOS”放不下；UI 全名在上一行注明里给。
-                     为什么不再按 HyperOS 版本分：三个策略函数（前台服务 / 手电 / 悬浮窗）
-                     全是运行时降级链，版本号一次都没被读过；真正影响行为的是「哪一家 UI」，
-                     它决定自启动页跳哪儿、第 4 步文案怎么写、用哪张相机包名表。 -->
+                <!-- 【5.6.13 公益】寻找宝贝回家：数据源 wumisc/antiburn-missing-kids（隔天更新）。
+                     首页展示前两条，点卡片打开宝贝回家官方登记页。 -->
                 <LinearLayout
+                    android:id="@+id/card_missing_kids"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:background="@color/card_bg"
                     android:orientation="vertical"
-                    android:paddingLeft="14dp"
-                    android:paddingRight="14dp"
-                    android:paddingTop="12dp"
-                    android:paddingBottom="12dp">
+                    android:padding="14dp">
 
                     <TextView
-                        android:id="@+id/tv_rom_caption"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:maxLines="1"
-                        android:ellipsize="end"
-                        android:text="正在识别系统 UI…"
+                        android:text="寻找宝贝回家 · 公益"
                         android:textColor="@color/text_primary"
-                        android:textSize="12.5sp" />
-
-                    <!--
-                        七家厂商 + 原生 + 自动 = 9 个芯片（5.2.0 补了三星）。
-                        360dp 宽的机器一行放 9 个，每个只剩约 32dp，「OPPO」都挤不下，
-                        所以排三行三列：每行 3 个 × weight=1，宽度自动均分，
-                        大屏小屏都不会溢出，也不用再靠 autoSize 缩到 7sp 勉强塞进去。
-                        顺序（与 MainActivity.ROM_CHIP_KEYS 严格一致）：
-                          自动 / 小米 / 三星
-                          荣耀 / OPPO / vivo
-                          华为 / 魅族 / 原生
-                    -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="9dp"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:id="@+id/chip_rom_auto"
-                            style="@style/RomChip"
-                            android:text="自动" />
-
-                        <TextView
-                            android:id="@+id/chip_rom_hyperos"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="小米" />
-
-                        <TextView
-                            android:id="@+id/chip_rom_oneui"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="三星" />
-                    </LinearLayout>
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="5dp"
+                        android:layout_marginTop="12dp"
                         android:orientation="horizontal">
 
-                        <TextView
-                            android:id="@+id/chip_rom_magicos"
-                            style="@style/RomChip"
-                            android:text="荣耀" />
+                        <!-- 第一条 -->
+                        <LinearLayout
+                            android:id="@+id/kid_card_1"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="center_horizontal"
+                            android:orientation="vertical"
+                            android:padding="6dp">
 
-                        <TextView
-                            android:id="@+id/chip_rom_coloros"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="OPPO" />
+                            <ImageView
+                                android:id="@+id/iv_kid_photo_1"
+                                android:layout_width="104dp"
+                                android:layout_height="104dp"
+                                android:background="@color/bg"
+                                android:scaleType="centerCrop"
+                                android:contentDescription="走失儿童照片" />
 
-                        <TextView
-                            android:id="@+id/chip_rom_originos"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="vivo" />
+                            <TextView
+                                android:id="@+id/tv_kid_name_1"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:gravity="center"
+                                android:text="加载中…"
+                                android:textColor="@color/text_primary"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tv_kid_info_1"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:ellipsize="end"
+                                android:gravity="center"
+                                android:maxLines="2"
+                                android:text="数据来自宝贝回家寻子网"
+                                android:textColor="@color/text_hint"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                        <View
+                            android:layout_width="12dp"
+                            android:layout_height="match_parent" />
+
+                        <!-- 第二条 -->
+                        <LinearLayout
+                            android:id="@+id/kid_card_2"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="center_horizontal"
+                            android:orientation="vertical"
+                            android:padding="6dp">
+
+                            <ImageView
+                                android:id="@+id/iv_kid_photo_2"
+                                android:layout_width="104dp"
+                                android:layout_height="104dp"
+                                android:background="@color/bg"
+                                android:scaleType="centerCrop"
+                                android:contentDescription="走失儿童照片" />
+
+                            <TextView
+                                android:id="@+id/tv_kid_name_2"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:gravity="center"
+                                android:text="加载中…"
+                                android:textColor="@color/text_primary"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tv_kid_info_2"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:ellipsize="end"
+                                android:gravity="center"
+                                android:maxLines="2"
+                                android:text="数据来自宝贝回家寻子网"
+                                android:textColor="@color/text_hint"
+                                android:textSize="11sp" />
+                        </LinearLayout>
                     </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="5dp"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:id="@+id/chip_rom_harmonyos"
-                            style="@style/RomChip"
-                            android:text="华为" />
-
-                        <TextView
-                            android:id="@+id/chip_rom_flyme"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="魅族" />
-
-                        <TextView
-                            android:id="@+id/chip_rom_aosp"
-                            style="@style/RomChip"
-                            android:layout_marginStart="5dp"
-                            android:text="原生" />
-                    </LinearLayout>
-                </LinearLayout>
-
-                <!--
-                    【5.5.0 隐私】两项本地隐私开关：
-                      · 隐藏桌面图标：防他人随手打开，隐藏后靠确认对话框 + 控制中心磁贴恢复；
-                      · 不显示在最近任务：从系统「最近任务」里抹掉本 App。
-                    两项都只改本机 App 行为，与 SystemUI 里的 Hook 无关。
-                -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:background="@color/card_bg"
-                    android:orientation="vertical">
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingLeft="16dp"
-                        android:paddingRight="16dp"
-                        android:paddingTop="12dp"
-                        android:text="隐私"
+                        android:layout_marginTop="10dp"
+                        android:text="发现线索请拨 110 · 点击查看详情"
                         android:textColor="@color/text_hint"
-                        android:textSize="12sp" />
+                        android:textSize="11sp" />
 
-                    <LinearLayout
-                        android:id="@+id/btn_hide_launcher"
-                        style="@style/RowStyle">
-
-                        <TextView
-                            android:id="@+id/tv_hide_launcher"
-                            style="@style/RowTitle"
-                            android:layout_width="0dp"
-                            android:layout_weight="1"
-                            android:text="隐藏桌面图标" />
-
-                        <TextView
-                            android:id="@+id/tv_hide_launcher_state"
-                            style="@style/RowHint"
-                            android:text="已显示" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/btn_hide_recent"
-                        style="@style/RowStyle">
-
-                        <TextView
-                            android:id="@+id/tv_hide_recent"
-                            style="@style/RowTitle"
-                            android:layout_width="0dp"
-                            android:layout_weight="1"
-                            android:text="不显示在最近任务" />
-
-                        <TextView
-                            android:id="@+id/tv_hide_recent_state"
-                            style="@style/RowHint"
-                            android:text="已显示" />
-                    </LinearLayout>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="本卡片需使用互联网权限，联网读取公开寻亲资料与照片，不上传本机隐私信息"
+                        android:textColor="@color/text_hint"
+                        android:textSize="10sp" />
                 </LinearLayout>
 
             </LinearLayout>
@@ -576,6 +537,74 @@
 
                 </LinearLayout>
 
+                <!--
+                    【5.5.0 隐私】两项本地隐私开关：
+                      · 隐藏桌面图标：防他人随手打开，隐藏后靠确认对话框 + 控制中心磁贴恢复；
+                      · 不显示在最近任务：从系统「最近任务」里抹掉本 App。
+                    两项都只改本机 App 行为，与 SystemUI 里的 Hook 无关。
+                -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@color/card_bg"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingLeft="16dp"
+                        android:paddingRight="16dp"
+                        android:paddingTop="12dp"
+                        android:text="隐私"
+                        android:textColor="@color/text_hint"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:id="@+id/btn_hide_launcher"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            android:id="@+id/tv_hide_launcher"
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="隐藏桌面图标" />
+
+                        <TextView
+                            android:id="@+id/tv_hide_launcher_state"
+                            style="@style/RowHint"
+                            android:text="已显示" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/btn_hide_recent"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            android:id="@+id/tv_hide_recent"
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="不显示在最近任务" />
+
+                        <TextView
+                            android:id="@+id/tv_hide_recent_state"
+                            style="@style/RowHint"
+                            android:text="已显示" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingLeft="16dp"
+                        android:paddingRight="16dp"
+                        android:paddingBottom="12dp"
+                        android:text="步数、位置、急救信息等仅在本机处理，不上传服务器。"
+                        android:textColor="@color/text_hint"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
                 <!-- 诊断日志开关：文案由代码写成「诊断日志：开 / 关」 -->
                 <LinearLayout
                     android:id="@+id/btn_toggle_log"
@@ -591,24 +620,6 @@
 
                     <TextView
                         style="@style/RowChevron" />
-                </LinearLayout>
-
-                <!-- 长按进入实验区 -->
-                <LinearLayout
-                    android:id="@+id/btn_lab"
-                    style="@style/RowStyle"
-                    android:layout_marginTop="16dp"
-                    android:background="@color/card_bg">
-
-                    <TextView
-                        style="@style/RowTitle"
-                        android:layout_weight="1"
-                        android:text="功能实验区"
-                        android:textColor="@color/accent_warn" />
-
-                    <TextView
-                        style="@style/RowHint"
-                        android:text="长按进入" />
                 </LinearLayout>
 
             </LinearLayout>

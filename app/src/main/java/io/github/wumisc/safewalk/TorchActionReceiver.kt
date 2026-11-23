@@ -21,7 +21,7 @@ import io.github.wumisc.safewalk.torch.TorchResult
 class TorchActionReceiver : BroadcastReceiver() {
 
     companion object {
-        // @JvmField：Java 侧（LabActivity 的手电测试）要直接读，否则只能走 Companion.getX()
+        // @JvmField：跨层直接读常量，避免走 Companion.getX()
         @JvmField val ACTION_TORCH_ON = io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_ON
         @JvmField val ACTION_TORCH_OFF = io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_OFF
     }

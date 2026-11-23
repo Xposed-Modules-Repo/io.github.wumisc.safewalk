@@ -485,7 +485,7 @@ object DiagLog {
     fun probeReport(): String = lastProbeReport
 
     /**
-     * 读日志文件末尾若干行，直接显示在实验区里。
+     * 读日志文件末尾若干行，供诊断界面展示。
      *
      * 用户手上没有 adb，出问题时唯一能提供的现场就是这段文字 ——
      * 以前只能说「去抓 logcat」，等于把排查门槛抬到了开发者。

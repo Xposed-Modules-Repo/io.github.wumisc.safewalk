@@ -2573,6 +2573,7 @@ class RearCameraOverlay(
      * 当前走这条路径的只有两项，都在 CaptureRequest 里：闪光灯联动（FLASH_MODE_TORCH）
      * 与低光增强（CONTROL_AE_EXPOSURE_COMPENSATION）。
      */
+
     private fun refreshRequestInSession() {
         val d = camera
         val cs = session

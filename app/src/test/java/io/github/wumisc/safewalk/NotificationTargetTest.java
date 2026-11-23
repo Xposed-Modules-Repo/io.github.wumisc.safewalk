@@ -154,9 +154,7 @@ public class NotificationTargetTest {
                 SafeWalkPrefKey.travelMode,
                 SafeWalkPrefKey.stepThreshold,
                 SafeWalkPrefKey.staticResetSec,
-                SafeWalkPrefKey.torchStaticMinutes,
-                SafeWalkPrefKey.testRearCamAction,
-                SafeWalkPrefKey.testRearCamTs
+                SafeWalkPrefKey.torchStaticMinutes
         };
         for (String k : usedByHook) {
             assertTrue("Hook 使用的配置键不在白名单: " + k,

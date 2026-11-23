@@ -51,8 +51,7 @@ public class StabilityTest {
             EmergencyCardActivity.class,
             ThanksActivity.class,
             AcknowledgementsActivity.class,
-            DonateQrActivity.class,
-            LabActivity.class
+            DonateQrActivity.class
     };
 
     @Before

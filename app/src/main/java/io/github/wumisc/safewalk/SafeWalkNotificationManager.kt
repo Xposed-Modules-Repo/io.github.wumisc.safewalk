@@ -1,10 +1,12 @@
 package io.github.wumisc.safewalk
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -117,18 +119,50 @@ class SafeWalkNotificationManager(private val ctx: Context) {
             .setTimeoutAfter(60_000)
             // 声音交给 channel 管。原来这里又加了一次 DEFAULT_SOUND，
             // 等于「channel 响一声 + 通知再响一声」，部分 ROM 上真的会连响两次。
-            // HyperOS 超级岛扩展
-            .setExtras(
+            // 【5.6.12 BUG 修复】HyperOS 超级岛：miui.focus.param 必须是 JSON 字符串。
+            // 旧实现塞的是 Bundle（miui.focus.template=notification），系统直接忽略，
+            // 注释写着「全部走超级岛」实际一条都没上岛。改用 FocusNotifyParam 正确构造，
+            // 单点修复后全部提醒/故障告知正确上岛；无焦点权限自动退化普通通知。
+            .addExtras(
                 Bundle().apply {
-                    putBundle("miui.focus.param", Bundle().apply {
-                        putString("miui.focus.template", "notification")
-                    })
+                    putString("miui.focus.param", FocusNotifyParam.json(title, msg, islandTag(title)))
                 }
             )
     }
 
+    /** 岛摘要态短标签（≤4 字）：按标题关键词归类，调用方无需逐个传参。 */
+    private fun islandTag(title: String): String = when {
+        title.contains("电量") -> "电量"
+        title.contains("证件") -> "证件"
+        title.contains("久坐") -> "久坐"
+        title.contains("抬头") -> "抬头"
+        title.contains("久走") -> "久走"
+        title.contains("独行") -> "独行"
+        title.contains("社交") || title.contains("到场") -> "到场"
+        title.contains("夜间照明") -> "照明"
+        title.contains("画面打不开") -> "故障"
+        title.contains("后台相机") -> "相机"
+        title.contains("悬浮窗权限") -> "权限"
+        title.contains("常驻通知被关闭") -> "渠道"
+        title.contains("自动恢复") -> "恢复"
+        else -> "提醒"
+    }
+
     private fun notify(id: Int, b: NotificationCompat.Builder) {
         (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, b.build())
+    }
+
+    /** 带岛内按钮的通知：覆盖焦点 JSON（含 actions）并挂 miui.focus.actions Bundle。 */
+    private fun notifyWithActions(
+        id: Int,
+        b: NotificationCompat.Builder,
+        focusJson: String,
+        focusActions: Bundle
+    ) {
+        val n = b.build()
+        n.extras.putString("miui.focus.param", focusJson)
+        n.extras.putBundle("miui.focus.actions", focusActions)
+        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, n)
     }
 
     fun batteryWarning() {
@@ -141,7 +175,7 @@ class SafeWalkNotificationManager(private val ctx: Context) {
      *
      * @param scene 到达的场所类别（旅游 / 求职 …）。带场景时文案换成「到了这儿该
      *              注意什么」，比原来那句任何时刻都一样的通稿有用得多；null 时为
-     *              通用文案（实验区手动测试走这条）。
+     *              通用文案（手动测试走这条）。
      */
     @JvmOverloads
     fun idReminder(scene: String? = null) {
@@ -374,6 +408,18 @@ class SafeWalkNotificationManager(private val ctx: Context) {
             .addAction(android.R.drawable.ic_menu_view, "打开SafeWalk", openPi)
             .setTimeoutAfter(120_000)
 
-        notify(ID_TORCH, b)
+        // 【5.6.12】岛内带「手电筒」按钮：focus actions 与 JSON actions 一一对应
+        val torchAction = Notification.Action.Builder(
+            Icon.createWithResource(ctx, android.R.drawable.ic_media_play), "手电筒", torchPi
+        ).build()
+        val focusActions = Bundle().apply {
+            putParcelable("miui.focus.action_torch", torchAction)
+        }
+        val focusJson = FocusNotifyParam.json(
+            "SafeWalk 夜间照明", "天黑了，点按钮开手电筒照亮前路", "照明",
+            actions = listOf("miui.focus.action_torch"),
+            hintAction = "miui.focus.action_torch"
+        )
+        notifyWithActions(ID_TORCH, b, focusJson, focusActions)
     }
 }

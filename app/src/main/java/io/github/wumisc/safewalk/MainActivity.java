@@ -112,10 +112,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 这样即使行走模式没开（服务未起）也能正常提醒。start 幂等，不会重复注册。
         PlaceArrivalMonitor.start(getApplicationContext());
 
-        // 上次在实验区临时打开过预览、又没点「关闭预览」就退出（甚至进程被杀）时，
-        // 备份会留在 SP 里。必须在 initUI 之前还原，否则首页会先按旧值渲染一遍。
-        LabActivity.recoverStaleOverride(this);
-
         // 界面先建起来，权限再异步申请。
         // 之前缺权限直接 return，用户看到的是一整页空白磁贴，像是「App 坏了」。
         initUI();
@@ -253,7 +249,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
      *
      * Android 11 起，没有这个权限就写不进 /storage/emulated/0/Android/Travel safely/，
      * 日志只会落到应用专属目录 —— 用户按这个路径去找，永远是空的。
-     * 只在第一次提示，拒绝之后可以在「功能实验区」里重新打开。
+     * 只在第一次提示，拒绝之后可在关于页「权限与无障碍」引导页重新开启。
      */
     private void maybeGuideLogDir() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return;
@@ -391,25 +387,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 首页 / 智能提醒页 / 行走模式页的每个开关都是改完立即 commit + exportConfig，
         // 不再需要用户额外点一次保存。
 
-        // 【系统 UI 适配 · 首页入口】八个芯片：自动 + 六家厂商 + 原生，两行四列。
-        // 控件顺序、ROM_CHIP_KEYS 顺序、布局里的 XML 顺序三者必须一致，
-        // 否则高亮会落在邻居身上（数组越界有 length 兜着，串位却不会报错）。
-        tvRomCaption = findViewById(R.id.tv_rom_caption);
-        romChips = new TextView[]{
-                findViewById(R.id.chip_rom_auto),
-                findViewById(R.id.chip_rom_hyperos),
-                findViewById(R.id.chip_rom_oneui),
-                findViewById(R.id.chip_rom_magicos),
-                findViewById(R.id.chip_rom_coloros),
-                findViewById(R.id.chip_rom_originos),
-                findViewById(R.id.chip_rom_harmonyos),
-                findViewById(R.id.chip_rom_flyme),
-                findViewById(R.id.chip_rom_aosp)
-        };
-        for (int i = 0; i < ROM_CHIP_KEYS.length && i < romChips.length; i++) {
-            final String key = ROM_CHIP_KEYS[i];
-            romChips[i].setOnClickListener(v -> selectRom(key));
-        }
+        // 【5.6.13】本机 UI 手动选择芯片卡已按需求移除（首页不再展示）。
+        // 后台自动识别保留：loadConfig() 仍算 romId 供设置页跳转/引导文案使用，
+        // 跨机型适配能力一字未减，只是不再让用户手选。tvRomCaption/romChips 为 null，
+        // refreshRomUi() 开头判空直接返回。
 
         // 底部导航
         pageSettings = findViewById(R.id.page_settings);
@@ -454,10 +435,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 支持捐赠（直接打开二维码页面）
         findViewById(R.id.btn_donate).setOnClickListener(v ->
                 startActivity(new Intent(this, DonateQrActivity.class)));
-        findViewById(R.id.btn_lab).setOnLongClickListener(v -> {
-            startActivity(new Intent(this, LabActivity.class));
-            return true;
-        });
+
+        // 【5.6.13】功能实验区已整体删除：二级界面、入口、长按跳转及
+        // 配套的一次性测试指令通道一并移除，普通用户界面不再出现实验入口。
 
         // 诊断日志磁贴：点一下开/关切换
         android.view.View tileLog = findViewById(R.id.btn_toggle_log);
@@ -478,11 +458,59 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     android.widget.Toast.LENGTH_SHORT).show();
         });
 
-        // 【5.5.0 隐私】两项本地隐私开关
+        // 【5.5.0 隐私】两项本地隐私开关（5.6.13 起布局移入「关于」页，ID 不变，接线不变）
         tvHideLauncherState = findViewById(R.id.tv_hide_launcher_state);
         tvHideRecentState = findViewById(R.id.tv_hide_recent_state);
         findViewById(R.id.btn_hide_launcher).setOnClickListener(v -> onToggleHideLauncher());
         findViewById(R.id.btn_hide_recent).setOnClickListener(v -> onToggleHideRecent());
+
+        // 【5.6.13 公益】寻找宝贝回家卡片：异步加载最新一条，点卡片打开官方登记页。
+        setupMissingKidsCard();
+    }
+
+    /** 公益卡片：加载/渲染/点击。任何失败都降级为占位文案，不影响首页。 */
+    private void setupMissingKidsCard() {
+        android.view.View card = findViewById(R.id.card_missing_kids);
+        if (card == null) return;
+        MissingKidsRepository.load(this, kids -> {
+            if (isFinishing() || isDestroyed()) return kotlin.Unit.INSTANCE;
+            for (int i = 0; i < Math.min(kids.size(), MissingKidsRepository.SHOW_COUNT); i++) {
+                bindKid(i, kids.get(i));
+            }
+            return kotlin.Unit.INSTANCE;
+        });
+    }
+
+    /** 绑定第 idx（0 起）条公益卡：姓名/副标题/照片/点击跳官方登记页。 */
+    private void bindKid(int idx, MissingKidsRepository.Kid kid) {
+        int nameId, infoId, photoId, cardId;
+        if (idx == 0) {
+            nameId = R.id.tv_kid_name_1; infoId = R.id.tv_kid_info_1;
+            photoId = R.id.iv_kid_photo_1; cardId = R.id.kid_card_1;
+        } else {
+            nameId = R.id.tv_kid_name_2; infoId = R.id.tv_kid_info_2;
+            photoId = R.id.iv_kid_photo_2; cardId = R.id.kid_card_2;
+        }
+        final android.widget.TextView tvName = findViewById(nameId);
+        final android.widget.TextView tvInfo = findViewById(infoId);
+        final android.widget.ImageView ivPhoto = findViewById(photoId);
+        final android.view.View kidCard = findViewById(cardId);
+
+        tvName.setText(kid.getName());
+        tvInfo.setText(MissingKidsRepository.subtitle(kid));
+        kidCard.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(kid.getUrl())));
+            } catch (Throwable t) {
+                DiagLog.log("[kids] 打开登记页失败: " + t.getMessage());
+            }
+        });
+        if (kid.getPhoto() != null && !kid.getPhoto().isEmpty()) {
+            MissingKidsRepository.loadPhoto(this, kid.getPhoto(), bmp -> {
+                if (bmp != null && !isFinishing() && !isDestroyed()) ivPhoto.setImageBitmap(bmp);
+                return kotlin.Unit.INSTANCE;
+            });
+        }
     }
 
     // ========== 配置读写 ==========

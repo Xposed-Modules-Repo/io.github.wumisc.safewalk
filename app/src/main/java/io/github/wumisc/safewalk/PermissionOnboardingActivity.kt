@@ -168,11 +168,19 @@ class PermissionOnboardingActivity : Activity() {
         fallback
     }
 
-    /** 清单里一行的静态信息 + 一个「当前状态」取值器（onResume 时反复调用）。 */
+    /**
+     * 清单里一行的静态信息 + 一个「当前状态」取值器（onResume 时反复调用）。
+     *
+     * 【5.6.13 必需/可选分级】[required] 标记「不给就影响核心运行」的项：
+     * 运行时（通知/身体活动/相机/定位）、悬浮窗、电池白名单、所有文件访问。
+     * 这些是行走模式赖以运行的权限，点「完成」前必须授予（可查询的才计入闸门）。
+     * 急救卡（电话/短信）、后台定位、无障碍、自启动为可选/建议项，不阻塞完成。
+     */
     private class PermItem(
         val name: String,
         val desc: String,
         val type: String,
+        val required: Boolean = false,
         val state: () -> PermState
     )
 
@@ -318,6 +326,22 @@ class PermissionOnboardingActivity : Activity() {
 
         val btnDone = findViewById<Button>(R.id.btn_done)
         btnDone.setOnClickListener {
+            // 【5.6.13 必需权限闸门】行走模式赖以运行的必需项未授予时不放行：
+            // 把缺失名单讲清楚，引导去申请/逐项开启；可选（急救卡/后台定位/无障碍）不阻塞。
+            val missing = requiredMissing()
+            if (missing.isNotEmpty()) {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("必需权限未授予")
+                    .setMessage(
+                        "为保证行走模式正常运行，以下权限必须开启：\n" +
+                            missing.joinToString("\n") +
+                            "\n\n急救卡（电话/短信）、后台定位、无障碍为可选，可稍后再给。"
+                    )
+                    .setPositiveButton("一键申请必需") { _, _ -> requestAllRuntime() }
+                    .setNegativeButton("逐项开启") { _, _ -> onSpecialClicked(btnSpecial) }
+                    .show()
+                return@setOnClickListener
+            }
             // 【5.3.0】首次安装还没重启系统界面就点「完成」：把后果说清楚再放人走。
             // 不拦着（用户可能想先去 LSPosed 勾作用域），但必须让他知道
             // 接下来会看到「开关打开了却什么都没发生」。
@@ -468,70 +492,101 @@ class PermissionOnboardingActivity : Activity() {
      */
     private fun buildItems(): List<PermItem> = listOf(
         PermItem(
-            "① 运行时权限（7 项）",
-            "通知、身体活动、相机、电话/短信/定位（急救卡撞击预警自动求助）",
-            "点下方按钮一键申请",
-            {
-                // 与 requestAllRuntime() 用同一套按 SDK 过滤的组装逻辑，
-                // 避免「已全授予」却因请求了本机不存在的权限而误报缺失。
-                val perms = ArrayList<String>(7)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    perms.add(Manifest.permission.POST_NOTIFICATIONS)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    perms.add(Manifest.permission.ACTIVITY_RECOGNITION)
-                }
-                perms.add(Manifest.permission.CAMERA)
-                perms.add(Manifest.permission.CALL_PHONE)
-                perms.add(Manifest.permission.SEND_SMS)
-                perms.add(Manifest.permission.ACCESS_FINE_LOCATION)
-                perms.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                multiRuntimeState(perms.toTypedArray())
-            }
+            "① 必需运行时权限",
+            "· 通知：出行、故障等提醒推送\n" +
+                "· 身体活动：计步与步态检测\n" +
+                "· 相机：后置路况预览画面\n" +
+                "· 定位：到达地点识别与位置判断",
+            "必需 · 点下方按钮一键申请",
+            required = true,
+            { multiRuntimeState(requiredRuntime()) }
         ),
         PermItem(
-            "② 悬浮窗",
+            "② 电话 / 短信（急救卡·可选）",
+            "仅用于急救卡撞击预警自动求助；不给不影响行走模式",
+            "可选 · 一键申请时可拒绝",
+            required = false,
+            { multiRuntimeState(arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.SEND_SMS)) }
+        ),
+        PermItem(
+            "③ 悬浮窗",
             "角落小窗 / 全屏路况叠加显示（SYSTEM_ALERT_WINDOW）",
-            "需手动开启",
+            "必需 · 需手动开启",
+            required = true,
             { overlayState() }
         ),
         PermItem(
-            "③ 电池优化白名单",
+            "④ 电池优化白名单",
             "避免系统在后台杀掉行走检测与悬浮窗",
-            "需手动开启",
+            "必需 · 需手动开启",
+            required = true,
             { batteryState() }
         ),
         PermItem(
-            "④ 自启动 / 后台活动",
+            "⑤ 自启动 / 后台活动",
             safeRom("开机或被回收后自动恢复行走模式") { OnboardingSteps.autostartDesc(romId) },
-            if (romId.hasVendorPages) "需手动开启" else "本系统无需设置",
+            if (romId.hasVendorPages) "建议 · 需手动开启" else "本系统无需设置",
+            required = false,
             { manualState() }
         ),
         PermItem(
-            "⑤ 所有文件访问",
+            "⑥ 所有文件访问",
             "写入 /storage/emulated/0/Android/Travel safely 诊断日志",
-            "需手动开启",
+            "必需 · 需手动开启",
+            required = true,
             { allFilesState() }
         ),
         PermItem(
-            "⑥ 后台定位（到达提醒）",
+            "⑦ 后台定位（到达提醒·可选）",
             "屏幕黑着、手机装兜里也能识别「到了车站/景区/商圈」并提醒",
-            "需手动开启 · 位置选「始终允许」",
+            "可选 · 位置选「始终允许」",
+            required = false,
             { backgroundLocationState() }
         ),
         PermItem(
-            "⑦ 无障碍（可选）",
+            "⑧ 无障碍（可选）",
             "在系统无障碍里提供本应用入口；开启后可自动避让相机类应用",
             "可选 · 手动开启",
+            required = false,
             { a11yState() }
         ),
         PermItem(
-            "⑧ ROOT 与传感器",
+            "⑨ ROOT 与传感器",
             "ROOT 仅用于「重启系统界面」兜底；加速度计 / 光线 / 计步器由系统直接提供",
             "仅说明 · 不申请、不弹授权框",
+            required = false,
             { rootState() }
         )
     )
+
+    /** 必需运行时权限（不含急救卡电话/短信）。与 requestAllRuntime 的必需子集一致。 */
+    private fun requiredRuntime(): Array<String> {
+        val perms = ArrayList<String>(5)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            perms.add(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+        perms.add(Manifest.permission.CAMERA)
+        perms.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        perms.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        return perms.toTypedArray()
+    }
+
+    /**
+     * 【5.6.13】完成闸门：可查询的必需项仍缺失的名单。
+     * 自启动无查询接口、急救卡/后台定位/无障碍为可选，均不计入，避免「永远完不成」。
+     */
+    private fun requiredMissing(): List<String> {
+        val out = ArrayList<String>()
+        for ((item, _) in rows) {
+            if (!item.required) continue
+            val st = try { item.state() } catch (_: Throwable) { PermState("", colorBad, true) }
+            if (st.missing) out.add(item.name)
+        }
+        return out
+    }
 
     // ============================ 状态取值（一律用原生 API，不引 androidx） ============================
 

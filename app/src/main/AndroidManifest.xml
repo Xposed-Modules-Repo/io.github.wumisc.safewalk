@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 公益「寻找宝贝回家」数据源 JSON 与照片下载（App 自身进程联网） -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- 开机 / 解锁后自动恢复预览服务（见 KeepAliveReceiver） -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
@@ -325,11 +327,6 @@
             android:theme="@style/Theme.Safewalk"
             android:label="功能建议"
             android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".LabActivity"
-            android:exported="false"
-            android:label="功能实验区" />
 
         <activity
             android:name=".AcknowledgementsActivity"

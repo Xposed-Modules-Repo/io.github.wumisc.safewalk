@@ -63,29 +63,6 @@ object SafeWalkPrefKey {
     /** 手电静置提醒时间（分钟）：手电开着+静置多久后弹提醒 */
     const val torchStaticMinutes = "torchStaticMinutes"
 
-    // ===== 行走模式测试指令（实验区用，跨进程） =====
-    /** 行走模式测试动作：open_full / open_small / close / ""（空=无动作） */
-    const val testRearCamAction = "testRearCamAction"
-
-    /**
-     * 一次性指令的写入时刻。
-     *
-     * 没有它就会出现「幽灵预览」：用户在设置页调了一次参数，但当时 Hook 没激活
-     * （LSPosed 没勾作用域）；几天后 Hook 上线，轮询读到这条陈年指令，
-     * 手机上毫无征兆地弹出后置摄像头画面。
-     * Hook 端现在会丢弃超过 [TEST_ACTION_TTL_MS] 的指令。
-     */
-    const val testRearCamTs = "testRearCamTs"
-
-    /**
-     * 一次性指令的有效期。
-     *
-     * 必须**大于** Hook 端配置缓存的 60 秒：广播被 ROM 拦掉时，指令只能等
-     * tick 兜底读取，而 tick 读的是缓存配置。有效期若是 60 秒，会出现
-     * 「指令刚写进去就已经过期」的死角，预览照样点不动。取 3 倍余量。
-     */
-    const val TEST_ACTION_TTL_MS = 180_000L
-
     // 急救卡
     const val emerName = "emerName"
     const val emerBlood = "emerBlood"
@@ -650,16 +627,6 @@ object SafeWalkConfig {
             }
         }
         return loadConfigFromFile()
-    }
-
-    /** Hook端：清空实验区一次性测试指令 */
-    @JvmStatic
-    fun clearTestAction(ctx: Context?) {
-        try {
-            val uri = android.net.Uri.parse("content://${ConfigProvider.AUTHORITY}/config")
-            ctx?.contentResolver?.call(uri, "clearTestAction", null, null)
-        } catch (_: Throwable) {
-        }
     }
 
     /** 兼容旧路径：直接读私有 JSON 文件（仅同进程或 root 可读） */

@@ -6,7 +6,6 @@ import android.content.Context
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
-import android.os.Bundle
 import org.json.JSONObject
 
 /**
@@ -66,8 +65,6 @@ class ConfigProvider : ContentProvider() {
             // 日志总开关也要透传：它不在白名单里时，Hook 侧 `pref(enableDiagLog, true)`
             // 永远拿默认值 true —— 用户关掉日志开关，SystemUI 那边照样往文件里写。
             SafeWalkPrefKey.enableDiagLog,
-            SafeWalkPrefKey.testRearCamAction,
-            SafeWalkPrefKey.testRearCamTs,
             // 本次迭代新增（跨进程给 Hook 用）：
             //  · enablePreviewContrast 悬浮窗对比度开关（App 侧悬浮窗也读，顺带透传保持一致）；
             //  · previewContrastLevel 对比度强度 0~100（同上，保证导出配置不丢这一项）。
@@ -209,22 +206,6 @@ class ConfigProvider : ContentProvider() {
         return MatrixCursor(arrayOf(COLUMN)).apply {
             addRow(arrayOf<Any>(json.toString()))
         }
-    }
-
-    /** 支持 call("clearTestAction")：Hook 端执行完实验区指令后清空该字段 */
-    override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        if (!isTrustedCaller()) return null
-
-        if (method == "clearTestAction") {
-            val ctx = context ?: return null
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()?.remove(SafeWalkPrefKey.testRearCamAction)?.apply()
-            // 同步刷新 JSON 文件：Hook 端在 Provider 不可用时会回退读文件，
-            // 文件里残留旧指令会导致预览被反复触发
-            SafeWalkConfig.exportConfig(ctx)
-            return Bundle().apply { putBoolean("ok", true) }
-        }
-        return null
     }
 
     override fun getType(uri: Uri): String = "application/json"

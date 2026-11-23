@@ -31,6 +31,16 @@
             android:textColor="@color/text_hint"
             android:textSize="13sp"/>
 
+        <TextView
+            android:id="@+id/tv_perm_purpose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="3dp"
+            android:text="权限用途：电话/短信权限用于撞击确认后自动拨打联系人电话、发送求助短信；定位权限在求助短信中附带当前位置。"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp"/>
+
         <!-- v1.1 用户裁决知情提示：撞击确认时关键信息强制锁屏显示 -->
         <LinearLayout
             android:layout_width="match_parent"

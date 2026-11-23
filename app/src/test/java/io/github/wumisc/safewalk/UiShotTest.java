@@ -81,7 +81,6 @@ public class UiShotTest {
 
     @Test
     public void lightPages() {
-        shot(LabActivity.class, "light_lab");
         shot(ThanksActivity.class, "light_thanks");
         shot(AcknowledgementsActivity.class, "light_ack");
         shot(EmergencyCardActivity.class, "light_emergency");
@@ -93,7 +92,6 @@ public class UiShotTest {
     @Test
     @Config(qualifiers = "w411dp-h891dp-night-xhdpi")
     public void darkPages() {
-        shot(LabActivity.class, "dark_lab");
         shot(ThanksActivity.class, "dark_thanks");
         shot(AcknowledgementsActivity.class, "dark_ack");
         shot(EmergencyCardActivity.class, "dark_emergency");

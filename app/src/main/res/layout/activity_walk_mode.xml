@@ -49,6 +49,16 @@
             android:textColor="@color/text_hint"
             android:textSize="13sp" />
 
+        <TextView
+            android:id="@+id/tv_perm_purpose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="3dp"
+            android:text="权限用途：相机权限采集后置路况画面；悬浮窗权限把预览叠加在其他界面之上；身体活动权限判断是否在行走以自动显隐。"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
         <!-- 预览开关 -->
         <LinearLayout style="@style/CardStyle" android:layout_marginTop="16dp">
 

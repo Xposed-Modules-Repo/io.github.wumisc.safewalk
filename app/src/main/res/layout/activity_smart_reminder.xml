@@ -51,6 +51,16 @@
             android:textColor="@color/text_hint"
             android:textSize="13sp" />
 
+        <TextView
+            android:id="@+id/tv_perm_purpose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="3dp"
+            android:text="权限用途：通知权限推送各类提醒；定位权限识别到达的车站/景区/商圈；无障碍服务供行走语音播报。"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
         <!-- 全部开 / 全部关：主按钮 + 次按钮 -->
         <LinearLayout
             android:layout_width="match_parent"

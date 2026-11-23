@@ -6,8 +6,7 @@ package io.github.wumisc.safewalk
  * ## 修的是什么
  *
  * 4.4.0 的探针只看 `stepEventCount == 0`（合格步数），超过 45 秒就报
- * 「❌ 启动 46s 仍未收到任何步数事件 … 先到功能实验区 → 步态自检确认传感器
- * 本身有没有数据」。但 `stepEventCount` 只在 `recordStep()`（喂给 GaitDetector
+ * 「❌ 启动 46s 仍未收到任何步数事件 … 需确认传感器本身有没有数据」。但 `stepEventCount` 只在 `recordStep()`（喂给 GaitDetector
  * 后判定为合格步）里自增，**原始传感器回调数不算**。于是：
  *
  *   · 用户静止 / 拿在手里看日志，传感器每帧都在回调，只是没凑出合格步

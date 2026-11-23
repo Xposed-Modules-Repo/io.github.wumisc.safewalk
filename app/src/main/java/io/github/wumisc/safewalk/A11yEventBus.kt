@@ -36,7 +36,7 @@ data class A11yEventRecord(
  * ## 线程
  *
  * `onAccessibilityEvent` 跑在服务主线程，面板的 UI 刷新也在主线程，理论上不存在
- * 并发。但 `dumpToLog()` 可能从别的线程调用（实验区长按），所以所有入口都加锁，
+ * 并发。但 `dumpToLog()` 可能从别的线程调用（调试入口），所以所有入口都加锁，
  * 并额外用 [CopyOnWriteArrayList] 保护监听器集合的遍历。
  */
 object A11yEventBus {

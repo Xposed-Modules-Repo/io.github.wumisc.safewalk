@@ -83,6 +83,7 @@ public final class WalkPreviewService extends Service {
     // SystemUI 进程里的计步「注册成功但永不回调」，导致自动模式永远不显示；
     // 本服务是 camera 前台服务，传感器回调不会被后台策略掐断，判定可靠。
     private SensorManager sm;
+
     private Sensor accSensor;
     private final GaitDetector gait = new GaitDetector();
     private SensorEventListener gaitListener;
@@ -305,6 +306,7 @@ public final class WalkPreviewService extends Service {
      * 静置巡检：自动模式下超过 [GAIT_STATIC_MS] 无新步 → 判停 → 收起预览。
      * 步行时 GaitDetector 会持续产出步、刷新 lastStepTs，巡检不会误收。
      */
+
     private final Runnable gaitTick = new Runnable() {
         @Override
         public void run() {
@@ -1004,6 +1006,8 @@ public final class WalkPreviewService extends Service {
         // （RearCameraOverlay 的 FLASH_MODE_TORCH），不另起 setTorchMode 抢设备。
         boolean linkEnabled = SafePrefs.getBool(sp, SafeWalkPrefKey.enableNightTorchGait, false);
         boolean night = isNightTime();
+        // 语义：夜间时段 + 开关开 + 角落小窗正在显示 → 闪光灯随预览会话常亮；
+        // 小窗收起（停下 / 让路 / 关开关）→ 预览会话关闭，闪光灯随之熄灭。
         boolean torchWithPreview = linkEnabled && night;
 
         // 【4.9.0 小窗自定义】HUD 文案默认关：早期那句「路况预览中 · 增强对比度」
@@ -1101,7 +1105,8 @@ public final class WalkPreviewService extends Service {
                 screenEnhance, screenContrast, screenShadow, screenSat, rotationMode,
                 landscapeWindowShape, portraitWindowShape, rearCameraFacing, rearCameraLens);
         DiagLog.log("[torch:overlay] 小窗联动闪光灯 | 开关=" + linkEnabled
-                + " 夜间区间=" + night + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
+                + " 夜间区间=" + night
+                + " → " + (torchWithPreview ? "随小窗点亮" : "不点亮")
                 + " | 生命周期=小窗显示即亮、收起即灭（预览会话内 FLASH_MODE_TORCH）");
         DiagLog.log("[overlay] doShow | mode=" + mode + " opacity=" + opacity
                 + " corner=" + corner + " 文字描边=" + contrast + "(" + contrastLevel + "%)"
@@ -2098,6 +2103,10 @@ public final class WalkPreviewService extends Service {
     /** 上次写进常驻通知的副标题；同文案不重发（reportPreviewState 高频调用） */
     private String lastWalkNotifText = null;
 
+    /** 【通知防误拦】常驻通知存在性校验的最小间隔与上次校验时刻（uptimeMillis） */
+    private static final long NOTIF_GUARD_INTERVAL_MS = 60_000L;
+    private long lastNotifGuardMs = 0L;
+
     /**
      * 刷新常驻通知副标题。只在「前台已提起 + 文案真的变了」时 notify 一次；
      * 失败不抛（通知被 ROM 限流/渠道被关都属正常，不影响服务本体）。
@@ -2117,6 +2126,7 @@ public final class WalkPreviewService extends Service {
                     .setContentTitle("行走模式运行中")
                     .setContentText(text)
                     .setContentIntent(openPi)
+                    .setCategory(Notification.CATEGORY_SERVICE)
                     .setOngoing(true)
                     .build();
             nmBase().notify(NOTIF_ID, n);
@@ -2135,9 +2145,45 @@ public final class WalkPreviewService extends Service {
         @Override
         public void run() {
             sendHeartbeat();
+            guardWalkNotification(SystemClock.elapsedRealtime());
             main.postDelayed(this, KeepAlivePolicy.HEARTBEAT_INTERVAL_MS);
         }
     };
+
+    /**
+     * 【通知防误拦 · 兜底】校验本应用常驻通知是否还在，被第三方模块撤掉就重发一次。
+     *
+     * 为什么需要：用户装了「营销通知拦截器」这类 LSPosed 模块并勾选了系统界面，
+     * 它按自己的规则在 SystemUI 侧撤通知，正常的前台服务通知也可能被误伤。
+     * category 声明只能降低误判概率，真正「一定不被拦」只能靠自己发现丢了再补上。
+     *
+     * 只查自己的通知（getActiveNotifications 读的是本应用发布的活动通知，无需任何权限），
+     * 60 秒一次，代价可忽略；若拦截器是「展示层过滤」（通知对象仍在列表里）则不会触发，
+     * 也就不会和它来回打架。
+     */
+    private void guardWalkNotification(long nowRealtime) {
+        if (!foregroundEstablished) return;
+        if (nowRealtime - lastNotifGuardMs < NOTIF_GUARD_INTERVAL_MS) return;
+        lastNotifGuardMs = nowRealtime;
+        try {
+            boolean present = false;
+            for (android.service.notification.StatusBarNotification sbn
+                    : nmBase().getActiveNotifications()) {
+                if (sbn.getId() == NOTIF_ID) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) {
+                // 置空缓存让 refreshWalkNotification 的「文案没变就早退」失效，强制重发
+                lastWalkNotifText = null;
+                refreshWalkNotification();
+                DiagLog.log("[notif] 常驻通知被外部清除/拦截 → 已重发（疑似营销拦截器误伤）");
+            }
+        } catch (Throwable ignored) {
+            // ROM 限制 / 服务已退出：什么都不做，下一次心跳再看
+        }
+    }
 
     private void startHeartbeat() {
         if (heartbeatStarted) return;
@@ -2283,6 +2329,10 @@ public final class WalkPreviewService extends Service {
                 // 不再写死「持续显示中」——自动跟随用户看到那句话会以为小窗一直挂着。
                 .setContentText(walkNotifSubtitle())
                 .setContentIntent(openPi)
+                // 【通知防误拦】显式声明 SERVICE 类别：第三方「营销通知拦截器」类模块
+                // 普遍按 CATEGORY_PROMOTIONS / 无类别低优先级启发式过滤，前台服务
+                // 通知带 SERVICE + ongoing 会被其规则跳过，不再被当成营销通知撤掉。
+                .setCategory(Notification.CATEGORY_SERVICE)
                 .setOngoing(true)
                 .build();
 
