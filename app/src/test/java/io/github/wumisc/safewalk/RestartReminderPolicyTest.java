@@ -4,6 +4,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 import org.junit.Test;
 
 /**
@@ -43,7 +49,7 @@ public class RestartReminderPolicyTest {
                 RestartReminderPolicy.isFirstInstall(56));
         // 两种场景的标题必须不同：用户能一眼看出「我这是刚装」还是「我刚更新」
         assertTrue(RestartReminderPolicy.title(true).contains("首次安装"));
-        assertTrue(RestartReminderPolicy.title(false).contains("更新"));
+        assertTrue(RestartReminderPolicy.title(false).contains("重启"));
     }
 
     @Test
@@ -64,8 +70,8 @@ public class RestartReminderPolicyTest {
         // 升级场景和首次安装的归因不同：模块早就加载过了，问题是「跑的是旧类」。
         // 文案写错会把人引到「去 LSPosed 勾作用域」这条错路上。
         String update = RestartReminderPolicy.body(true, false);
-        assertTrue("升级文案要说明进程里是旧版本",
-                update.contains("旧") || update.contains("上一个版本"));
+        assertTrue("升级/重装文案要说明进程里是安装前的那份代码",
+                update.contains("安装之前") || update.contains("旧"));
         assertTrue(update.contains("系统界面"));
     }
 
@@ -110,6 +116,25 @@ public class RestartReminderPolicyTest {
     }
 
     @Test
+    public void sameVersionReinstallStillPrompts() {
+        // 同版本覆盖安装：versionCode 没变（100 → 100），只看版本号会判定「已确认过」而闭嘴，
+        // 但 SystemUI 里跑的还是安装前那份代码 —— 必须靠安装时间戳识别出来。
+        assertFalse("同版本，版本号判定不出来",
+                RestartReminderPolicy.shouldPrompt(100, 100));
+        assertTrue("但安装时间戳变了 → 这是一次新安装事件，必须提示",
+                RestartReminderPolicy.installStampChanged(1700000000123L, 1700000000000L));
+        assertFalse("同一个安装事件（没重装）→ 不提示",
+                RestartReminderPolicy.installStampChanged(1700000000123L, 1700000000123L));
+        assertFalse("取不到时间戳（0）→ 不误报，退回版本号判定",
+                RestartReminderPolicy.installStampChanged(0L, 1700000000000L));
+        // 同一次安装只弹一次：点「稍后再说」后回前台不再反复骚扰
+        assertTrue(RestartReminderPolicy.alreadyPrompted(1700000000123L, 1700000000123L));
+        assertFalse(RestartReminderPolicy.alreadyPrompted(1700000000456L, 1700000000123L));
+        assertFalse("时间戳为 0 时不能判定成「已弹过」，否则永远弹不出来",
+                RestartReminderPolicy.alreadyPrompted(0L, 0L));
+    }
+
+    @Test
     public void describeExposesBothVersions() {
         // 下次回传日志，一行就能判断拦到的代码是不是新版
         String s = RestartReminderPolicy.describe(57, 56);
@@ -124,5 +149,38 @@ public class RestartReminderPolicyTest {
         // key 一旦改名，用户手机里那条「已确认」版本号就失联 → 又被提示一次
         assertEquals("restartSuiAckedVersionCode", RestartReminderPolicy.KEY_ACK_VERSION);
         assertEquals("safewalk", RestartReminderPolicy.SP_ONEOFF);
+    }
+
+    private static String read(String rel) throws IOException {
+        Path[] c = new Path[] {
+                Paths.get(rel), Paths.get("app", rel),
+                Paths.get(System.getProperty("user.dir", ".")).resolve(rel)
+        };
+        for (Path p : c) {
+            if (Files.isRegularFile(p) && Files.isReadable(p)) {
+                return new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+            }
+        }
+        throw new IOException("找不到 " + rel);
+    }
+
+    @Test
+    public void replaceInstallWritesPendingFlag() throws IOException {
+        // 覆盖安装必须被「看见」：MY_PACKAGE_REPLACED 是系统给的确定信号，
+        // 收到就写待提示标记，下次打开首页无论 versionCode / lastUpdateTime 准不准都要弹。
+        String recv = read("src/main/java/io/github/wumisc/safewalk/KeepAliveReceiver.kt");
+        assertTrue("要监听覆盖安装广播", recv.contains("Intent.ACTION_MY_PACKAGE_REPLACED"));
+        assertTrue("收到后写待提示标记", recv.contains("RestartReminderPolicy.KEY_REPLACED_PENDING"));
+
+        String act = read("src/main/java/io/github/wumisc/safewalk/MainActivity.java");
+        assertTrue("首页判定要读这个标记", act.contains("KEY_REPLACED_PENDING"));
+        assertTrue("标记为 true 时必须无视「已弹过」的拦截",
+                act.contains("!replacedPending && RestartReminderPolicy.alreadyPrompted"));
+
+        // 文案要把「覆盖安装也要重启」说透，否则用户以为只有首次安装才需要
+        assertTrue("非首装文案要提到覆盖安装",
+                RestartReminderPolicy.bodyNeutral(false).contains("覆盖安装"));
+        assertTrue("标题要直接点明覆盖安装完成",
+                RestartReminderPolicy.title(false).contains("覆盖安装"));
     }
 }

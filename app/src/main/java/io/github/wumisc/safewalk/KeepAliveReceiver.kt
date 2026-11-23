@@ -56,6 +56,17 @@ class KeepAliveReceiver : BroadcastReceiver() {
             ) {
                 ConfigBackup.restoreIfNeeded(appCtx)
             }
+            // 覆盖安装是确定的「APK 被换掉了」信号：写一个待提示标记，
+            // 下次打开首页一定弹「重启系统界面」。不能只靠 versionCode 与
+            // lastUpdateTime —— 有的 ROM 覆盖安装后 lastUpdateTime 不刷新，
+            // 就会出现「装了新包却一声不吭、点开关毫无反应」。
+            if (action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+                appCtx.getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(RestartReminderPolicy.KEY_REPLACED_PENDING, true)
+                    .apply()
+                DiagLog.log("[PERM] 收到覆盖安装广播 → 下次打开首页提示重启系统界面")
+            }
         } catch (_: Throwable) {
         }
 

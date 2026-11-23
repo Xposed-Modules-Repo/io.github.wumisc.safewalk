@@ -165,21 +165,64 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private void maybePromptRestartForUpdate() {
         if (isFinishing() || isDestroyed()) return;
         final int installed = BuildConfig.VERSION_CODE;
+        final long installStamp = InstallFingerprint.stamp(this);
+        final long apkSize = InstallFingerprint.apkSize(this);
+        final SharedPreferences sp;
         final int acked;
+        final long handled;
+        final long prompted;
+        final long promptedSize;
+        final boolean replacedPending;
         try {
-            acked = getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, MODE_PRIVATE)
-                    .getInt(RestartReminderPolicy.KEY_ACK_VERSION, 0);
+            sp = getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, MODE_PRIVATE);
+            acked = sp.getInt(RestartReminderPolicy.KEY_ACK_VERSION, 0);
+            handled = sp.getLong(RestartReminderPolicy.KEY_INSTALL_STAMP, 0L);
+            prompted = sp.getLong(RestartReminderPolicy.KEY_PROMPTED_STAMP, 0L);
+            promptedSize = sp.getLong(RestartReminderPolicy.KEY_PROMPTED_SIZE, 0L);
+            replacedPending = sp.getBoolean(RestartReminderPolicy.KEY_REPLACED_PENDING, false);
         } catch (Throwable t) {
             return;
         }
         // acked == 0 表示首次安装（从未确认过）——必须同样提示：
         // 刚装完 SystemUI 里没有本模块代码，不重启就点开关「毫无反应」。
         // 以前这里为了「不重复打扰」直接 return，把首次安装这条路漏掉了。
-        if (!RestartReminderPolicy.shouldPrompt(installed, acked)) return;
+        //
+        // installStampChanged 补上「同版本覆盖安装」：versionCode 没变、只是重装了一遍
+        // （换签名重刷 / adb install -r / 手动再装一次同一包），SystemUI 里仍是旧代码，
+        // 只看 versionCode 会判定「已确认过」而一声不吭。
+        // replacedPending 是第三条独立证据：由 MY_PACKAGE_REPLACED 广播写入
+        // （见 KeepAliveReceiver），即便某些 ROM 的 lastUpdateTime 不刷新，覆盖安装也照样弹。
+        //
+        // apkChanged 是第四条、也是最硬的一条：只比 APK 字节数。同版本重装一个内容
+        // 不同的包（本项目的常态：版本号不动、只改代码再打一次），时间戳可能被 ROM
+        // 复用，但大小换了就一定判定为「新安装事件」。
+        final boolean apkChanged = InstallFingerprint.changed(apkSize,
+                sp.getLong(RestartReminderPolicy.KEY_INSTALL_SIZE, 0L));
+        final boolean need = RestartReminderPolicy.shouldPrompt(installed, acked)
+                || RestartReminderPolicy.installStampChanged(installStamp, handled)
+                || apkChanged
+                || replacedPending;
+        if (!need) return;
+        // 同一次安装事件只弹一次：点「稍后再说」后回前台不再反复骚扰。
+        // 但覆盖安装标记优先：那次安装如果没提示过（stamp 被 ROM 复用了同一个），
+        // 也必须补弹一次，否则标记会永远挂着、永远不提示。
+        if (!replacedPending && RestartReminderPolicy.alreadyPrompted(installStamp, prompted)
+                && !InstallFingerprint.changed(apkSize, promptedSize)) {
+            return;
+        }
         final boolean firstInstall = RestartReminderPolicy.isFirstInstall(acked);
         if (restartPromptShowing) return;
         restartPromptShowing = true;
-        DiagLog.log("[PERM] 首页检测到需重启：" + RestartReminderPolicy.describe(installed, acked));
+        try {
+            sp.edit().putLong(RestartReminderPolicy.KEY_PROMPTED_STAMP, installStamp)
+                    .putLong(RestartReminderPolicy.KEY_PROMPTED_SIZE, apkSize)
+                    .putBoolean(RestartReminderPolicy.KEY_REPLACED_PENDING, false)
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+        DiagLog.log("[PERM] 首页检测到需重启：" + RestartReminderPolicy.describe(installed, acked)
+                + " 安装时间戳=" + installStamp + " apk=" + apkSize + "B 换包=" + apkChanged);
+
         try {
             new AlertDialog.Builder(this)
                     .setTitle(RestartReminderPolicy.title(firstInstall))
@@ -196,13 +239,27 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     /**
+     * 当前这次安装的时间戳（毫秒），作「新安装事件」的指纹。
+     *
+     * 同版本覆盖安装时 versionCode 不变，只有这个值会刷新；取不到时返回 0，
+     * 判定退回 versionCode 那一条，不会误判成「永远需要提示」。
+     * 具体取值见 [InstallFingerprint]：lastUpdateTime 与 APK 落盘时间取较大者，
+     * 避开部分 ROM 覆盖安装不刷新 lastUpdateTime 的坑。
+     */
+    private long currentInstallStamp() {
+        return InstallFingerprint.stamp(this);
+    }
+
+    /**
      * 首页里的「重启系统界面」。
      *
-     * 成功后记下 versionCode —— 下次再启动时 [maybePromptRestartForUpdate] 就不会再问，
-     * 直到下一次升级把 versionCode 顶上去。
+     * 成功后记下 versionCode 与本次安装时间戳 —— 下次再启动时
+     * [maybePromptRestartForUpdate] 就不会再问，直到下一次安装（升级或重装）发生。
      */
     private void restartSystemUiFromMain() {
         DiagLog.log("[PERM] 首页：用户点击「重启系统界面」v" + BuildConfig.VERSION_CODE);
+        final long installStamp = currentInstallStamp();
+        final long apkSize = InstallFingerprint.apkSize(this);
         SystemUiRestarter.restart(this, (ok, viaRoot) -> {
             if (isFinishing() || isDestroyed()) return;
             if (ok) {
@@ -210,6 +267,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, MODE_PRIVATE)
                             .edit()
                             .putInt(RestartReminderPolicy.KEY_ACK_VERSION, BuildConfig.VERSION_CODE)
+                            .putLong(RestartReminderPolicy.KEY_INSTALL_STAMP, installStamp)
+                            .putLong(RestartReminderPolicy.KEY_INSTALL_SIZE, apkSize)
                             .commit();
                 } catch (Throwable ignored) {
                 }

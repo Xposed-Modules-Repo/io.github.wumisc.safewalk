@@ -460,6 +460,8 @@ class PermissionOnboardingActivity : Activity() {
             getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
                 .edit()
                 .putInt(RestartReminderPolicy.KEY_ACK_VERSION, BuildConfig.VERSION_CODE)
+                .putLong(RestartReminderPolicy.KEY_INSTALL_STAMP, InstallFingerprint.stamp(this))
+                .putLong(RestartReminderPolicy.KEY_INSTALL_SIZE, InstallFingerprint.apkSize(this))
                 .commit()
             DiagLog.log("[PERM] 已记录「重启系统界面」完成标记 v${BuildConfig.VERSION_CODE}")
         } catch (t: Throwable) {

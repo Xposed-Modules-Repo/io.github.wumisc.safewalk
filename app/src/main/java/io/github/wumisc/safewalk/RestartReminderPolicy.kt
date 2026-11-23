@@ -56,6 +56,55 @@ object RestartReminderPolicy {
     const val KEY_ACK = "restartSuiAcknowledged"
 
     /**
+     * 上次「已处理」的那次安装的 `PackageInfo.lastUpdateTime`（毫秒）。
+     *
+     * 为什么单靠 versionCode 不够：**同版本覆盖安装**（重装同一个 APK、换签名重刷、
+     * adb install -r 同一个包）versionCode 一点没变，`installed > acked` 永远为 false，
+     * 于是「装完了但 SystemUI 里还是老代码」这种最典型的情况反而不提示。
+     * lastUpdateTime 每次安装都会刷新，正好可以当「这是一次新安装事件」的指纹。
+     */
+    const val KEY_INSTALL_STAMP = "restartSuiInstallStamp"
+
+    /** 这次安装事件已经弹过提示了吗（避免每次回前台都弹一遍） */
+    const val KEY_PROMPTED_STAMP = "restartSuiPromptedStamp"
+
+    /**
+     * 上次「已处理」的那份 APK 的字节数（见 [InstallFingerprint.apkSize]）。
+     *
+     * 第三条证据的落地位：有的 ROM 覆盖安装后 `lastUpdateTime` 与 APK 落盘时间
+     * 都可能被复用，但**二进制大小**换了就一定会变 —— 同版本重装一个改了内容
+     * 的包，靠这一条即可判定为「新安装事件」。
+     */
+    const val KEY_INSTALL_SIZE = "restartSuiInstallSize"
+
+    /** 这次安装事件弹过提示时，记下的那份 APK 大小 */
+    const val KEY_PROMPTED_SIZE = "restartSuiPromptedSize"
+
+    /**
+     * 「刚发生过一次覆盖安装」的待办标记。
+     *
+     * 由 [KeepAliveReceiver] 收到 `MY_PACKAGE_REPLACED` 时写 true。这是第三条独立证据：
+     * 前两条（versionCode 变大、lastUpdateTime 变化）都依赖厂商 ROM 如实上报，
+     * 个别 ROM 覆盖安装后 `lastUpdateTime` 不刷新，会出现「装了新包却一声不吭」。
+     * 系统广播是确定的，收到就一定会提示一次；提示完（或用户点稍后）清掉。
+     */
+    const val KEY_REPLACED_PENDING = "restartSuiReplacedPending"
+
+    /**
+     * 这次安装事件是不是新的（相对上次已处理的那次）。
+     *
+     * stamp 取不到（为 0）时一律返回 false，交给 versionCode 判断兜底。
+     */
+    @JvmStatic
+    fun installStampChanged(currentStamp: Long, handledStamp: Long): Boolean =
+        currentStamp > 0L && currentStamp != handledStamp
+
+    /** 这个安装事件是否已经弹过提示了（同一个 stamp 只弹一次，点「稍后」也不反复骚扰） */
+    @JvmStatic
+    fun alreadyPrompted(currentStamp: Long, promptedStamp: Long): Boolean =
+        currentStamp > 0L && currentStamp == promptedStamp
+
+    /**
      * 是否还要显示这张卡片。
      *
      * @param installedVersionCode 当前已安装 APK 的 versionCode
@@ -74,7 +123,7 @@ object RestartReminderPolicy {
     fun title(firstInstall: Boolean): String = if (firstInstall) {
         "首次安装：还要重启一次系统界面"
     } else {
-        "已更新：重启系统界面后新版本才生效"
+        "覆盖安装完成：还要重启一次系统界面"
     }
 
     /**
@@ -91,8 +140,8 @@ object RestartReminderPolicy {
                 "（SystemUI）进程里。刚装完，那个进程还没加载新模块 —— " +
                 "现在直接去开开关不会有任何反应。"
         } else {
-            "新版 APK 已经装上了，但「系统界面」（SystemUI）进程里跑的仍然是**上一个版本**" +
-                "的代码。模块是在进程启动时注入的，不重启这一步，这次的修改一行都不会生效 —— " +
+            "APK 已经装进磁盘了，但「系统界面」（SystemUI）进程里跑的仍然是**安装之前**" +
+                "的那份代码。模块是在进程启动时注入的，不重启这一步，新装进去的东西一行都不会生效 —— " +
                 "看起来就像「什么都修了，却什么都没变」。"
         }
         return if (rootAvailable) {
@@ -132,8 +181,10 @@ object RestartReminderPolicy {
                 "点下面的按钮重启系统界面（状态栏会消失 2~5 秒后自动回来），不用重启手机；" +
                 "如果点了没反应，请手动重启手机。"
         }
-        return "新版 APK 已经装上，但「系统界面」（SystemUI）进程里跑的仍是上一个版本的代码 —— " +
-            "模块在进程启动时注入，不重启这一步，这次的修改一行都不会生效。\n\n" +
+        return "APK 已经装进磁盘，但「系统界面」（SystemUI）进程里跑的仍是安装之前的那份代码 —— " +
+            "模块在进程启动时注入，不重启这一步，新装进去的东西一行都不会生效。\n\n" +
+            "覆盖安装同样要重启：换签名重刷、同版本再装一遍、adb install -r 都一样，" +
+            "只要 APK 被替换过，SystemUI 里就还是旧类。\n\n" +
             "点下面的按钮重启系统界面（状态栏会消失 2~5 秒后自动回来），不用重启手机。" +
             "如果点了没反应，请手动重启手机。"
     }
