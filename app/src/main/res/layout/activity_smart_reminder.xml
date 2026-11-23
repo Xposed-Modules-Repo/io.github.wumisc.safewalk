@@ -51,6 +51,39 @@
             android:textColor="@color/text_hint"
             android:textSize="13sp" />
 
+        <!-- 权限与无障碍：放在本页最靠前的位置（用户要求）。
+             本页所有提醒都依赖通知 / 身体活动 / 相机 / 定位 / 无障碍等授权，
+             入口贴着标题，用户一眼就能找到并逐项补授权。 -->
+        <LinearLayout
+            android:id="@+id/row_permissions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical">
+
+            <LinearLayout style="@style/RowStyle">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/RowTitle"
+                        android:text="权限与无障碍" />
+
+                    <TextView
+                        style="@style/RowHint"
+                        android:layout_marginTop="2dp"
+                        android:text="逐项查看并补授权：通知、身体活动、相机、定位、悬浮窗、电池白名单、无障碍等" />
+                </LinearLayout>
+
+                <TextView style="@style/RowChevron" />
+            </LinearLayout>
+        </LinearLayout>
+
         <TextView
             android:id="@+id/tv_perm_purpose"
             android:layout_width="match_parent"

@@ -147,10 +147,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             // 延后弹是避免引导框和系统权限框同时出现会叠在一起，用户只会全点掉。
             getWindow().getDecorView().postDelayed(this::maybeGuideLogDir, 1500);
             if (!hasAllPermissions()) requestNeededPermissions();
-            // 【5.3.2】覆盖升级后，SystemUI 里跑的还是旧代码。引导页的卡片只在
-            // 用户主动进去时才看得到，而升级的人通常不会再进——所以首页补一次提示。
-            // 放在这里而不是无条件执行：首次安装由引导页负责，两处同时弹会打架。
-            getWindow().getDecorView().postDelayed(this::maybePromptRestartForUpdate, 2200);
         }
     }
 
@@ -162,8 +158,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
      * 装上以后 A 一点没变」——真机上已经发生过两次（5.3.0 的方向代码、
      * 5.3.1 的姿态代码，日志里连一条新增诊断都没有）。
      *
-     * 只对「升级」触发：ackedVersionCode 为 0 表示从没确认过，那是首次安装，
-     * 引导页会讲得更细（还带 root 通道的差异说明），这里不重复打扰。
+     * 首次安装与每次覆盖升级都要提示：ackedVersionCode 为 0 即从未确认过（首次安装），
+     * 此时 SystemUI 里还没有本模块的代码，不重启等于所有功能都不生效 ——
+     * 这是用户明确要求「首次打开必须通知」的那一步，不能省。
      */
     private void maybePromptRestartForUpdate() {
         if (isFinishing() || isDestroyed()) return;
@@ -175,15 +172,18 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         } catch (Throwable t) {
             return;
         }
-        if (acked <= 0) return;
+        // acked == 0 表示首次安装（从未确认过）——必须同样提示：
+        // 刚装完 SystemUI 里没有本模块代码，不重启就点开关「毫无反应」。
+        // 以前这里为了「不重复打扰」直接 return，把首次安装这条路漏掉了。
         if (!RestartReminderPolicy.shouldPrompt(installed, acked)) return;
+        final boolean firstInstall = RestartReminderPolicy.isFirstInstall(acked);
         if (restartPromptShowing) return;
         restartPromptShowing = true;
-        DiagLog.log("[PERM] 首页检测到版本变化：" + RestartReminderPolicy.describe(installed, acked));
+        DiagLog.log("[PERM] 首页检测到需重启：" + RestartReminderPolicy.describe(installed, acked));
         try {
             new AlertDialog.Builder(this)
-                    .setTitle(RestartReminderPolicy.title(false))
-                    .setMessage(RestartReminderPolicy.bodyNeutral())
+                    .setTitle(RestartReminderPolicy.title(firstInstall))
+                    .setMessage(RestartReminderPolicy.bodyNeutral(firstInstall))
                     .setPositiveButton(RestartReminderPolicy.actionText(),
                             (d, w) -> restartSystemUiFromMain())
                     .setNegativeButton(RestartReminderPolicy.laterText(), null)
@@ -191,7 +191,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     .show();
         } catch (Throwable t) {
             restartPromptShowing = false;
-            DiagLog.log("[PERM:SYSTEM] 升级提示弹窗失败: " + t.getMessage());
+            DiagLog.log("[PERM:SYSTEM] 重启提示弹窗失败: " + t.getMessage());
         }
     }
 
@@ -362,6 +362,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             // 引导弹窗放到权限都拿到之后，避免和系统权限框叠在一起
             if (hasAllPermissions()) checkFirstLaunch();
         }
+        // 【首次安装也提示】重启系统界面这条必须每次进首页都判一次：
+        // 首次装完 SystemUI 里没有本模块代码，不重启等于所有开关都点不动；
+        // 覆盖升级同理会继续跑旧类。用户确认重启后写入 ackedVersionCode，
+        // 之后 shouldPrompt 自然返回 false，不会反复打扰。
+        // 放在 onResume 而不是只在 onCreate：从首次引导页返回时也要能弹出来。
+        getWindow().getDecorView().postDelayed(this::maybePromptRestartForUpdate, 1500);
     }
 
     private SharedPreferences xsp() {
@@ -409,15 +415,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             String ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             ((TextView) findViewById(R.id.tv_about_subtitle)).setText("安全出行 · LSPosed 模块 v" + ver);
         } catch (Throwable ignored) {}
-        // 权限与无障碍：引导页只弹一次，之后用户想补授权（尤其「始终允许定位」「无障碍」）
-        // 就再也找不到入口了 —— 这里常驻一个入口，随时可以重新走一遍逐项引导。
-        findViewById(R.id.btn_permissions).setOnClickListener(v -> {
-            try {
-                PermissionOnboardingActivity.start(this);
-            } catch (Throwable t) {
-                DiagLog.log("[ui] 打开权限引导页失败: " + t.getMessage());
-            }
-        });
+        // 权限与无障碍入口已上移到「智能提醒」页顶部（用户要求放在最靠前），
+        // 关于页不再重复。绑定逻辑见 SmartReminderActivity。
         // GitHub 项目地址
         findViewById(R.id.btn_github).setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk"));

@@ -126,6 +126,15 @@ public final class SmartReminderActivity extends Activity {
         };
 
         // 整行可点，命中区域比开关本身大，避免误触
+        // 权限与无障碍入口（本页最靠前）：本页所有提醒都依赖这些授权，
+        // 授权被关掉时用户可以就地补回来，不必再绕去关于页。
+        findViewById(R.id.row_permissions).setOnClickListener(v -> {
+            try {
+                PermissionOnboardingActivity.start(this);
+            } catch (Throwable t) {
+                DiagLog.log("[ui] 智能提醒页打开权限引导失败: " + t.getMessage());
+            }
+        });
         findViewById(R.id.card_battery).setOnClickListener(v -> swBattery.toggle());
         findViewById(R.id.card_idcard).setOnClickListener(v -> swIdcard.toggle());
         findViewById(R.id.card_sit).setOnClickListener(v -> swSit.toggle());
