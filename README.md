@@ -2,222 +2,59 @@
 
 > 海阔天空，勇敢去走。
 
-纯本地、无服务器的**出行感知**工具。不依赖 GMS，不联网，不上传任何数据；
-用手机自带加速度计判断「你是不是真的在走路」，再决定要不要提醒你。
+纯本地、不联网的**出行感知**工具：用手机自带的加速度计判断「你是不是真的在走路」，再决定要不要提醒。没有服务器，不依赖 GMS，不上传任何数据。
 
-- 运行环境：**Android 13+**（minSdk 33，targetSdk 35），已适配 HyperOS / MagicOS / ColorOS / OriginOS / HarmonyOS / Flyme / 原生
-- 增强方式：**LSPosed 模块**（作用域只需勾选「系统界面（SystemUI）」，不需要系统框架）；
-  无障碍相关能力可独立使用，不依赖 root
-- 开源协议：**AGPL-3.0**（见 [LICENSE](LICENSE)）
-- 当前版本：**5.5.0**（2026-11-18）· [下载 APK](https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest) · [更新日志](CHANGELOG.md)
-
-## 📥 安装与更新
-
-| 方式 | 说明 |
+| 项目 | 说明 |
 |---|---|
-| 直接下载 | 点上面的「下载 APK」，手动安装；每次更新需重新下载 |
-| **Obtainium**（推荐） | 装一个 Obtainium，点下面链接添加，之后每次发版自动提示更新 |
+| 系统 | Android 13+（minSdk 33 / targetSdk 35） |
+| 形态 | 普通 App + LSPosed 模块，作用域**只需**勾选「系统界面（SystemUI）」 |
+| 适配 | HyperOS / MagicOS / ColorOS / OriginOS / HarmonyOS / Flyme / 原生 |
+| 协议 | AGPL-3.0 |
+| 当前版本 | 5.6.13（versionCode 100，2026-11-24） |
+
+## 功能
+
+- **安全提醒**：电量 ≤15% 步行中、久坐满 2h、累计走满 45min、夜间独行 10min、22:00–06:00 步行中一键手电；各带冷却，不会刷屏。
+- **证件提醒**：确认持续步行后提示证件贴身放好，每日一次。
+- **社交礼仪**：按求职 / 约会 / 聚会 / 旅游给三条得体的提示。
+- **行走模式**：后置摄像头把身后路况叠在屏幕上，尺寸、位置、文字可调；夜间自动联动闪光灯。
+- **车祸预警**：检测到剧烈撞击弹全屏急救卡，60 秒无响应自动求助。
+- **隐私**：可隐藏桌面图标、不出现在最近任务列表，两者都能可靠恢复。
+
+所有提醒共用一个总开关，关闭后二级菜单的设置保留但不生效。
+
+## 常见问题
+
+- **隐藏图标后找不回来**：三条恢复路径——系统设置里「显示图标」、下拉控制中心点「自动跟随步行」磁贴（图标隐藏时它就变成恢复入口）、或 `adb shell am start -n io.github.wumisc.safewalk/.MainActivity`。
+- **通知被拦截/被撤掉**：常驻通知声明为 SERVICE 类别，并每 60 秒自检一次，被清掉会自动重发，日志留痕，不依赖任何第三方通知管理工具放行。
+- **和其他模块一起用**：本模块全部走 after 钩子，不替换宿主方法，可与防烧屏等模块在同一作用域共存。
+
+## 安装
+
+1. 下载 APK 手动安装（或装 [Obtainium](https://github.com/ImranR98/Obtainium) 订阅本仓库，之后自动提示更新）。
+2. 在 LSPosed 里启用本模块，作用域勾选**系统界面（SystemUI）**即可，不需要系统框架。
+3. **装完必须重启一次系统界面**——模块代码在 SystemUI 进程启动时注入，不重启跑的还是旧代码，开关会「毫无反应」。首次安装、覆盖安装、同版本重装都一样，App 会主动弹提示。
+4. 打开 App 按引导逐项补权限：通知、身体活动、相机、定位、悬浮窗、电池白名单、无障碍。
 
 ```
 obtainium://add/https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk
 ```
 
-> 本应用**没有上架任何应用商店**，商店里搜不到是正常的，并非下架。
-> 原因见 [docs/distribution.md](docs/distribution.md)：这类需要无障碍与后台常驻的工具，
-> 在国内商店属于高风险类目，提交也大概率被拒。
+本应用没有上架任何商店，商店里搜不到是正常的。
 
----
+## 隐私
 
-## ✨ 功能一览
+全部计算在本机完成：不为业务申请联网、不埋点、不上传轨迹与日志。诊断日志只写在本地，需要你手动导出才会离开设备。
 
-| 功能 | 触发 | 说明 |
-|---|---|---|
-| 🔋 电量预警 | 电量 ≤15% 且步行中 | 提醒充电，1h 冷却 |
-| 🪪 证件提醒 | 确认持续步行 | 证件贴身放好，每日 1 次 |
-| 🪑 久坐提醒 | 停止走动满 2h | 起身活动，每日 1 次 |
-| 🚶‍♂️ 久走提醒 | 累计走满 45min | 找地方坐五分钟、喝口水（等红灯不重新计时） |
-| 🌙 夜间独行 | 夜间累计步行 10min | 走有灯的一侧，把行程告诉家人 |
-| 🔦 夜间提醒 | 22:00~06:00 步行中 | 通知带「手电筒」按钮，一键开灯 |
-| 🤝 社交礼仪 | 确认持续步行 | 按求职/约会/聚会/旅游给 3 条提示 |
-| 🚶 行走模式 | 开始步行 | 后置摄像头把身后路况叠在屏上，**尺寸/位置/文字可自定义** |
-| 🚑 车祸预警 | 检测到剧烈撞击 | 全屏急救卡 + 60s 倒计时，无响应自动求助 |
-| 🙈 隐藏桌面图标 | 首页 → 隐私 | 藏起启动图标防他人随手打开；确认后生效，可可靠恢复（见下） |
-| 🗂 最近任务隐藏 | 首页 → 隐私 | 本 App 不出现在系统「最近任务 / 概览」列表 |
-| 💬 功能建议 | 关于 → 功能建议 | 写一句想法，带上机型版本直接提交到 GitHub |
-
-> 所有功能共用**同一个总开关**。关闭时二级菜单里的开关保留设置但不生效。
-
-### 隐藏桌面图标后如何恢复
-
-隐藏图标只影响桌面入口，所有提醒与急救功能照常运行。恢复入口（任选其一）：
-
-1. **系统设置**：设置 → 应用 → 安全出行 → 显示 / 启用图标（系统级路径，不依赖本 App 任何组件）；
-2. **控制中心磁贴**：下拉控制中心点「自动跟随步行」磁贴 —— 图标隐藏时磁贴会临时变成恢复入口，点一下直接打开本 App，在首页关掉开关即可；
-3. **adb 兜底**：`adb shell am start -n io.github.wumisc.safewalk/.MainActivity`。
-
----
-
-## 🎨 界面
-
-3.0 把视觉层收敛成**一套语义 token + 一套版式**，深色模式不再是补丁：
-
-- `colors.xml` 只保留语义命名（`bg` / `card_bg` / `text_primary` / `text_body` / `text_hint` / `divider` / `chevron` / `primary` …），`values-night` 逐项覆盖，**只换值不换名**
-- 布局与代码一律读资源，没有一处硬编码色值，切换到深色不会再出现「白底刺眼」或「卡片与背景同色」的情况
-- 全部二级页面统一为「卡片 + 行列表」版式：左侧标题、右侧说明与 chevron，分隔线内缩对齐
-- 底部导航为 Compose 液态玻璃，选中态跟随左右滑动实时联动，深色下自动切换前景色
-- 窗口统一 `forceDarkAllowed=false`，避免系统二次压暗把自定义配色弄脏
-
----
-
-## ⚙️ 核心机制
-
-**步态检测**（跑在应用进程 `WalkPreviewService`，不在 SystemUI）：靠五重门槛层层收敛——
-幅值上限挡大瞬态、步频窗口 0.5~2.5Hz、主轴稳定一致率 ≥70%、步数门槛 N、断步重置。
-自适应阈值：最近 60 样本 `均值+1.8×标准差`，钳制 0.6~2.8 m/s²。
-
-**行走模式**：SystemUI 只做「指挥」（传感器/步态/显隐广播），App 前台服务负责开相机渲染。
-两种形态：全屏叠加（穿透）/ 角落小窗（150×260dp），形态/位置/透明度实时可调。
-**重启不用重新拨开关**：服务被杀或设备重启后，亮屏解锁时 Hook 会经一个透明中转页把预览重新拉起
-（绕开 Android 14+ 对 camera 类型前台服务的后台启动限制），无需手动进入 App 操作。
-
-**手电筒**：夜间提醒通知直接开灯（`setTorchMode`，无需相机权限）；`TorchCallback` 全局状态同步；
-静置超时提醒关灯省电；夜间暗光（<15lx）可自动开灯。
-
-**车祸预警**：合加速度超阈值且**连续 2 次命中**判定撞击，60s 冷却防误报；三档灵敏度（1.5/2.0/2.5g）；
-全屏急救卡 + 60s 倒计时，超时先发含位置短信、再拨紧急联系人，无权限时降级跳转不静默失败。
-
-**通知**：统一高优先级 `IMPORTANCE_HIGH` heads-up，可被 HyperOS 超级岛拦截；各通道独立冷却。
-
----
-
-## 📱 国产 UI 适配（小米 / 荣耀 / OPPO / vivo / 华为 / 魅族 + 原生）
-
-功能主干与 ROM 无关：Hook 有 `ActivityThread` 兜底、前台服务三档降级、悬浮窗显示前复核、
-磁贴绕过后台启动限制 —— 这些都不查表。**表只管一件事：把用户送到该去的设置页。**
-
-自启动 / 后台弹窗这类开关没有公开 API，只能指路。指路表按本机 UI 选候选，运行时逐条
-`resolveActivity` 校验，打不开就换下一条，全失败退应用详情页：
-
-```
-候选（component / action）→ 校验 → 打开 → 换下一条 → 应用详情页兜底
-```
-
-**首页那张「系统 UI 适配」卡片只有两行**：一行注明本机被识别成哪一家（自动还是手选），
-一行七个芯片——自动 / 小米 / 荣耀 / OPPO / vivo / 华为 / 原生。手选只影响「指路与文案」，
-不影响功能链路：功能永远在运行时试，不靠版本表判定。
-
-> 4.3.0 起删掉了原来的「HyperOS 版本适配（自动 / HOS3 / HOS4）」。那三个芯片选的是**版本**，
-> 而三个真正影响功能的策略（前台服务类型、手电、悬浮窗权限）返回的都是与版本无关的常量，
-> `os` 参数一次都没被读过——让用户为一个不影响行为的选项做决定，只是困惑来源。
-> 版本号识别（`HyperOsCompat.detect()`）仍保留，但只用来写一句日志。
-
-首次安装的权限引导页会显示「本机 UI：X · 自启动在『…』」，第 4 步按钮也按本机系统名生成，
-AOSP 上直接写「本系统无此开关（无需设置）」。
-
-**图标**是矢量三层：渐变背景 + 矢量前景 + 独立 `monochrome` 剪影。有单色层，桌面开
-「主题图标」时本应用才会和其他应用同一风格，而不是被系统糊成一个灰块；主体全部收在
-半径 33dp 的安全区内，圆形 / 方圆 / 水滴遮罩都切不到。
-
-**关于 `targetSdk`**：停在 **35**（= Android 15 = HyperOS 3 基座）。Android 16 的破坏性变更
-（强制 edge-to-edge、大屏忽略方向、预测性返回默认开启）绝大多数是 `targetSdk 36+` 才生效，
-停在 35 意味着它们不会作用到本应用。完整矩阵见 **[docs/hos4-impact.md](docs/hos4-impact.md)**。
-
-适配进度与真机验证状态见 **[docs/rom-support-matrix.md](docs/rom-support-matrix.md)**：
-🟡 表示代码就绪但**未真机验证**，不会写成「已支持」。华为一列是 4.3.0 新加的，
-两条自启动路径只做了静态核对；HarmonyOS NEXT 不兼容 Android 应用，不在适配范围内。
-
----
-
-## 🔁 行走模式保活：被杀了会自己回来
-
-「行走模式运行中」是前台服务通知，**通知消失通常意味着服务被系统回收了**。4.4.0 起不再只靠
-`START_STICKY`：SystemUI 里的 Hook 每 2 秒巡检，服务每 30 秒发一次心跳，连续 90 秒收不到且开关仍
-开着，就自动重新拉起服务 —— 通知会重新出现，并给出一条「已自动恢复」回执。框架没加载时还有
-开机 / 解锁 / 覆盖安装 / 划任务自检的静态兜底。
-
-两种「通知消失」要分开看：渠道被关掉时服务其实还在，现在会另发一条提示并给出通知设置入口；
-点常驻通知也能直接回主界面确认状态。完整设计、时序与**明确做不到的边界**（强制停止、深度清理、
-后台启动限制、尚未真机验证）见 **[docs/keepalive.md](docs/keepalive.md)**。
-
----
-
-## 🚀 安装
-
-1. LSPosed 中启用「安全出行」
-2. 作用域**只勾「系统界面（SystemUI）」**
-3. 重启系统界面（或重启手机）
-4. 打开 App，授予「身体活动」权限（Android 13+ 另有通知权限）
-5. 打开首页总开关，再按需进二级菜单配置
-
-## 🔧 编译
-
-工具链（版本不匹配会直接报错，不会静默降级）：
-
-| 项 | 要求 | 说明 |
-|---|---|---|
-| JDK | **21** | Miuix 是 Java 21 bytecode（class 65），JDK 17 会报错 |
-| Gradle | **9.6.0+** | AGP 9.4.1 的下限是 9.6.0；仓库已附带 Wrapper，无需自备 |
-| Android SDK Platform | **android-37.2** | `compileSdk 37` 对应新的 minor 版本平台 |
-| Build-Tools | **36.0.0** | AGP 默认；缺失时会自动下载 |
+## 编译
 
 ```bash
-# 只需指定 JDK 与 SDK，其余交给 wrapper
-export JAVA_HOME=<jdk21 路径>
-export ANDROID_HOME=<sdk 路径>
-echo "sdk.dir=$ANDROID_HOME" > local.properties
-
-./gradlew :app:assembleDebug        # Windows: gradlew.bat
+cp local.properties.example local.properties   # 填 sdk.dir
+bash gradlew :app:testDebugUnitTest :app:assembleRelease
 ```
 
-产物：`app/build/outputs/apk/debug/app-debug.apk`
+当前测试基线 986 项、0 失败。构建需 JDK 21 与 Android SDK 36。
 
-> **首次编译会拉全量依赖**，约 1.7 GB、十几分钟（取决于网络）；之后增量构建只要几十秒。
-> 若 `./gradlew` 卡在下载 Gradle 发行包，说明 `services.gradle.org` 不可达，
-> 可自行下载 `gradle-9.6.0-bin.zip` 放进 `~/.gradle/wrapper/dists/gradle-9.6.0-bin/<hash>/`，
-> 或者直接用本地安装的 Gradle 9.6.0 执行同样的命令。
+## 许可
 
-## 🧪 测试
-
-- **步态判定**：纯 JVM 单元测试 `GaitDetectorPureTest`，无需真机/外网
-- **界面与逻辑**：Robolectric 本地测试 `./gradlew :app:testDebugUnitTest`（首次需联网拉依赖）
-- **界面截图**：`UiShotTest` 用 Robolectric 原生渲染把二级页面在浅色/深色下各出一张 PNG，落到临时目录供目视核对
-
-当前共 **10 个测试类 / 62 个用例**，全部通过（`GaitDetectorTest` 13、`SubPageTest` 13、`GaitDetectorPureTest` 8、`NotificationTargetTest` 7、`StabilityTest` 6、`MainFlowTest` 5、`PreviewWindowTest` 4、`CrashDetectorTest` 2、`DiagLogTest` 2、`UiShotTest` 2）。
-
----
-
-## ⚠️ 已知限制
-
-| # | 问题 | 影响 | 状态 |
-|---|---|---|---|
-| 1 | 依赖加速度计持续监听 | 极端后台策略下传感器回调可能被掐断 | 前台服务缓解 |
-| 2 | 全屏叠加个别 ROM 不出画面 | 已限定透明窗口路径，仍可能被厂商悬浮窗策略拦截 | 待真机反馈 |
-| 3 | 车祸检测靠加速度阈值 | 手机脱落可能误报，留 60s 倒计时可取消 | 设计取舍 |
-| 4 | 配置 Provider 白名单基于包名 | 包名被冒充可读开关（不含隐私字段） | 残余风险可接受 |
-| 5 | 实验区入口是长按「关于」页按钮 | 新用户找不到 | 刻意保留 |
-| 6 | 六家厂商均无真机验证 | 兼容性结论来自代码路径 + 清单 + 单测，非实机 | 已知边界，日志可定位 |
-| 7 | 保活是「被杀后自动恢复」而非「永不被杀」 | 强制停止 / 深度清理 / 未加白名单仍可能杀进程，且复活链路未真机验证 | 见 docs/keepalive.md |
-
----
-
-## 🎖️ 致敬
-
-> <span style="color:#C9A227">**项目起源 · 祖师爷**</span> —— 「用后置摄像头透视路况」这一思路的最早实践者，本项目由他们发源：
-
-- <span style="color:#C9A227">**[宋思雨（Song Siyu）· Transparent Screen（2012）](https://transparent-screen.en.uptodown.com/android)**</span> —— 宋思雨是 2012 年 Transparent Screen（包名 `com.ellipselab.android.transparentscreen.free`，2012-03-14 发布）的作者，也是「边走路边看手机、用后置摄像头透视前方」这一玩法的最早提出者，本模块「路况预览」由此发源。开山之作。
-- <span style="color:#C9A227">**[dhiru1602 · NamelessROM On-The-Go Mode](https://github.com/dhiru1602)**</span> —— 把透明屏幕做进 ROM 的先驱，用一个快捷开关让系统整体半透明，证明这条思路可以深入系统层。
-
-建立在 **LSPosed / Xposed** 之上，算法与架构思路参考：
-
-- **UI 液态玻璃**（本项目底部导航栏直接集成）：[Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) —— 液态玻璃材质、拖拽阻尼交互、透镜折射、交互高光全套特效；配套渲染库 io.github.kyant0:backdrop-android
-- **步态检测**：bagilevi/android-pedometer、mdeguzis/StepCounter、ashishb/android-step-detector、AccStepCounter、SensorFusion
-- **状态机/传感器**：tonyo567/hysteresis-state-machine、p-v/Android-SensorService、UrbanBigDataCentre/meowmotion、KalebKE/FSensor
-- **HyperOS 通知**：HyperBridge、WidgetEnhancer、HyperLight
-
-> 所有代码为独立手写重构，仅借鉴思路与算法原理，未直接拷贝上述项目源码。
-
----
-
-## 📄 许可证
-
-AGPL-3.0，见 [LICENSE](LICENSE)。
+AGPL-3.0，详见 [LICENSE](LICENSE)。改动后分发请同样开源。
