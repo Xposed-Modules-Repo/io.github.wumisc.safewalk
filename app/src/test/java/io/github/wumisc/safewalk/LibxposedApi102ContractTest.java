@@ -116,9 +116,22 @@ public class LibxposedApi102ContractTest {
         assertTrue("dispose 须先立标记", hook.contains("disposed = true"));
         assertTrue("兜底线程须看标记退出", hook.contains("if (disposed || initSucceeded) return"));
         assertTrue("初始化入口须看标记", hook.contains("if (disposed) return"));
-        assertTrue("须关闭配置线程", hook.contains("configExecutor.shutdownNow()"));
+        assertTrue("须关闭配置线程", hook.contains("configExecutor?.shutdownNow()"));
         assertTrue("须反注册手电回调", hook.contains("torchNotifyManager?.stopMonitor()"));
         assertTrue("须释放急救浮层", hook.contains("EmergencyOverlay.dispose()"));
+    }
+
+    /**
+     * 规则：App 供数在线时，摘要来源必须标「App 供数」；补步同样要把状态从
+     * SLEEP 抬到 LIGHT_MONITOR，保证诊断行与实际行走状态一致。
+     */
+    @Test
+    public void appFeedReportsSourceAndPromotesState() throws Exception {
+        String hook = read(SRC + "/SafeWalkLSPHook.kt");
+        assertTrue("供数在线时摘要须标出 App 来源", hook.contains("\"App 供数\""));
+        assertTrue("来源判定须看最近一次供数时间戳", hook.contains("lastAppStepFeedAt"));
+        assertTrue("供数补步后须抬升状态到 LIGHT_MONITOR",
+                hook.contains("if (state == State.SLEEP) state = State.LIGHT_MONITOR"));
     }
 
     /** 规则：模块名取 android:label、描述取 android:description */

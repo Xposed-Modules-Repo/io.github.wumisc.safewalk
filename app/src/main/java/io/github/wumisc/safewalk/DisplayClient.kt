@@ -22,9 +22,9 @@ object DisplayClient {
     private const val EXTRA_EVENT_ID = "event_id"
 
     private val main = Handler(Looper.getMainLooper())
-    private val executor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "SafeWalk-display").apply { isDaemon = true }
-    }
+
+    /** 取件专用单线程；热重载释放后置空，新一代 install 再重建。 */
+    private var executor: java.util.concurrent.ExecutorService? = null
 
     @Volatile
     private var ctx: Context? = null
@@ -32,6 +32,8 @@ object DisplayClient {
     private var overlay: EmergencyOverlay? = null
     @Volatile
     private var currentToken: String? = null
+    /** 已注册的接收器引用，dispose 时逐个反注册，不把旧闭包留在 SystemUI 上。 */
+    private val registered = mutableListOf<BroadcastReceiver>()
 
     private val showReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
@@ -67,21 +69,58 @@ object DisplayClient {
         val c = appCtx.applicationContext ?: appCtx
         ctx = c
         overlay = ov
-        val filter = IntentFilter().apply {
-            addAction(SafeWalkPrefKey.ACTION_EMERGENCY_SHOW)
+        if (executor == null || executor!!.isShutdown) {
+            executor = Executors.newSingleThreadExecutor { r ->
+                Thread(r, "SafeWalk-display").apply { isDaemon = true }
+            }
+        }
+        val showFilter = IntentFilter(SafeWalkPrefKey.ACTION_EMERGENCY_SHOW)
+        val exitFilter = IntentFilter().apply {
             addAction(SafeWalkPrefKey.ACTION_EMERGENCY_VISIBLE)
             addAction(SafeWalkPrefKey.ACTION_EMERGENCY_HIDE)
         }
         // 复用成熟的带 signature CONTROL 权限注册：第三方在分发阶段就被系统挡掉
-        ReceiverCompat.registerExportedWithPermission(
-            c, showReceiver, filter, SafeWalkLSPHook.CONTROL_PERMISSION
-        )
+        register(c, showReceiver, showFilter)
+        // 【BUG 修复】VISIBLE/HIDE 原来定义了 exitReceiver 却从未注册：
+        // 急救卡可见/取消后 ACK 广播被 showReceiver 提前丢弃，onExit 永远不跑，
+        // 覆盖层字段副本与一次性 token 得不到清理。现在单独注册退场接收器。
+        register(c, exitReceiver, exitFilter)
         EmergencyDiag.event(EmergencyDiag.P_HOOK, "display_client_installed")
+    }
+
+    private fun register(c: Context, receiver: BroadcastReceiver, filter: IntentFilter) {
+        try {
+            ReceiverCompat.registerExportedWithPermission(
+                c, receiver, filter, SafeWalkLSPHook.CONTROL_PERMISSION
+            )
+            registered.add(receiver)
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * 【API 102 热重载】释放旧一代在 SystemUI 里持有的接收器、取件线程与上下文引用。
+     * 不释放的话旧闭包会继续收 SHOW/VISIBLE/HIDE，操作已作废的 overlay 与 ctx。
+     */
+    @JvmStatic
+    fun dispose() {
+        val c = ctx
+        for (r in registered) {
+            try { c?.unregisterReceiver(r) } catch (_: Throwable) {
+            }
+        }
+        registered.clear()
+        try { executor?.shutdownNow() } catch (_: Throwable) {
+        }
+        executor = null
+        currentToken = null
+        overlay = null
+        ctx = null
     }
 
     private fun onShow(token: String, eventId: String) {
         currentToken = token
-        executor.execute {
+        executor?.execute {
             val fields = takeViaBinder(token)
             main.post {
                 if (fields == null || DisplayFields.isBlank(fields)) {
@@ -116,7 +155,7 @@ object DisplayClient {
         val token = currentToken
         currentToken = null
         if (token.isNullOrBlank()) return
-        executor.execute {
+        executor?.execute {
             try {
                 val c = ctx ?: return@execute
                 val uri = Uri.parse(

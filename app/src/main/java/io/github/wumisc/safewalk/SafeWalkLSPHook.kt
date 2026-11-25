@@ -71,6 +71,8 @@ class SafeWalkLSPHook : SensorEventListener {
     private var torchNotifyManager: TorchNotificationManager? = null
     private var torchReminder: TorchStaticReminder? = null
     private var torchActionReceiver: BroadcastReceiver? = null
+    /** 电量变化接收器：独立于 receiverRefs，热重载时也要显式反注册 */
+    private var batteryReceiver: BroadcastReceiver? = null
     private var crashDetector: CrashDetector? = null
 
     // ===== 环境光（lux）监测：夜间自动开灯用，暗光才亮、亮着不亮 =====
@@ -157,10 +159,22 @@ class SafeWalkLSPHook : SensorEventListener {
      * 原来它跑在主线程的 tick 里——等于每 60 秒让 SystemUI 主线程赌一次「会不会卡住」，
      * 卡住就是状态栏掉帧甚至 ANR。现在全部挪到这个守护线程，主线程只读内存快照。
      */
-    private val configExecutor: java.util.concurrent.ExecutorService =
-        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-            Thread(r, "SafeWalk-config").apply { isDaemon = true }
+    /**
+     * 配置读取专用单线程。热重载释放后会 shutdown，新一代用到时再重建（见 [ensureConfigExecutor]）。
+     */
+    private var configExecutor: java.util.concurrent.ExecutorService? = null
+
+    private fun ensureConfigExecutor(): java.util.concurrent.ExecutorService {
+        val ex = configExecutor
+        if (ex == null || ex.isShutdown) {
+            val fresh = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "SafeWalk-config").apply { isDaemon = true }
+            }
+            configExecutor = fresh
+            return fresh
         }
+        return ex
+    }
 
     // ========== 预览服务看门狗（保活） ==========
     /**
@@ -254,6 +268,9 @@ class SafeWalkLSPHook : SensorEventListener {
         steps.removeAll { it < wall - WINDOW_MS }
         walking = true
         lastStepTs = wall
+        // 与 recordStep 对齐：供数补步同样代表「在走」，把状态从 SLEEP 抬到 LIGHT_MONITOR，
+        // 否则摘要行会一直显示 SLEEP，和实际行走状态不一致（纯展示，不影响触发判据）。
+        if (state == State.SLEEP) state = State.LIGHT_MONITOR
         stepEventCount += add
         diag("[step:feed] App 硬件供数 +$add（本拍差 $delta）→ 窗口 ${steps.size}/${stepThreshold()}，来源=App")
     }
@@ -293,6 +310,11 @@ class SafeWalkLSPHook : SensorEventListener {
     // 加速度计计步的运行时状态（算法本身在 GaitDetector 里，这里只持有实例）
     private var fbListener: SensorEventListener? = null
     private var fbDetector: GaitDetector? = null
+
+    // 步态复核采样（仅写日志）：保存监听器/Handler 引用，热重载时能立刻摘掉，
+    // 否则旧一代的采样回调会在最多 4.6 秒内继续往旧 GaitDetector 喂加速度数据。
+    private var gaitListener: SensorEventListener? = null
+    private var gaitHandler: Handler? = null
 
     // ========== 常量 ==========
     companion object {
@@ -385,7 +407,7 @@ class SafeWalkLSPHook : SensorEventListener {
         configLoading = true
         val appCtx = ctx
         try {
-            configExecutor.execute {
+            ensureConfigExecutor().execute {
                 val loaded = try {
                     SafeWalkConfig.loadConfig(appCtx)
                 } catch (t: Throwable) {
@@ -879,11 +901,12 @@ class SafeWalkLSPHook : SensorEventListener {
         diag("[reload] 释放旧一代资源：$reason")
         disposed = true
         tickStarted = false
-        // ① 传感器：主计步器监听（this）、加速度计兜底、环境光、撞击检测
+        // ① 传感器：主计步器监听（this）、加速度计兜底、环境光、撞击检测、步态复核采样
         try { sm?.unregisterListener(this) } catch (_: Throwable) {}
         try { stopAccFallback() } catch (_: Throwable) {}
         try { luxListener?.let { sm?.unregisterListener(it) } } catch (_: Throwable) {}
         luxListener = null
+        try { stopGaitSampling() } catch (_: Throwable) {}
         try { crashDetector?.stop() } catch (_: Throwable) {}
         crashDetector = null
         stepSensorRegistered = false
@@ -895,9 +918,11 @@ class SafeWalkLSPHook : SensorEventListener {
                     diag("[reload] 反注册失败[$name]（多半已随进程重建）")
                 }
             }
+            batteryReceiver?.let { try { c.unregisterReceiver(it) } catch (_: Throwable) {} }
         }
         receiverRefs.clear()
         registeredReceivers.clear()
+        batteryReceiver = null
         batteryReceiverRegistered = false
         torchActionReceiver = null
         try { torchReminder?.reset() } catch (_: Throwable) {}
@@ -907,6 +932,8 @@ class SafeWalkLSPHook : SensorEventListener {
         // 急救浮层是直接挂在 WindowManager 上的 View，必须收起并释放，否则热重载后
         // 旧一代的急救卡会一直留在屏幕上（静态持有旧 Context）。
         try { EmergencyOverlay.dispose() } catch (_: Throwable) {}
+        // 显示取件客户端持有两个跨进程接收器与一条取件线程，随旧一代一并释放。
+        try { DisplayClient.dispose() } catch (_: Throwable) {}
         torchReminder = null
         torchNotifyManager = null
         // ③ 内核状态：配置快照与各类时间戳必须作废，新一代重新读一遍真实配置
@@ -929,9 +956,43 @@ class SafeWalkLSPHook : SensorEventListener {
         lastReviveAt = 0L
         reviveCount = 0
         lastAutoStartTry = 0L
+        lastWatchdogDesired = null
+        lastHeartbeatLogTs = 0L
+        // 步态/行走状态：新一代 init 会按真实传感器与配置重新建立
+        state = State.SLEEP
+        walking = false
+        nightTorchGaitOn = false
+        lastNightTorchGaitLogTs = 0L
+        torchHoldUntil = 0L
+        lastNightTimeLogTs = 0L
+        lastLux = Float.MAX_VALUE
+        lastLuxTs = 0L
+        fbDetector = null
+        gaitSampling = false
+        // 相机避让状态一并作废，避免旧层级/旧包名影响新一代判路
+        cameraInFront = false
+        camAvoidHoldUntil = 0L
+        camClearStreak = 0
+        camDetectLayer = 0
+        camDetectBroken = false
+        lastCamAvoidPkg = null
+        // 计步诊断计数与探针结论：新一代重新统计
+        stepEventCount = 0
+        rawSensorCallbackCount = 0L
+        stepProbeReported = false
+        initTs = 0L
+        lastStepLogTs = 0L
+        lastSummaryTs = 0L
+        lastFallbackTryTs = 0L
+        lastBatteryWarnTs = 0L
+        // 重新挂锚点 / 兜底通道的标记也要放开，否则新一代会被旧标记挡住
+        anchorsHooked = 0
+        initTrigger = ""
+        contextFallbackStarted = false
         // ④ 配置线程：单线程守护池，每重载一代就会多一条 "SafeWalk-config" 线程。
-        // 旧实例不会再用，直接 shutdownNow；正在跑的读取最多被打断一次，新一代会重读配置。
-        try { configExecutor.shutdownNow() } catch (_: Throwable) {}
+        // 旧实例不会再用，直接 shutdownNow；置空后新一代 ensureConfigExecutor 会重建。
+        try { configExecutor?.shutdownNow() } catch (_: Throwable) {}
+        configExecutor = null
         // ⑤ 上下文最后清：上面的反注册都要用到它
         sm = null
         ctx = null
@@ -1118,6 +1179,7 @@ class SafeWalkLSPHook : SensorEventListener {
             }
         }
         fbListener = null
+        fbDetector = null
         fallbackActive = false
     }
 
@@ -1297,6 +1359,10 @@ class SafeWalkLSPHook : SensorEventListener {
     }
 
     private fun stepSource(): String = when {
+        // App 心跳供数在线时，窗口步数来自 App 硬件计步；本地传感器事件已被 recordStep 抑制。
+        lastAppStepTotal > 0L
+            && SystemClock.elapsedRealtime() - lastAppStepFeedAt
+            < KeepAlivePolicy.HEARTBEAT_TIMEOUT_MS -> "App 供数"
         fallbackActive -> "加速度计兜底"
         stepSensorRegistered -> "系统计步器"
         else -> "未注册"
@@ -1504,6 +1570,7 @@ class SafeWalkLSPHook : SensorEventListener {
 
         val end = System.currentTimeMillis() + 4_000
         val handler = Handler(Looper.getMainLooper())
+        gaitHandler = handler
         var finished = false
         lateinit var listener: SensorEventListener
 
@@ -1513,6 +1580,8 @@ class SafeWalkLSPHook : SensorEventListener {
             gaitSampling = false
             try { s.unregisterListener(listener) } catch (_: Throwable) {}
             handler.removeCallbacksAndMessages(null)
+            gaitListener = null
+            gaitHandler = null
             val stable = gait.hasStableGait()
             diag("🔍 步态复核：${gait.debugInfo()} 稳定=${if (stable) "是" else "否"}"
                     + if (stable) "（波形也确认是步行）"
@@ -1527,6 +1596,7 @@ class SafeWalkLSPHook : SensorEventListener {
             }
             override fun onAccuracyChanged(sensor: Sensor?, a: Int) {}
         }
+        gaitListener = listener
 
         try {
             s.registerListener(listener, acc, SensorManager.SENSOR_DELAY_GAME)
@@ -1535,8 +1605,21 @@ class SafeWalkLSPHook : SensorEventListener {
         } catch (t: Throwable) {
             finished = true
             gaitSampling = false
+            gaitListener = null
+            gaitHandler = null
             diag("步态复核启动失败: $t")
         }
+    }
+
+    /** 热重载：立刻摘掉步态复核采样的监听器与待办消息，不把旧采样留在传感器上。 */
+    private fun stopGaitSampling() {
+        val l = gaitListener
+        val h = gaitHandler
+        gaitListener = null
+        gaitHandler = null
+        gaitSampling = false
+        if (l != null) try { sm?.unregisterListener(l) } catch (_: Throwable) {}
+        h?.removeCallbacksAndMessages(null)
     }
 
     /** 确认持续步行 → 触发所有外出提醒 */
@@ -1675,6 +1758,7 @@ class SafeWalkLSPHook : SensorEventListener {
             }
             ctx?.let {
                 ReceiverCompat.registerNotExported(it, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                batteryReceiver = receiver
             }
         } catch (_: Throwable) {}
     }

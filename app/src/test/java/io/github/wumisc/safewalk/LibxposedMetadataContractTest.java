@@ -97,9 +97,19 @@ public class LibxposedMetadataContractTest {
         assertTrue("须反注册手电回调（否则旧 CameraManager 回调活着）",
                 hook.contains("torchNotifyManager?.stopMonitor()"));
         assertTrue("须收起并释放急救浮层", hook.contains("EmergencyOverlay.dispose()"));
-        assertTrue("须关闭旧一代配置线程", hook.contains("configExecutor.shutdownNow()"));
+        assertTrue("须释放显示取件客户端（接收器+取件线程）", hook.contains("DisplayClient.dispose()"));
+        assertTrue("须反注册电量变化接收器", hook.contains("batteryReceiver?.let"));
+        assertTrue("须摘掉步态复核采样监听", hook.contains("stopGaitSampling()"));
+        assertTrue("配置线程释放后须可重建，不能在已关闭的池上提交",
+                hook.contains("ensureConfigExecutor()"));
+        assertTrue("须关闭旧一代配置线程", hook.contains("configExecutor?.shutdownNow()"));
         String overlay = read(MAIN_SRC + "/EmergencyOverlay.kt");
         assertTrue("急救浮层须提供 dispose", overlay.contains("fun dispose()"));
         assertTrue("dispose 须清 WindowManager 引用", overlay.contains("wm = null"));
+        String display = read(MAIN_SRC + "/DisplayClient.kt");
+        assertTrue("显示客户端须提供 dispose", display.contains("fun dispose()"));
+        assertTrue("dispose 须反注册接收器", display.contains("unregisterReceiver"));
+        assertTrue("dispose 须关闭取件线程", display.contains("shutdownNow()"));
+        assertTrue("退场接收器（VISIBLE/HIDE）必须注册", display.contains("register(c, exitReceiver"));
     }
 }
