@@ -60,6 +60,19 @@ object TorchController {
     fun set(ctx: Context, enable: Boolean, callback: ((TorchResult) -> Unit)? = null) {
         val app = ctx.applicationContext
         if (!enable) {
+            // 【5.6.17 BUG 修复 · 岛上「关灯」按钮无效】
+            // 联动点亮时，灯是**预览会话内** FLASH_MODE_TORCH 点着的，摄像头正被
+            // 本应用的预览占着。此时 setTorchMode(false) 必然抛 CAMERA_IN_USE，
+            // 重试三次也照样失败 —— 用户看到的是「点了关灯，灯还亮着，通知也撤不掉」。
+            // 唯一正确的关灯方式就是结束预览会话：收起小窗，灯自然灭，
+            // 同时 RearCameraOverlay.hide() 会顺带撤掉「已点亮」岛通知。
+            // 之后仍补一次 setTorchMode(false) 做清理（覆盖「预览已收但句柄没放干净」）。
+            if (WalkPreviewService.isPreviewShowing()) {
+                DiagLog.log("[torch] 预览内常亮中，关闭须先收起小窗（摄像头归预览占用）")
+                WalkPreviewService.send(app, WalkPreviewService.ACTION_HIDE, null)
+                handler.postDelayed({ attempt(app, false, 1, callback) }, PREVIEW_RELEASE_WAIT_MS)
+                return
+            }
             DiagLog.log("[torch] 关闭手电")
             attempt(app, false, 1, callback)
             return

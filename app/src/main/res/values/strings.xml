@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">安全出行</string>
+    <string name="module_description">行走时自动弹出后摄路况小窗，附带久走 / 低头 / 夜间独行提醒与急救信息卡；可选接入 HyperOS 超级岛。</string>
     <string name="shortcut_toggle_short">开关路况</string>
     <string name="shortcut_toggle_long">切换总开关</string>
     <string name="shortcut_emergency_short">急救卡</string>

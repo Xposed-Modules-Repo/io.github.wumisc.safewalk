@@ -19,6 +19,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -319,6 +320,19 @@ public class EmergencyCardActivity extends Activity {
                     qrBitmap = bmp;
                     ivQr.setImageBitmap(bmp);
                     ivQr.setVisibility(View.VISIBLE);
+                    // 生成按钮在页面底部，二维码在按钮下方；不滚动的话用户
+                    // 点完什么都看不到，会以为没生成。滚到二维码并给一句提示。
+                    ivQr.post(() -> {
+                        try {
+                            ScrollView sv = findViewById(R.id.sv_emergency);
+                            if (sv != null) {
+                                sv.smoothScrollTo(0, Math.max(0, ivQr.getTop() - 24));
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    });
+                    Toast.makeText(this, "医疗 QR 已生成（明文，请谨慎展示）",
+                            Toast.LENGTH_SHORT).show();
                     EmergencyDiag.event(EmergencyDiag.P_EMERGENCY, "qr_generated");
                 })
                 .setNegativeButton("取消", null)

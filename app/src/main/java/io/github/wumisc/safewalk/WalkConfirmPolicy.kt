@@ -77,6 +77,11 @@ class WalkConfirmPolicy @JvmOverloads constructor(
          */
         const val WINDOW_CAP = 10
 
+        /** 【5.7.3】平放态的更严格节律阈值（替代原来的一票否决，见 evaluate 头部注释） */
+        const val FLAT_MAX_GAP_MS = 1100L
+        const val FLAT_MIN_AVG_MS = 450L
+        const val FLAT_MAX_AVG_MS = 850L
+
         /** 纯加速度最低门槛：低于 8 步，两三下抖动就能凑满，没有区分度 */
         const val MIN_REQUIRED_STEPS = 8
 
@@ -116,9 +121,21 @@ class WalkConfirmPolicy @JvmOverloads constructor(
      */
     @JvmOverloads
     fun evaluate(layFlat: Boolean, steps: Int, stepTs: List<Long>, now: Long = 0L): Verdict {
-        if (layFlat) {
-            return Verdict(false, "姿态平放", steps, 0L, 0L, 0L)
-        }
+        // 【5.7.3 平放不再一票否决】
+        //
+        // 5.1.0 起这里是 `if (layFlat) return false`，理由是「床上躺平抖几下不该触发」。
+        // 但真机日志（110 版，15:42）显示用户的常用姿态就是 LAY_FLAT（平着拿手机走路），
+        // 再叠加无 ACTIVITY_RECOGNITION 机型计步通道恒 STALE，等于这条兜底路径
+        // 在任何情况下都不出手 —— 这正是「走两圈毫无反应」的另一半原因。
+        //
+        // 现在按「平放 = 更严格的节律阈值」处理，而不是直接判死：
+        //   · 最大相邻间隔 1400 → 1100ms
+        //   · 平均步间隔 380~950 → 450~850ms（≈70~133 步/分，真人步行中段）
+        //   · 相邻步一致性 ±35% → ±25%，越界比例 1/8 → 1/6
+        // 床上翻身/抖手是低频无节律的动作，过不了这三条；真平着拿手机走路过得去。
+        val effMaxGap = if (layFlat) FLAT_MAX_GAP_MS else maxGapMs
+        val effMinAvg = if (layFlat) FLAT_MIN_AVG_MS else minAvgIntervalMs
+        val effMaxAvg = if (layFlat) FLAT_MAX_AVG_MS else maxAvgIntervalMs
         if (steps < requiredSteps) {
             return Verdict(false, "连续合格步不足", steps, 0L, 0L, 0L)
         }
@@ -127,7 +144,7 @@ class WalkConfirmPolicy @JvmOverloads constructor(
         if (tail.size < requiredSteps) {
             return Verdict(false, "步流样本不足", steps, 0L, 0L, 0L)
         }
-        if (now > 0L && now - tail[tail.size - 1] > maxGapMs) {
+        if (now > 0L && now - tail[tail.size - 1] > effMaxGap) {
             return Verdict(false, "最近一步已过去 " + ((now - tail[tail.size - 1]) / 1000) + "s", steps, 0L, 0L, 0L)
         }
 
@@ -139,13 +156,13 @@ class WalkConfirmPolicy @JvmOverloads constructor(
         val span = tail[tail.size - 1] - tail[0]
         val avg = if (tail.size > 1) span / (tail.size - 1) else 0L
 
-        if (maxGap > maxGapMs) {
+        if (maxGap > effMaxGap) {
             return Verdict(false, "步流断裂 " + (maxGap / 1000.0).let { String.format(java.util.Locale.US, "%.1f", it) } + "s", steps, span, maxGap, avg)
         }
-        if (avg < minAvgIntervalMs) {
+        if (avg < effMinAvg) {
             return Verdict(false, "步频过快 " + String.format(java.util.Locale.US, "%.2f", 1000.0 / avg) + "Hz", steps, span, maxGap, avg)
         }
-        if (avg > maxAvgIntervalMs) {
+        if (avg > effMaxAvg) {
             return Verdict(false, "步频过慢 " + String.format(java.util.Locale.US, "%.2f", 1000.0 / avg) + "Hz", steps, span, maxGap, avg)
         }
         if (span < minSpanMs) {
@@ -160,8 +177,11 @@ class WalkConfirmPolicy @JvmOverloads constructor(
         // 真人步行的相邻步间隔抖动是 ±30~50ms 量级，±35% 已经是极宽容的容差。
         val sorted = tail.zipWithNext { a, b -> b - a }.sorted()
         val median = sorted[sorted.size / 2]
-        val loose = sorted.count { it < median * 0.65 || it > median * 1.35 }
-        if (loose * 8 > sorted.size) {   // 超过 1/8 的间隔偏离中位数太远
+        // 平放态用 ±25% 一致性 + 1/6 越界额度，其余姿态维持 ±35% / 1/8（见函数头注释）
+        val looseRatio = if (layFlat) 0.25 else 0.35
+        val looseBudget = if (layFlat) 6 else 8
+        val loose = sorted.count { it < median * (1 - looseRatio) || it > median * (1 + looseRatio) }
+        if (loose * looseBudget > sorted.size) {   // 超过 1/8（平放 1/6）的间隔偏离中位数太远
             return Verdict(false, "节律散乱(中位 " + median + "ms)", steps, span, maxGap, avg)
         }
         return Verdict(true, "连续步流可信", steps, span, maxGap, avg)

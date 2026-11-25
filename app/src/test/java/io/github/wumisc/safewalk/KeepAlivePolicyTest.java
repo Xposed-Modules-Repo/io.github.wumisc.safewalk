@@ -55,10 +55,14 @@ public class KeepAlivePolicyTest {
     }
 
     @Test
-    public void firstLaunchAfterBootIsImmediate() {
+    public void firstLaunchAfterBootWaitsOneHeartbeat() {
+        // 【5.7.3】从没收到心跳时要等满一个心跳周期：5 秒就拉会在 SystemUI 重启后
+        // 把「其实活着、只是还没轮到第一次心跳」的 App 又拉一遍（透明页一闪）。
         long ready = 1_000_000L;
-        assertTrue(KeepAlivePolicy.shouldRevive(
-                true, 0L, ready + G, ready, 0L, 0));
+        assertFalse("半个心跳周期内不得拉起", KeepAlivePolicy.shouldRevive(
+                true, 0L, ready + KeepAlivePolicy.HEARTBEAT_INTERVAL_MS - 1, ready, 0L, 0));
+        assertTrue("满一个心跳周期仍未收到心跳才允许拉起", KeepAlivePolicy.shouldRevive(
+                true, 0L, ready + KeepAlivePolicy.HEARTBEAT_INTERVAL_MS, ready, 0L, 0));
     }
 
     @Test
@@ -139,6 +143,33 @@ public class KeepAlivePolicyTest {
         assertTrue("开机宽限必须远短于心跳超时", G < T);
         assertTrue("恢复通知节流必须长于复活冷却",
                 KeepAlivePolicy.REVIVE_NOTICE_MIN_INTERVAL_MS > C);
+    }
+
+    // ---------- 开关刚拨开时的看门狗基线 ----------
+
+    @Test
+    public void resetBaselineOnlyWhenTurningFromOffToOn() {
+        // 首拍（null）不重置，保留开机首拉节奏
+        assertFalse(KeepAlivePolicy.resetBaselineOnStart(null, true));
+        // 一直是开：服务被杀才是真失联，不能每小时重置一次
+        assertFalse(KeepAlivePolicy.resetBaselineOnStart(true, true));
+        // 刚拨开：必须重置，否则旧心跳会和新启动抢跑（30 秒 FGS 超时崩溃）
+        assertTrue(KeepAlivePolicy.resetBaselineOnStart(false, true));
+        // 关闭以及保持关闭都不重置
+        assertFalse(KeepAlivePolicy.resetBaselineOnStart(false, false));
+        assertFalse(KeepAlivePolicy.resetBaselineOnStart(true, false));
+        assertFalse(KeepAlivePolicy.resetBaselineOnStart(null, false));
+    }
+
+    @Test
+    public void resetBaselineGivesStartupFullTimeoutWindow() {
+        long now = 3_600_000L;
+        // 旧心跳已经超时；用户此刻拨开开关（看门狗把基线写成 now）
+        assertTrue(revive(true, now - T - 1, now, now - C - 1, 3));
+        // 重置后同一拍不能判死，给服务留完整 135 秒
+        assertFalse(revive(true, now, now, now - C - 1, 3));
+        // 重置后 135 秒仍无心跳，才恢复看门狗的复活能力
+        assertTrue(revive(true, now, now + T, now - C - 1, 3));
     }
 
     // ---------- 「已自动恢复」通知节流 ----------

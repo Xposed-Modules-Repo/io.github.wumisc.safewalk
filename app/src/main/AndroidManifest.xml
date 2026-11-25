@@ -148,10 +148,13 @@
         <package android:name="com.huawei.emergency" />
         <package android:name="com.coloros.safecenter" />
         <package android:name="com.iqoo.call" />
+        <!-- 超级岛增强（HyperIsland）：探测它是否安装，装了就把通知交回标准形态由它转岛 -->
+        <package android:name="io.github.hyperisland" />
     </queries>
 
     <application
         android:label="安全出行"
+        android:description="@string/module_description"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.Safewalk">
@@ -312,6 +315,13 @@
             android:exported="false"
             android:theme="@style/Theme.Safewalk"
             android:label="行走模式" />
+
+        <!-- 步态沙盒（测试用）：只从行走模式页进入，不对外导出 -->
+        <activity
+            android:name=".GaitSandboxActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Safewalk"
+            android:label="步态沙盒" />
 
         <!-- 预览小窗自定义（行走模式的三级页）：只从行走模式页进入，不对外导出 -->
         <activity
@@ -508,6 +518,9 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.USER_PRESENT" />
                 <action android:name="io.github.wumisc.safewalk.PREVIEW_REVIVE" />
+                <!-- Hook（SystemUI）初始化/热重载完成后显式投给本应用：
+                     首页据此跳过「磁盘上新版、进程里旧版」的重启误报 -->
+                <action android:name="io.github.wumisc.safewalk.MODULE_READY" />
             </intent-filter>
         </receiver>
 
@@ -532,19 +545,9 @@
             android:exported="true"
             android:enabled="true" />
 
-        <!-- LSPosed 模块声明 -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="SafeWalk 安全出行低功耗提醒。⚠️ 作用域只需勾选「系统界面（SystemUI）」，无需勾选系统框架。硬件计步检测，纯本地运行，低功耗。" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="93" />
-        <meta-data
-            android:name="xposedscope"
-            android:value="com.android.systemui" />
+        <!-- LSPosed 模块声明：现代 libxposed API 102 不再使用 xposed* meta-data。
+             模块名取 android:label，描述取 android:description，作用域与 API 版本见
+             src/main/resources/META-INF/xposed/{java_init.list,module.prop,scope.list}。 -->
     </application>
 
 </manifest>

@@ -151,6 +151,40 @@ public class RestartReminderPolicyTest {
         assertEquals("safewalk", RestartReminderPolicy.SP_ONEOFF);
     }
 
+    @Test
+    public void hotReloadReadyClearsPromptOnlyForSameInstall() throws IOException {
+        // API 102 热重载成功后，SystemUI 里跑的就是当前版本，首页不能继续弹
+        // 「磁盘上新版、进程里旧版」。但 ready 标记必须是「同一次安装」的：
+        // 同版本覆盖安装时 versionCode 不变，旧标记不能把新安装的待提示吞掉。
+        assertTrue("版本、安装戳、APK 大小都匹配 → 已热重载，不弹",
+                RestartReminderPolicy.moduleReadyForInstall(
+                        121, 121, 1700000000123L, 1700000000123L, 3846705L, 3846705L));
+        assertFalse("Hook 还跑着旧版本 → 必须提示",
+                RestartReminderPolicy.moduleReadyForInstall(
+                        121, 120, 1700000000123L, 1700000000123L, 3846705L, 3846705L));
+        assertFalse("安装时间戳变了（新装了一次）→ 旧 ready 标记不算数",
+                RestartReminderPolicy.moduleReadyForInstall(
+                        121, 121, 1700000000456L, 1700000000123L, 3846705L, 3846705L));
+        assertFalse("APK 字节数变了（同版本换了内容）→ 旧 ready 标记不算数",
+                RestartReminderPolicy.moduleReadyForInstall(
+                        121, 121, 1700000000123L, 1700000000123L, 3849999L, 3846705L));
+        assertTrue("ROM 取不到安装时间戳时退回版本判断，不能永远弹",
+                RestartReminderPolicy.moduleReadyForInstall(
+                        121, 121, 0L, 0L, 3846705L, 3846705L));
+
+        String recv = read("src/main/java/io/github/wumisc/safewalk/KeepAliveReceiver.kt");
+        assertTrue("静态接收器要处理 MODULE_READY", recv.contains("ACTION_MODULE_READY"));
+        assertTrue("收到后要落运行版本标记", recv.contains("KEY_RUNNING_VERSION"));
+        String hook = read("src/main/java/io/github/wumisc/safewalk/SafeWalkLSPHook.kt");
+        assertTrue("Hook 初始化成功后要主动通知 App", hook.contains("notifyModuleReady(appCtx)"));
+        assertTrue("通知必须是 MODULE_READY", hook.contains("RestartReminderPolicy.ACTION_MODULE_READY"));
+        String act = read("src/main/java/io/github/wumisc/safewalk/MainActivity.java");
+        // 调用允许换行排版：只约束「先查 ready 标记」与实参顺序，不锁死单行写法
+        assertTrue("首页必须先检查 ready 标记再决定是否弹",
+                act.contains("moduleReadyForInstall(")
+                        && act.contains("installed, runningVersion"));
+    }
+
     private static String read(String rel) throws IOException {
         Path[] c = new Path[] {
                 Paths.get(rel), Paths.get("app", rel),

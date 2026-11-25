@@ -81,7 +81,7 @@ public class MissingKidsRepositoryTest {
                 java.nio.charset.StandardCharsets.UTF_8);
         assertTrue("照片缓存上限必须为 8", code.contains("MAX_PHOTOS = 8"));
         assertTrue("命中缓存须刷新 LRU 时间戳", code.contains("cache.setLastModified("));
-        assertTrue("换新后须触发清理", code.contains("prunePhotos(ctx, list)"));
+        assertTrue("换新后须触发清理", code.contains("prunePhotos(ctx, snap.kids)"));
     }
 
     @Test
@@ -103,5 +103,66 @@ public class MissingKidsRepositoryTest {
         assertFalse(f.contains("?"));
         // 同一 URL 文件名稳定
         assertEquals(f, MissingKidsRepository.photoFileName("https://baobeihuijia.com/p/a%20b.png?x=1"));
+    }
+
+    /** 【5.6.19】只有「首次」或「真拉到网络新数据」才重置锚点，覆盖安装不跳回第一对。 */
+    @Test
+    public void anchorResetsOnlyOnFreshNetworkData() {
+        // 首次：没有锚点 → 重置到今天
+        assertEquals(100L, MissingKidsRepository.anchorDayOf(-1L, "", 100L, "v1", false));
+        // 包内快照版本变了但没联网（fresh=false）→ 位置保持，不跳回第一对
+        assertEquals(90L, MissingKidsRepository.anchorDayOf(90L, "v1", 100L, "v2", false));
+        // 真拉到网络新数据（fresh=true）且版本变了 → 重置
+        assertEquals(100L, MissingKidsRepository.anchorDayOf(90L, "v1", 100L, "v2", true));
+        // 网络数据版本没变（例行刷新）→ 不重置
+        assertEquals(90L, MissingKidsRepository.anchorDayOf(90L, "v1", 100L, "v1", true));
+    }
+
+    /** 【5.6.18 覆盖安装不倒退】两张卡按天整对前进，同一天不重复、不越界。 */
+    @Test
+    public void pairRotatesByDayWithoutDuplicates() {
+        kotlin.Pair<Integer, Integer> d0 = MissingKidsRepository.pairIndices(100L, 100L, 7);
+        assertEquals(0, (int) d0.getFirst());
+        assertEquals(1, (int) d0.getSecond());
+
+        kotlin.Pair<Integer, Integer> d1 = MissingKidsRepository.pairIndices(101L, 100L, 7);
+        assertEquals(2, (int) d1.getFirst());
+        assertEquals(3, (int) d1.getSecond());
+
+        // 第 3 天：4/5；第 4 天：6/0（回绕，仍然成对）
+        kotlin.Pair<Integer, Integer> d3 = MissingKidsRepository.pairIndices(103L, 100L, 7);
+        assertEquals(6, (int) d3.getFirst());
+        assertEquals(0, (int) d3.getSecond());
+
+        // 两条数据（旧兜底）：每天都是同一条，不越界
+        kotlin.Pair<Integer, Integer> two = MissingKidsRepository.pairIndices(103L, 100L, 2);
+        assertEquals(0, (int) two.getFirst());
+        assertEquals(1, (int) two.getSecond());
+
+        // 只有 1 条时两张卡指向同一条
+        kotlin.Pair<Integer, Integer> one = MissingKidsRepository.pairIndices(103L, 100L, 1);
+        assertEquals(0, (int) one.getFirst());
+        assertEquals(0, (int) one.getSecond());
+    }
+
+    /** 【5.6.18】内置快照必须随包更新：assets/kids.json 至少一整轮（7 条）且每条都有照片。 */
+    @Test
+    public void bundledSnapshotHasFullRotation() throws Exception {
+        java.nio.file.Path p = java.nio.file.Paths.get("src/main/assets/kids.json");
+        if (!java.nio.file.Files.isRegularFile(p)) {
+            p = java.nio.file.Paths.get("app", "src/main/assets/kids.json");
+        }
+        assertTrue("必须内置 assets/kids.json", java.nio.file.Files.isRegularFile(p));
+        String json = new String(java.nio.file.Files.readAllBytes(p),
+                java.nio.charset.StandardCharsets.UTF_8);
+        MissingKidsRepository.Snapshot snap = MissingKidsRepository.parseSnapshot(json);
+        assertNotNull(snap);
+        assertTrue("内置快照条数应 ≥ 一整轮", snap.getKids().size() >= 3);
+        assertFalse("内置快照必须带数据版本 updated", snap.getUpdated().isEmpty());
+        for (MissingKidsRepository.Kid k : snap.getKids()) {
+            assertFalse("每条都要有名字", k.getName().isEmpty());
+            assertTrue("每条都要有照片地址", k.getPhoto().startsWith("https://"));
+            assertTrue("每条都要有登记页", k.getUrl().startsWith("https://"));
+        }
     }
 }

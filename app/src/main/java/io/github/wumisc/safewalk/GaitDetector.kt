@@ -18,16 +18,18 @@ object MotionConfig {
     /**
      * 步频窗口，单位 Hz。
      *
-     * 真实散步大约 0.7~1.1Hz（每步 900~1400ms），快走 1.5~2Hz。
-     * 下限取 0.5Hz（每步最多 2000ms），覆盖慢走到快跑；
-     * 3Hz 以上的抖腿 / 摇手机仍然挡在外面。
+     * 真实散步大约 0.9~1.1Hz（每步 900~1400ms），快走 1.5~2Hz。
+     * 【5.7.3-lx102 · 114】下限 0.5 → 0.7Hz：沙盒矩阵里「车上低频颠簸」
+     * （0.35/0.65Hz 正弦、振幅 1.0）靠 0.65Hz 这一档就能凑满 8 步，
+     * 而人走路再慢也在 0.9Hz 上下；0.7Hz（42 步/分）已低于任何真实步行。
+     * 3Hz 以上的抖腿 / 摇手机仍由上限挡住。
      */
-    const val MIN_STEP_FREQ = 0.5
+    const val MIN_STEP_FREQ = 0.7
     const val MAX_STEP_FREQ = 2.5
     /**
      * 真断步阈值：超过这个时长没有新峰，才判定「停下很久、重新数」。
-     * 必须明显宽于步频下限（2000ms），否则正常慢速散步会被当成断步清空，
-     * 计数永远攒不满 → 走了也不触发。
+     * 必须明显宽于步频下限（最短间隔 1/MAX_STEP_FREQ=400ms，最长 1/0.7≈1428ms），
+     * 否则正常慢速散步会被当成断步清空，计数永远攒不满 → 走了也不触发。
      */
     const val GAIT_RESET_MS = 2500L
     /**
@@ -93,7 +95,19 @@ object MotionConfig {
 
     // 姿态判定
     const val LAY_FLAT_Z_THRESHOLD = 8.5f
-    const val LAY_FLAT_WEIGHT = 1.45f
+    /**
+     * 平放姿态的阈值系数。【5.7.3 由 1.45 改为 1.0】
+     *
+     * 1.45 的出发点是对的（躺着刷手机不该算走路），但它把阈值抬到
+     * `max(0.6, 包络×0.6)×1.45` 后，平着拿手机走路（屏幕朝上看小窗）的
+     * 步峰只剩一两成能越线 —— 真机日志里 10 秒只出 1~4 个峰、步频被拉成
+     * 0.5~0.8Hz（真人步频 1.5~2.2Hz），连续合格步永远攒不到 8 步。
+     *
+     * 现在不再按姿态抬阈值：防误触的职责交给上层（[WalkConfirmPolicy] 的
+     * 非平躺要求、[WalkPreviewService] 的 credible 证据链、硬件计步与定位佐证）。
+     * 采集层只负责「这一帧的波形像不像脚步」。
+     */
+    const val LAY_FLAT_WEIGHT = 1.0f
 }
 
 enum class PhoneAttitude {
@@ -229,6 +243,27 @@ class GaitDetector {
      */
     private val MIN_VERTICAL_RATIO = 0.5f
 
+    /**
+     * 平放姿态下的峰幅值下限（m/s²）。【5.7.3 新增】
+     *
+     * 平着拿手机走路时，手臂前后摆的水平能量占优，真机日志里垂直占比常在
+     * 0.15~0.35，被 0.5 的垂直闸门整段挡死（10 秒只留下 1~2 个峰、步频被拉成 0.6Hz）。
+     * 平放姿态下「上下冲击」这个判据本身没有意义，改用绝对幅值兜底：
+     * 真迈步的线性加速度峰值实测 0.9~2.6，取 0.85 作为「够劲」的门槛，
+     * 捏着手机搓屏、桌上微震这类小抖动（<0.5）依然过不去。
+     */
+    private val FLAT_PEAK_MIN = 0.85f
+
+    private fun peakGateOk(value: Float): Boolean =
+        if (currentAttitude == PhoneAttitude.LAY_FLAT) value >= FLAT_PEAK_MIN
+        else verticalRatio() >= MIN_VERTICAL_RATIO
+
+    // ========== 闸门拒因计数（每 10 秒打印后清零，供真机诊断） ==========
+    private var gateVerticalDrop = 0
+    private var gateFreqDrop = 0
+    private var gateRefractoryDrop = 0
+    private var verticalDropLatch = false
+
     /** 当前垂直能量占比（诊断用，0~1；无样本时返回 0） */
     fun verticalRatio(): Float {
         val sum = emaVertical + emaHorizontal
@@ -308,6 +343,10 @@ class GaitDetector {
      * @return true 表示这一帧构成一个「合格步」（间隔落在步频窗口内）
      */
     fun feedAcc(ax: Float, ay: Float, az: Float, now: Long): Boolean {
+        // 【5.7.3-lx102 · 114】每帧先做时效剔除，不能只在「又收到一个合格峰」时才剔。
+        // 旧实现的后果：人停下后不再有新峰，窗口里的 10 个旧峰永远不会过期，
+        // confirmedStepCount() 一直满格，判停 / 提醒状态都看这个数字 → 永远认为还在走。
+        dropStalePeaks(now)
         // —— 0. 重力初值直接用第一帧 ——
         // 不能从 0 开始收敛：那会在前两秒造出一个 9.4 m/s² 的假峰，
         // 把包络和阈值一起顶死，整个采样窗口作废。
@@ -379,13 +418,15 @@ class GaitDetector {
         // 【5.6.4 垂直轴闸门】幅值够了还不够，能量还必须主要沿重力方向：
         // 手持前后/左右晃动、转身、举起来拍照，幅值和间隔都像步，但能量在水平面，
         // 占比会明显低于 0.5；真走路的上下冲击则以垂直能量为主。
+        val verticalOk = peakGateOk(value)
         if (value > threshold && value <= MotionConfig.MAX_PEAK_VALUE
-            && verticalRatio() >= MIN_VERTICAL_RATIO
+            && verticalOk
         ) {
             if (!aboveThreshold) {
                 aboveThreshold = true
                 val since = if (lastPeakTime == 0L) Long.MAX_VALUE else now - lastPeakTime
                 // 不应期：200ms 内的重复上穿不算，挡掉同一脚步的抖动与主轴切换
+                if (since < MotionConfig.REFRACTORY_MS) gateRefractoryDrop++
                 if (since >= MotionConfig.REFRACTORY_MS) {
                     if (lastPeakTime != 0L) {
                         if (since > MotionConfig.GAIT_RESET_MS) {
@@ -442,12 +483,21 @@ class GaitDetector {
                             }
                             // 落窗口外但 ≤2.5s：慢走 / 抖动，既不计入也不清空，
                             // 避免把正常慢速散步当成断步
+                            if (since <= MotionConfig.GAIT_RESET_MS) gateFreqDrop++
                         }
                     }
                     lastPeakTime = now
                 }
             }
         } else {
+            if (value > threshold && value <= MotionConfig.MAX_PEAK_VALUE && !verticalOk) {
+                if (!verticalDropLatch) {
+                    verticalDropLatch = true
+                    gateVerticalDrop++
+                }
+            } else if (value <= threshold) {
+                verticalDropLatch = false
+            }
             aboveThreshold = false
         }
 
@@ -506,8 +556,12 @@ class GaitDetector {
     fun lastPeakWasFlat(): Boolean = lastPeakFlat
 
     /**
-     * 主轴稳定性：最近 confirmSteps 个合格步里，同一个轴的占比 ≥70% 才算稳定。
+     * 主轴稳定性：最近 confirmSteps 个合格步里，同一个轴的占比 ≥60% 才算稳定。
      * 走路是规律的上下颠簸（主轴固定），拿在手里乱动方向随机（主轴来回切）。
+     *
+     * 【5.7.3 由 70% 放宽到 60%】平着拿手机走路时，手臂前后摆会让主轴在
+     * 两个轴之间来回切，真机日志里 8 步里通常有 3 步换轴，70% 恒不成立；
+     * 60% 仍然是「同一轴过半」的多数判据，乱动的随机切轴很难凑够。
      */
     private fun axisStable(): Boolean {
         if (peakAxes.size < confirmSteps) return false
@@ -516,7 +570,10 @@ class GaitDetector {
             when (a) { 0 -> c0++; 1 -> c1++; else -> c2++ }
         }
         val max = maxOf(c0, c1, c2)
-        return max >= peakAxes.size * 0.7
+        // 平放 60%（手臂前后摆导致主轴在两轴间切换是常态），其余姿态维持 70%：
+        // 手里乱动的主轴切换被判死的要求不能松，[GaitDetectorPureTest.handShake] 锁着这条。
+        val need = if (currentAttitude == PhoneAttitude.LAY_FLAT) 0.6f else 0.7f
+        return max >= peakAxes.size * need
     }
 
     /**
@@ -563,6 +620,10 @@ class GaitDetector {
         lastStepActivityTs = 0L
         lastPeakFlat = false
         aboveThreshold = false
+        verticalDropLatch = false
+        gateVerticalDrop = 0
+        gateFreqDrop = 0
+        gateRefractoryDrop = 0
         envelope = 0f
         lastSampleTs = 0L
         currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
@@ -583,7 +644,13 @@ class GaitDetector {
     fun debugInfo(): String {
         val freqText = if (peakIntervals.isEmpty()) "无"
         else peakIntervals.joinToString(",") { "%.2fHz".format(1000.0 / it) }
-        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 垂直=%.2f 姿态=$currentAttitude"
+        // 【5.7.3】拒因计数：每打一次日志清零，保证这一行反映「刚过去的 10 秒」
+        // 卡在哪一道闸门，不用再靠猜（阈值 / 垂直 / 步频 / 不应期）。
+        val gateText = "闸门[垂直挡=$gateVerticalDrop 步频挡=$gateFreqDrop 间隔挡=$gateRefractoryDrop]"
+        gateVerticalDrop = 0
+        gateFreqDrop = 0
+        gateRefractoryDrop = 0
+        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 垂直=%.2f 姿态=$currentAttitude $gateText"
             .format(currentAdaptiveThreshold, envelope, verticalRatio())
     }
 }

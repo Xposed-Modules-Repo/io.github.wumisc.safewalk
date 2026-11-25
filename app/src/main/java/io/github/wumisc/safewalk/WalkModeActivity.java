@@ -151,6 +151,15 @@ public final class WalkModeActivity extends Activity {
         // 不必让用户自己进「编辑控制中心」翻列表找。
         findViewById(R.id.card_add_tile).setOnClickListener(v -> requestAddQsTile());
 
+        // 步态沙盒（测试用）：录制/回放传感器流，离线验证判据
+        findViewById(R.id.card_gait_sandbox).setOnClickListener(v -> {
+            try {
+                startActivity(new android.content.Intent(this, GaitSandboxActivity.class));
+            } catch (Throwable t) {
+                Toast.makeText(this, "打开失败：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
+
         // 小窗自定义（三级页）：尺寸 / 边距 / 画面文字。参数都在那边，
         // 本页只留入口，避免同一组控件维护两份。
         findViewById(R.id.card_preview_style).setOnClickListener(v -> {
@@ -385,8 +394,17 @@ public final class WalkModeActivity extends Activity {
                 + " camPerm=" + (checkSelfPermission(android.Manifest.permission.CAMERA)
                     == android.content.pm.PackageManager.PERMISSION_GRANTED)
                 + " overlay=" + android.provider.Settings.canDrawOverlays(this));
+        // 服务已在跑：只发 SHOW 指令切换显示方式，不要再走一次 startForegroundService。
+        // 旧写法无条件「start + SHOW」会在服务刚起来时排进两条裸 start：
+        // 一条 null action（完整提起前台）+ 一条 ACTION_SHOW（又补一次），
+        // 同时 evaluateShow 被触发两次，会出现两条 doShow、两次开相机。
+        if (WalkPreviewService.isAlive()) {
+            WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, mode);
+            return;
+        }
+        // 服务没跑：裸启动即可，服务会按已保存的 rearMode 自己决定全屏/小窗。
+        // 这里再补 SHOW 反而会和 onCreate 的默认显示抢跑。
         WalkPreviewService.start(this);
-        WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, mode);
     }
 
     // ========== 权限申请 ==========

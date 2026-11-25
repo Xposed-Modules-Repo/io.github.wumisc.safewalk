@@ -49,6 +49,18 @@ object KeepAlivePolicy {
     const val EXTRA_REVIVE_SOURCE = "keepalive.source"
 
     /**
+     * 心跳附带 App 侧硬件计步累计值。
+     *
+     * SystemUI 没有 ACTIVITY_RECOGNITION，Hook 自己注册不了系统计步器；只靠
+     * 加速度计在锁屏/放口袋时会断流。App 进程有权限，把 TYPE_STEP_COUNTER /
+     * TYPE_STEP_DETECTOR 的会话累计值随心跳带过来，Hook 用它触发 50 步智能提醒。
+     */
+    const val EXTRA_STEP_TOTAL = "keepalive.stepTotal"
+
+    /** 本次服务实例的会话标识：变化时 Hook 只重建步数基线，不补历史步数。 */
+    const val EXTRA_STEP_SESSION = "keepalive.stepSession"
+
+    /**
      * App 侧心跳周期。一条本地广播成本很低，但它是**常驻**的：
      * 5.6.0 从 30s 放宽到 45s，一天少发 960 条广播，代价是「服务被杀后多久被发现」
      * 从最多 90s 变成最多 135s —— 而恢复本身还要 1.5s 自检 + 启动，用户感知差别很小。
@@ -88,6 +100,23 @@ object KeepAlivePolicy {
     fun desired(masterOn: Boolean, walkOn: Boolean): Boolean = masterOn && walkOn
 
     /**
+     * 是否需要把心跳基线重置到「此刻」。
+     *
+     * 场景：用户刚把行走模式从关拨到开，App 才发出 startForegroundService，
+     * 服务连 onCreate 都还没跑，更不可能发第一条心跳。此时看门狗如果拿
+     * 几分钟前的旧心跳（或从未收到心跳时的开机时刻）判死，就会和用户自己的
+     * 启动抢跑：两条 startForegroundService、两条 startForeground 请求，
+     * 后一条没人应答，系统 30 秒后按前台服务超时把进程杀掉。
+     *
+     * 规则：只在「上一拍明确是关、这一拍变成开」时重置；首拍（previous=null）
+     * 不重置，保留开机首拉的原有节奏。重置后若服务最终没起来，
+     * 仍会在 [HEARTBEAT_TIMEOUT_MS] 后正常判死并拉起。
+     */
+    @JvmStatic
+    fun resetBaselineOnStart(previousDesired: Boolean?, desired: Boolean): Boolean =
+        desired && previousDesired == false
+
+    /**
      * 心跳是否已过期。
      *
      * [lastHeartbeatAt] == 0 表示从未收到（SystemUI 刚重启 / 通道不通）。
@@ -120,7 +149,13 @@ object KeepAlivePolicy {
         reviveCount: Int
     ): Boolean {
         if (!desired) return false
-        if (now < hookReadyAt || now - hookReadyAt < HOOK_BOOT_GRACE_MS) return false
+        // 【5.7.3 启动期误拉修复】从没收到心跳时，不能只等 5 秒宽限就拉透明页。
+        // 真机日志（15:38:31 SystemUI 重启 → 15:38:45 看门狗拉起 → 15:39:04 收到心跳）
+        // 说明 App 本来就活着，只是心跳周期 45 秒、还没轮到第一次发送；
+        // 这次多余拉起会让用户看到一次「透明页一闪」。
+        // 现在「从未收到心跳」要等满一个心跳周期再判断，其余场景仍是 5 秒宽限。
+        val grace = if (lastHeartbeatAt == 0L) maxOf(HOOK_BOOT_GRACE_MS, HEARTBEAT_INTERVAL_MS) else HOOK_BOOT_GRACE_MS
+        if (now < hookReadyAt || now - hookReadyAt < grace) return false
 
         // 首次（reviveCount==0）不设冷却：开机 / SystemUI 重启后要尽快恢复，
         // 不能让用户等满 3 分钟才看到小窗回来。

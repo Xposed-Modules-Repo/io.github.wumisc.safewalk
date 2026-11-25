@@ -57,6 +57,25 @@ object EmergencyOverlay {
         EmergencyDiag.event(EmergencyDiag.P_OVERLAY, "installed wm=${wm != null}")
     }
 
+    /**
+     * 【5.7.3 热重载】释放旧一代的窗口与 Context。
+     *
+     * 急救浮层是直接 `addView` 到 SystemUI 的 WindowManager 上的；
+     * 热重载时如果只换钩子，旧 root 会一直挂在窗口上（用户看到一张不消失的急救卡），
+     * 同时旧 Context/WindowManager 也被静态持有着。这里在主线程收起并全部置空，
+     * 新一代 init 会重新 install。
+     */
+    @JvmStatic
+    fun dispose() {
+        val doIt = Runnable {
+            hideOnMain()
+            ctx = null
+            wm = null
+            EmergencyDiag.event(EmergencyDiag.P_OVERLAY, "disposed_for_reload")
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) doIt.run() else main.post(doIt)
+    }
+
     /** 渲染关键字段（切换回主线程，SystemUI 主线程永远不被 Binder 阻塞） */
     @JvmStatic
     fun render(fields: DisplayFields, id: String) {

@@ -38,6 +38,25 @@ class KeepAliveReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent?) {
         val action = intent?.action ?: return
 
+        if (action == RestartReminderPolicy.ACTION_MODULE_READY) {
+            if (!ReceiverCompat.isTrustedCommand(
+                    this,
+                    intent.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
+                )
+            ) {
+                return
+            }
+            val runningCode = intent.getIntExtra(
+                RestartReminderPolicy.EXTRA_MODULE_VERSION_CODE, 0
+            )
+            val runningName = intent.getStringExtra(
+                RestartReminderPolicy.EXTRA_MODULE_VERSION_NAME
+            ) ?: ""
+            markModuleReady(ctx.applicationContext, runningCode, runningName,
+                intent.getStringExtra(RestartReminderPolicy.EXTRA_MODULE_INIT_SOURCE))
+            return
+        }
+
         if (action == KeepAlivePolicy.ACTION_REVIVE &&
             intent.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
             != SafeWalkPrefKey.BROADCAST_TOKEN
@@ -107,6 +126,52 @@ class KeepAliveReceiver : BroadcastReceiver() {
         } catch (t: Throwable) {
             try {
                 DiagLog.log("[keep] 恢复请求被系统拦截（后台启动限制）：${t.javaClass.simpleName}")
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    /**
+     * 把「Hook 已在这个安装上跑起来」写成可校验的标记。
+     *
+     * 不能只写一个 versionCode：同版本覆盖安装时 versionCode 不变，旧标记会残留。
+     * 所以同时记下本次安装的时间戳和 APK 字节数，首页用三者一起判断。
+     * 只有 Hook 报告的 versionCode 和当前安装一致才落标记——旧一代模块在覆盖
+     * 安装后误报的 ready 会被拒绝，不会把真正的「还没重启」吞掉。
+     */
+    private fun markModuleReady(
+        appCtx: Context,
+        runningCode: Int,
+        runningName: String,
+        source: String?
+    ) {
+        try {
+            val installed = BuildConfig.VERSION_CODE
+            if (runningCode <= 0 || runningCode != installed) {
+                DiagLog.log("[PERM] 收到模块就绪广播但版本不匹配：运行=$runningCode 安装=$installed，"
+                    + "不做「已热重载」标记")
+                return
+            }
+            val stamp = InstallFingerprint.stamp(appCtx)
+            val size = InstallFingerprint.apkSize(appCtx)
+            appCtx.getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(RestartReminderPolicy.KEY_RUNNING_VERSION, runningCode)
+                .putString(RestartReminderPolicy.KEY_RUNNING_VERSION_NAME, runningName)
+                .putLong(RestartReminderPolicy.KEY_RUNNING_STAMP, stamp)
+                .putLong(RestartReminderPolicy.KEY_RUNNING_SIZE, size)
+                // 模块已就绪 = 这次安装实际上已经生效，不需要用户再点「重启系统界面」。
+                // ack 与安装指纹一并落盘，之后同版本重复打开首页不会再提示。
+                .putInt(RestartReminderPolicy.KEY_ACK_VERSION, installed)
+                .putLong(RestartReminderPolicy.KEY_INSTALL_STAMP, stamp)
+                .putLong(RestartReminderPolicy.KEY_INSTALL_SIZE, size)
+                .putBoolean(RestartReminderPolicy.KEY_REPLACED_PENDING, false)
+                .apply()
+            DiagLog.log("[PERM] 模块已就绪：运行=$runningName($runningCode) "
+                + "触发源=${source ?: "unknown"} → 已清除重启待办，无需重启系统界面")
+        } catch (t: Throwable) {
+            try {
+                DiagLog.log("[PERM] 模块就绪标记落盘失败: $t")
             } catch (_: Throwable) {
             }
         }

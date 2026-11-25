@@ -265,9 +265,11 @@ public class PortraitCompromiseZoomTest {
     @Test
     public void testCombo1PortraitFZeroUsesCompromise() {
         String nonActive = nonActivePart();
+        // 【5.7.1】折中系数改为按源画面比例计算（16:9 仍≈2.04），源尺寸未知时退回 5.4.0 固定 2.0。
         assertTrue("组合1 竖屏+f=0：须有 boxH>boxW 门控 + 折中调用 + scale=z（中心支点）",
                 nonActive.contains("if (!landscapeWindow && boxH > boxW)")
-                        && nonActive.contains("val z = portraitCompromiseZoom(boxW, boxH)")
+                        && nonActive.contains("compromiseZoomFor(boxW, boxH, previewSrcW, previewSrcH)")
+                        && nonActive.contains("portraitCompromiseZoom(boxW, boxH)")
                         && nonActive.contains("view.scaleX = z")
                         && nonActive.contains("view.scaleY = z")
                         && nonActive.contains("view.pivotX = boxW / 2f")

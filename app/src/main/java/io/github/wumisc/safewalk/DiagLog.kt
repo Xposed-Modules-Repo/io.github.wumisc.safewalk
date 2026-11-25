@@ -1,6 +1,7 @@
 package io.github.wumisc.safewalk
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
@@ -44,11 +45,23 @@ object DiagLog {
      * 【5.6.9】日志所属版本号（SP int）。
      *
      * 用户痛点：覆盖安装新版本后，diag.log 里仍混着旧版本几千行日志，
-     * 每次抓日志都要先人肉找版本分界线。现在 App 进程 init 时发现
-     * versionCode 变了就把旧日志整个清掉、写一行升级头，之后文件里
-     * 只会有当前版本的内容。**只清日志，任何功能配置都不动。**
+     * 每次抓日志都要先人肉找版本分界线。现在 App 进程 init 时一旦判定为
+     * 「新安装事件」就把旧日志整个清掉、写一行升级头重新开流，之后文件里
+     * 只会有本次安装之后的内容。**只清日志，任何功能配置都不动。**
+     *
+     * 【5.6.15】不再只看 versionCode：本项目常态是「版本号不动、只改代码再打一包」，
+     * 同版本覆盖安装时 versionCode 完全相同，旧实现直接早退，旧内容照样混在里面。
+     * 现在按 [LogResetPolicy] 三条证据（版本号 / APK 字节数 / 安装指纹）任一命中即清空，
+     * 并把**内存环形缓冲一并清掉**——否则旧实现即便删了文件，用户在 App 里点
+     * 「回传日志」带出去的仍是环形缓冲里的旧内容，等于清了个寂寞。
      */
     private const val SP_KEY_LOG_VER = "diag_log_ver"
+
+    /** 上次记录时的安装指纹（lastUpdateTime 与 APK 落盘时间取大者），用于「同版本覆盖安装」 */
+    private const val SP_KEY_LOG_STAMP = "diag_log_stamp"
+
+    /** 上次记录时的 APK 字节数：换包必变，比时间戳更硬 */
+    private const val SP_KEY_LOG_APK = "diag_log_apk"
 
     /** App 向 Hook 索要日志（Hook 收到后回 [ACTION_LOG_DUMP]） */
     const val ACTION_REQUEST_LOG = "io.github.wumisc.safewalk.REQUEST_LOG"
@@ -56,6 +69,11 @@ object DiagLog {
     const val ACTION_LOG_DUMP = "io.github.wumisc.safewalk.LOG_DUMP"
     /** 回传正文的 extra key */
     const val EXTRA_LOG_TEXT = "log_text"
+    /** App 清空重建日志后通知 Hook 释放旧文件流（否则写入落到已删除的 inode 上） */
+    const val ACTION_LOG_RESET = "io.github.wumisc.safewalk.LOG_RESET"
+
+    /** Hook 所在进程的包名：跨进程广播必须显式投给它，否则接收器收不到 */
+    private const val SYSTEMUI_PKG = "com.android.systemui"
 
     /** 用户指定的可见路径 */
     const val USER_DIR = "/storage/emulated/0/Android/Travel safely"
@@ -236,13 +254,14 @@ object DiagLog {
     }
 
     /**
-     * 【5.6.9】升级即清日志（调用方必须已持有 [ringLock]）。
+     * 【5.6.9 / 5.6.15】升级或覆盖安装即清空重建日志（调用方必须已持有 [ringLock]）。
      *
      * · 只在 **App 进程**执行：Hook 跑在 SystemUI 里，读不到本应用的 SP，
      *   也不该由它清用户文件（ctx.packageName 不等于本应用 ID 时直接返回）。
-     * · versionCode 与 SP 记录一致 → 什么都不做；不一致 → 关流、删旧文件、
-     *   写一行升级头、记录新版本号。每次版本更新都会执行（用户确认的口径）。
-     * · **只动日志文件与这一个 SP key**，步态/小窗/白名单/急救卡等配置一律不碰。
+     * · 「新安装事件」由 [LogResetPolicy] 判：版本号变 / APK 字节数变 / 安装指纹变，
+     *   任一命中 → 关流、删旧文件、清空内存环形缓冲、以新头重新开流。
+     * · 三条都一致 → 什么都不做，只把本次指纹补齐写回（供下次比较）。
+     * · **只动日志文件与这三个 SP key**，步态/小窗/白名单/急救卡等配置一律不碰。
      */
     private fun clearOnVersionChangeLocked(ctx: Context) {
         try {
@@ -250,16 +269,66 @@ object DiagLog {
             val sp = ctx.getSharedPreferences("safewalk_xsp", Context.MODE_PRIVATE)
             val old = sp.getInt(SP_KEY_LOG_VER, -1)
             val cur = BuildConfig.VERSION_CODE
+            val curStamp = InstallFingerprint.stamp(ctx)
+            val curSize = InstallFingerprint.apkSize(ctx)
             versionCleaned = true
-            if (old == cur) return
+            val d = LogResetPolicy.decide(
+                old, cur,
+                sp.getLong(SP_KEY_LOG_STAMP, 0L), curStamp,
+                sp.getLong(SP_KEY_LOG_APK, 0L), curSize,
+                BuildConfig.VERSION_NAME
+            )
+            if (!d.reset) {
+                // 无需清空：把本次指纹写回。旧版本只记过 versionCode，
+                // 补齐指纹后下一次覆盖安装才能被认出来。
+                if (curStamp > 0L || curSize > 0L) {
+                    sp.edit().putLong(SP_KEY_LOG_STAMP, curStamp)
+                        .putLong(SP_KEY_LOG_APK, curSize).apply()
+                }
+                return
+            }
             closeOut()
             try { logFile?.delete() } catch (_: Throwable) {}
-            sp.edit().putInt(SP_KEY_LOG_VER, cur).apply()
-            val head = if (old < 0) "首次记录版本" else "版本升级 $old→$cur"
-            appendLine(stamp() + " [log] $head（v${BuildConfig.VERSION_NAME}）：旧版本日志已清空，本文件只含当前版本")
-            Log.i(TAG, "[log] $head：diag.log 已重置")
+            // 环形缓冲必须一起清：它是「App 内回传日志」的数据源，
+            // 只删文件的话用户回传出去的仍是上一次安装的旧内容。
+            ring.clear()
+            sp.edit().putInt(SP_KEY_LOG_VER, cur)
+                .putLong(SP_KEY_LOG_STAMP, curStamp)
+                .putLong(SP_KEY_LOG_APK, curSize)
+                .apply()
+            // 删完立刻写头：appendLine 内部按需重开流，等于把文件重建出来。
+            appendLine(
+                stamp() + " [log] ${d.reason}（v${BuildConfig.VERSION_NAME}）：" +
+                    "旧版本日志已清空并重建，本文件只含本次安装之后的内容"
+            )
+            Log.i(TAG, "[log] ${d.reason}：diag.log 已清空重建")
+            // 通知 SystemUI 里的 Hook 释放旧写流：它握着被删文件的句柄，
+            // 不关掉的话之后相机/避让日志全写进已 unlink 的 inode，用户看不见。
+            notifyHookReset(ctx)
         } catch (_: Throwable) {
             // 清日志失败不影响日志功能本身：宁可留着旧内容，也不能让 init 崩
+        }
+    }
+
+    /**
+     * 通知 Hook 进程同步释放旧日志流；失败不影响 App 侧已完成的清空重建。
+     *
+     * 【5.6.17 BUG 修复】这里必须投给 **SystemUI 包**，不能投给自己。
+     * 收这条广播的 `logRequestReceiver` 注册在 SystemUI 进程里（`SafeWalkLSPHook`），
+     * 它的包名是 `com.android.systemui`；而显式 `setPackage()` 的广播**只**投给目标包，
+     * 投成 `io.github.wumisc.safewalk` 就等于没发——Hook 手里那个已被 unlink 的
+     * 文件句柄永远不会释放，之后相机/避让日志全写进旧 inode。
+     * 之前看着像正常，只是因为装包后 SystemUI 恰好重启、旧句柄自然消失。
+     */
+    private fun notifyHookReset(ctx: Context) {
+        try {
+            ctx.sendBroadcast(
+                Intent(ACTION_LOG_RESET).apply {
+                    setPackage(SYSTEMUI_PKG)
+                    putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN)
+                }
+            )
+        } catch (_: Throwable) {
         }
     }
 
@@ -381,6 +450,23 @@ object DiagLog {
         try {
             c.close()
         } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * 【5.6.15】对方进程（App）清空重建了 diag.log：释放本进程的旧写流与旧缓冲。
+     *
+     * 只在 Hook（SystemUI）进程调用：本进程的 `out` 一直指向同一个 File 对象，
+     * [ensureOut] 会认为「还是那条流」而复用，文件被删掉后写入就落到 unlink 的
+     * inode 上，用户再也看不到 Hook 的日志。这里主动关流并清 ring，
+     * 下一次 appendLine 会按需重开，自然写到重建后的新文件。
+     */
+    @JvmStatic
+    fun resetForRebuild() {
+        synchronized(ringLock) {
+            closeOut()
+            ring.clear()
+            pendingLines = 0
         }
     }
 

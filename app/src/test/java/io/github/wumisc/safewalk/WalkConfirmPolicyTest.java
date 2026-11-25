@@ -111,11 +111,22 @@ public class WalkConfirmPolicyTest {
 
     // ---------- 应当拦截 ----------
 
+    /**
+     * 【5.7.3 平放不再一票否决】平着拿手机走路是用户最常见的姿态
+     * （真机日志里 LAY_FLAT 占七成以上）；旧版这里恒 false，等于无计步权限机型
+     * 永远不弹小窗。现在平放走「更严格的节律阈值」，正常步频必须放行。
+     */
     @Test
-    public void layFlatIsBlocked() {
+    public void layFlatNormalWalkingPasses() {
         WalkConfirmPolicy.Verdict v = policy().evaluate(true, 10, steps(10, 550L), 5_000L);
-        assertFalse("平放必须拦", v.pass);
-        assertTrue(v.reason.contains("平放"));
+        assertTrue("平放 + 正常步频必须放行，实际原因=" + v.reason, v.pass);
+    }
+
+    /** 平放但节奏像「躺床上慢抖」：平均间隔 1000ms 超过平放上限 850ms，必须拦 */
+    @Test
+    public void layFlatSlowShuffleBlocked() {
+        WalkConfirmPolicy.Verdict v = policy().evaluate(true, 10, steps(10, 1000L), 9_500L);
+        assertFalse("平放慢抖不得放行，实际原因=" + v.reason, v.pass);
     }
 
     @Test

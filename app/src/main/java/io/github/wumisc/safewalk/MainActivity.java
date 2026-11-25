@@ -173,6 +173,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         final long prompted;
         final long promptedSize;
         final boolean replacedPending;
+        final int runningVersion;
+        final long runningStamp;
+        final long runningSize;
         try {
             sp = getSharedPreferences(RestartReminderPolicy.SP_ONEOFF, MODE_PRIVATE);
             acked = sp.getInt(RestartReminderPolicy.KEY_ACK_VERSION, 0);
@@ -180,7 +183,29 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             prompted = sp.getLong(RestartReminderPolicy.KEY_PROMPTED_STAMP, 0L);
             promptedSize = sp.getLong(RestartReminderPolicy.KEY_PROMPTED_SIZE, 0L);
             replacedPending = sp.getBoolean(RestartReminderPolicy.KEY_REPLACED_PENDING, false);
+            runningVersion = sp.getInt(RestartReminderPolicy.KEY_RUNNING_VERSION, 0);
+            runningStamp = sp.getLong(RestartReminderPolicy.KEY_RUNNING_STAMP, 0L);
+            runningSize = sp.getLong(RestartReminderPolicy.KEY_RUNNING_SIZE, 0L);
         } catch (Throwable t) {
+            return;
+        }
+        // 【热重载对齐】Hook 已经初始化到当前版本，且 ready 标记属于这一次安装：
+        // 模块确实在跑新代码，绝不能再弹「磁盘上新版、进程里旧版」的重启提示。
+        // ready 标记由 KeepAliveReceiver 收到 MODULE_READY 后落盘；热重载失败时
+        // 根本不会出现这个标记，下面的正常判断继续兜底。
+        if (RestartReminderPolicy.moduleReadyForInstall(
+                installed, runningVersion, installStamp, runningStamp, apkSize, runningSize)) {
+            try {
+                sp.edit()
+                        .putInt(RestartReminderPolicy.KEY_ACK_VERSION, installed)
+                        .putLong(RestartReminderPolicy.KEY_INSTALL_STAMP, installStamp)
+                        .putLong(RestartReminderPolicy.KEY_INSTALL_SIZE, apkSize)
+                        .putBoolean(RestartReminderPolicy.KEY_REPLACED_PENDING, false)
+                        .apply();
+            } catch (Throwable ignored) {
+            }
+            DiagLog.log("[PERM] Hook 已运行当前版本 v" + runningVersion
+                    + "（readyStamp=" + runningStamp + "），跳过重启提示");
             return;
         }
         // acked == 0 表示首次安装（从未确认过）——必须同样提示：
@@ -426,7 +451,11 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 覆盖升级同理会继续跑旧类。用户确认重启后写入 ackedVersionCode，
         // 之后 shouldPrompt 自然返回 false，不会反复打扰。
         // 放在 onResume 而不是只在 onCreate：从首次引导页返回时也要能弹出来。
-        getWindow().getDecorView().postDelayed(this::maybePromptRestartForUpdate, 1500);
+        // 【热重载对齐】给 Hook 留出 init 的时间：libxposed API 102 热重载后
+        // 新一代要等 2 秒再初始化，成功后才会发 MODULE_READY。以前 1.5 秒就判，
+        // 会在热重载刚完成时抢先弹「还要重启」，正好和真实状态相反。
+        // 4 秒后再判断；若 ready 标记已到，会直接跳过。
+        getWindow().getDecorView().postDelayed(this::maybePromptRestartForUpdate, 4000);
     }
 
     private SharedPreferences xsp() {

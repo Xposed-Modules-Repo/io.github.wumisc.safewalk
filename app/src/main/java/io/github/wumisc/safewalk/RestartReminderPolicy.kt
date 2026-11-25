@@ -91,6 +91,60 @@ object RestartReminderPolicy {
     const val KEY_REPLACED_PENDING = "restartSuiReplacedPending"
 
     /**
+     * Hook（SystemUI 进程）最近一次成功初始化时，实际加载的模块 versionCode。
+     *
+     * 这是「重启提示」和真实热重载状态对齐的关键证据：APK 只是装到磁盘上时，
+     * 这个值还停留在旧版本；libxposed API 102 热重载成功、新一代 init 完成后，
+     * Hook 会主动广播 [ACTION_MODULE_READY]，App 侧把这个值更新成当前版本。
+     * 首页只认「版本 + 安装指纹」都匹配的 ready 标记，避免旧标记跨安装误放行。
+     */
+    const val KEY_RUNNING_VERSION = "restartSuiHookRunningVersionCode"
+
+    /** ready 标记对应的模块版本名，仅用于日志/排查 */
+    const val KEY_RUNNING_VERSION_NAME = "restartSuiHookRunningVersionName"
+
+    /** ready 标记对应的安装时间戳（Hook 广播时由 App 侧写入） */
+    const val KEY_RUNNING_STAMP = "restartSuiHookRunningStamp"
+
+    /** ready 标记对应的 APK 字节数（Hook 广播时由 App 侧写入） */
+    const val KEY_RUNNING_SIZE = "restartSuiHookRunningSize"
+
+    /**
+     * Hook → App：模块已经在 SystemUI 里完成初始化/热重载。
+     *
+     * 这是一条**显式投给本应用**的广播，只在模块真正跑起来后发；装完 APK 但
+     * SystemUI 还在旧代码、或热重载失败时不会发。首页据此跳过「重启系统界面」，
+     * 不再把「磁盘上已装新版」误判成「进程里还是旧版」。
+     */
+    const val ACTION_MODULE_READY = "io.github.wumisc.safewalk.MODULE_READY"
+
+    const val EXTRA_MODULE_VERSION_CODE = "module_version_code"
+    const val EXTRA_MODULE_VERSION_NAME = "module_version_name"
+    const val EXTRA_MODULE_INIT_SOURCE = "module_init_source"
+
+    /**
+     * 这个 ready 标记是否代表「当前这次安装」已经由 Hook 跑起来了。
+     *
+     * 只比 versionCode 不够：同版本覆盖安装时 versionCode 不变，上一次的 ready
+     * 标记会残留；所以还要安装指纹（时间戳/大小）对得上。任一指纹缺失时退回
+     * 版本判断，保证不会因为 ROM 取不到时间戳而永远弹窗。
+     */
+    @JvmStatic
+    fun moduleReadyForInstall(
+        installedVersionCode: Int,
+        runningVersionCode: Int,
+        currentStamp: Long,
+        readyStamp: Long,
+        currentSize: Long,
+        readySize: Long
+    ): Boolean {
+        if (runningVersionCode <= 0 || runningVersionCode != installedVersionCode) return false
+        if (currentStamp > 0L && readyStamp > 0L && currentStamp != readyStamp) return false
+        if (currentSize > 0L && readySize > 0L && currentSize != readySize) return false
+        return true
+    }
+
+    /**
      * 这次安装事件是不是新的（相对上次已处理的那次）。
      *
      * stamp 取不到（为 0）时一律返回 false，交给 versionCode 判断兜底。

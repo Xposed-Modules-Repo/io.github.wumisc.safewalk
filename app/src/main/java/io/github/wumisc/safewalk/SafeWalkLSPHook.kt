@@ -14,9 +14,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import de.robv.android.xposed.IXposedHookLoadPackage
-
-import de.robv.android.xposed.callbacks.XC_LoadPackage
 import android.content.BroadcastReceiver
 import android.widget.Toast
 import io.github.wumisc.safewalk.torch.TorchHelper
@@ -32,7 +29,7 @@ import io.github.wumisc.safewalk.torch.createTorchNotifyChannel
  * （2.9.4 去掉了中间的 VERIFYING 关卡：它要求用户走出教科书级别的稳定步频，
  *   真机上几乎通不过，结果就是「走了半天不提醒」）
  */
-class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
+class SafeWalkLSPHook : SensorEventListener {
 
     private enum class State { SLEEP, LIGHT_MONITOR }
 
@@ -69,7 +66,6 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      */
     @Volatile
     private var configJson: org.json.JSONObject? = null
-    private var nm: SafeWalkNotificationManager? = null
     private var sm: SensorManager? = null
     private var ctx: Context? = null
     private var torchNotifyManager: TorchNotificationManager? = null
@@ -118,8 +114,22 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     /** 每个接收器的注册只做一次：init 重试时重复注册 = 一条提醒弹两次 */
     private val registeredReceivers = mutableSetOf<String>()
 
+    /** 【5.7.3 热重载】name → 已注册的动态接收器，重载时逐个反注册，不留下旧一代 */
+    private val receiverRefs = mutableMapOf<String, BroadcastReceiver>()
+
     /** tick 链是否已启动：init 重试可能走两遍，不能挂两条心跳 */
     private var tickStarted = false
+
+    /**
+     * 【API 102 规则】旧一代已被请求退役。
+     *
+     * 热重载后旧代码仍可能在「已经在跑」的线程 / 已排队的 Handler 消息里继续执行：
+     * Context 兜底线程最多轮询 20 秒，tick 消息也还挂在主线程队列上。它们若继续跑，
+     * 会把旧一代的 Context 重新塞回静态字段，等于「释放后又复活」。
+     * 所有入口看到这个标记都必须立刻退出。
+     */
+    @Volatile
+    private var disposed = false
 
     // 配置缓存时间戳：避免每 2 秒跨进程查一次 Provider 把应用进程反复唤醒（耗电）
     @Volatile
@@ -164,6 +174,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private var lastReviveAt = 0L
     /** 本 SystemUI 进程已发起的复活次数（含开机首拉） */
     private var reviveCount = 0
+    /** 上一拍「配置是否期望预览在跑」：null=本进程还没判过。用于识别用户刚拨开开关 */
+    private var lastWatchdogDesired: Boolean? = null
     /** 上次尝试拉起的时刻：失败后按 60 秒冷却重试（elapsedRealtime） */
     private var lastAutoStartTry = 0L
     /** 心跳日志节流（wall clock 即可，仅用于打印） */
@@ -183,6 +195,18 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             ) return
             lastHeartbeatAt = SystemClock.elapsedRealtime()
             val wall = System.currentTimeMillis()
+            // App 有 ACTIVITY_RECOGNITION，SystemUI 没有；智能提醒的 50 步窗口
+            // 不能只靠本进程的加速度计（锁屏/口袋会断流）。心跳带累计步数时
+            // 直接用它补窗口，没带才退回本地传感器。
+            val appStepTotal = intent.getLongExtra(KeepAlivePolicy.EXTRA_STEP_TOTAL, -1L)
+            if (appStepTotal >= 0L) {
+                feedAppStepTotal(
+                    total = appStepTotal,
+                    session = intent.getLongExtra(KeepAlivePolicy.EXTRA_STEP_SESSION, 0L),
+                    wall = wall,
+                    elapsed = SystemClock.elapsedRealtime()
+                )
+            }
             if (wall - lastHeartbeatLogTs > 120_000L) {
                 lastHeartbeatLogTs = wall
                 diag("[keep] 收到预览服务心跳（本进程已复活 $reviveCount 次）")
@@ -190,9 +214,61 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         }
     }
 
+    /**
+     * 接收 App 侧硬件计步的会话累计值。
+     *
+     * [total] 是「本次服务实例注册计步器以来」的累计步数，不是开机累计值；
+     * [session] 变一次只重建基线，不把上一会话的步数补进来，避免服务重启后
+     * 一次性灌满 50 步窗口。供数在线期间 [recordStep] 会忽略本地传感器事件，
+     * 防止同一物理步被两条通道各记一次。
+     */
+    private fun feedAppStepTotal(total: Long, session: Long, wall: Long, elapsed: Long) {
+        if (session != lastAppStepSession) {
+            lastAppStepSession = session
+            lastAppStepTotal = total
+            lastAppStepFeedAt = elapsed
+            steps.clear()
+            diag("[step:feed] App 会话切换 → 重建步数基线=$total（不补历史）")
+            return
+        }
+        if (lastAppStepTotal < 0L || total < lastAppStepTotal) {
+            lastAppStepTotal = total
+            lastAppStepFeedAt = elapsed
+            diag("[step:feed] App 步数回退/首次建基线 → total=$total")
+            return
+        }
+        val delta = total - lastAppStepTotal
+        val previousTotal = lastAppStepTotal
+        lastAppStepTotal = total
+        lastAppStepFeedAt = elapsed
+        if (delta <= 0L) return
+
+        // App 第一次从 0 开始报步时，窗口里可能已经攒了本地传感器的步数；
+        // 先清掉，避免 App 的首批步数和本地重复计算。
+        if (previousTotal == 0L) steps.clear()
+
+        // 一次心跳最多补 300 步（正常人 45 秒走不出这个量）；多出来的只用于
+        // 统计，不把 5 分钟窗口瞬间灌爆。真正走路时每拍增量很小，不受影响。
+        val add = minOf(delta, 300L).toInt()
+        repeat(add) { steps.add(wall - it.toLong()) }
+        steps.removeAll { it < wall - WINDOW_MS }
+        walking = true
+        lastStepTs = wall
+        stepEventCount += add
+        diag("[step:feed] App 硬件供数 +$add（本拍差 $delta）→ 窗口 ${steps.size}/${stepThreshold()}，来源=App")
+    }
+
     // ========== 计步诊断状态（「走了半天没反应」时必须能从日志看出卡在哪） ==========
     /** 收到的合格步数事件总数（系统计步器 + 兜底合计，去重后） */
     private var stepEventCount = 0
+
+    // ===== App 侧硬件计步供数（SystemUI 没有 ACTIVITY_RECOGNITION 的替代） =====
+    /** App 心跳带来的会话累计步数基线；-1 = 还没收到过。 */
+    private var lastAppStepTotal = -1L
+    /** App 本次服务实例的会话标识；变化时只重建基线，不补历史步数。 */
+    private var lastAppStepSession = 0L
+    /** 最近一次 App 供数的单调时刻：供数在线时抑制本地传感器，避免同一步算两遍。 */
+    private var lastAppStepFeedAt = 0L
     /**
      * 传感器**原始回调**总数（不管有没有凑成合格步）。
      *
@@ -236,6 +312,12 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         const val OVERLAY_RESYNC_MS = 60_000L
         const val NIGHT_START_HOUR = 22  // 夜间开始
         const val NIGHT_END_HOUR = 6      // 夜间结束
+
+        // ===== 相机避让（5.7）=====
+        /** 看到相机后至少保持让路这么久：覆盖 ROM 层级 3 在相机/桌面之间跳的抖动窗口 */
+        const val CAM_AVOID_HOLD_MS = 6_000L
+        /** 真的离开相机后，要连续这么多次「非相机」才解除让路（tick 2 秒 → 约 4 秒） */
+        const val CAM_CLEAR_STREAK = 2
 
         // ===== 加速度计计步 =====
         /** 系统计步器注册成功但这么久一步都没来，视作「名存实亡」 */
@@ -387,76 +469,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 三个都不中还有第四条路：进程内起线程反射 `ActivityThread` 自取 Context（见
      * [startContextFallback]）。四条全废才是真的没戏。
      */
-    override fun handleLoadPackage(lp: XC_LoadPackage.LoadPackageParam) {
-        Log.i("SafeWalk", "===== Hook 加载到进程: ${lp.packageName} =====")
-        diag("===== Hook 加载到进程: ${lp.packageName} =====")
-        // Hook系统界面 SystemUI，和以前好用的版本一致
-        if (lp.packageName != "com.android.systemui") {
-            diag("不是SystemUI，跳过: ${lp.packageName}")
-            return
-        }
-        Log.i("SafeWalk", "成功挂载至 SystemUI【系统界面】进程")
-        diag("成功挂载至 SystemUI【系统界面】进程")
-
-        // ---- 锚点 1：SystemUIApplication.onCreate（主入口） ----
-        hookAnchor("SystemUIApplication.onCreate") {
-            val appCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
-                "com.android.systemui.SystemUIApplication",
-                lp.classLoader
-            ) ?: return@hookAnchor false
-            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
-                appCls, "onCreate",
-                object : de.robv.android.xposed.XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val appCtx = param.thisObject as? Context ?: return
-                        triggerInit(appCtx, "SystemUIApplication.onCreate")
-                    }
-                }
-            )
-            true
-        }
-
-        // ---- 锚点 2：Instrumentation.callApplicationOnCreate（兜住 OEM 改类名） ----
-        hookAnchor("Instrumentation.callApplicationOnCreate") {
-            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
-                "android.app.Instrumentation",
-                lp.classLoader,
-                "callApplicationOnCreate",
-                android.app.Application::class.java,
-                object : de.robv.android.xposed.XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val appCtx = param.args.getOrNull(0) as? Context ?: return
-                        triggerInit(appCtx, "Instrumentation.callApplicationOnCreate")
-                    }
-                }
-            )
-            true
-        }
-
-        // ---- 锚点 3：SystemUIService.onCreate（旁路，启动极早） ----
-        hookAnchor("SystemUIService.onCreate") {
-            val svcCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
-                "com.android.systemui.SystemUIService",
-                lp.classLoader
-            ) ?: return@hookAnchor false
-            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
-                svcCls, "onCreate",
-                object : de.robv.android.xposed.XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val svcCtx = param.thisObject as? Context ?: return
-                        triggerInit(svcCtx, "SystemUIService.onCreate")
-                    }
-                }
-            )
-            true
-        }
-
-        // ---- 第四条路：锚点全没命中时，自己从 ActivityThread 摸 Context ----
-        startContextFallback()
-    }
-
     /** 挂一个锚点，成功/失败都留日志。返回 false 表示该类在这台机器上不存在（不算错误） */
-    private fun hookAnchor(name: String, block: () -> Boolean) {
+    internal fun hookAnchor(name: String, block: () -> Boolean) {
         try {
             if (block()) {
                 anchorsHooked++
@@ -479,7 +493,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 记下「第一个命中的是谁」——用户反馈"某 ROM 上没反应"时，这一行能立刻说明
      * 是哪个入口活了、还是根本没有入口。
      */
-    private fun triggerInit(appCtx: Context, source: String) {
+    internal fun triggerInit(appCtx: Context, source: String) {
+        if (disposed) return
         if (initSucceeded) return
         if (initTrigger.isEmpty()) {
             initTrigger = source
@@ -490,13 +505,36 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
     /**
+     * 【API 102 规则】热重载完成后，新一代主动接管。
+     *
+     * 文档明确写着：**package 生命周期回调不会在热重载后自动重放**
+     * （`onModuleLoaded` / `onPackageLoaded` 都不会再来一遍）。所以不能像旧版那样
+     * 在 `onHotReloaded` 里只打一行日志等 `onPackageLoaded` —— 那样这一代永远不会初始化，
+     * 表现就是「热重载成功了，但模块从此死了，直到 SystemUI 重启」。
+     *
+     * 新代码里没有 SystemUI 的 ClassLoader，重新挂锚点没有意义（Application.onCreate 也已经过去了），
+     * 直接反射 `ActivityThread` 取当前 Application 并初始化；取不到再走 500ms 轮询兜底。
+     */
+    internal fun afterHotReload(processName: String) {
+        disposed = false
+        diag("[reload] 新一代接管（process=$processName）：主动取 Context 初始化")
+        val app = currentApplication()
+        if (app != null) {
+            triggerInit(app, "热重载后 ActivityThread 直取")
+        } else {
+            diag("[reload] 新一代暂时取不到 Application，转 500ms 轮询兜底")
+            startContextFallback()
+        }
+    }
+
+    /**
      * Context 兜底通道：不依赖任何 Hook 点，直接反射拿当前进程的 Application。
      *
      * 适用于锚点全部挂不上的 ROM。每 500ms 试一次，最多 20 秒；拿到就初始化并
      * 立即退出线程。锚点已生效时会提前返回，不会白跑（前 8 秒还会先等一等，
      * 正常机型 2 秒内就初始化完成，这个线程基本不会真正开始轮询）。
      */
-    private fun startContextFallback() {
+    internal fun startContextFallback() {
         if (contextFallbackStarted) return
         contextFallbackStarted = true
         val t = Thread({ contextFallbackLoop() }, "SafeWalk-ctx-fallback")
@@ -510,13 +548,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         val graceMs = if (anchorsHooked > 0) 8_000L else 1_000L
         var waited = 0L
         while (waited < graceMs) {
-            if (initSucceeded) return
+            if (disposed || initSucceeded) return
             sleepQuietly(500L)
             waited += 500L
         }
         var tries = 0
         while (tries < 40) {
-            if (initSucceeded) return
+            if (disposed || initSucceeded) return
             val app = currentApplication()
             if (app != null) {
                 diag("[hook] 兜底通道拿到 Context（第 ${tries + 1} 次；锚点命中 $anchorsHooked 个），触发初始化")
@@ -557,6 +595,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 一行「初始化失败」。现在单步失败只损失那一步，其余照常跑，并且能看出是哪一步。
      */
     private fun runInit(appCtx: Context) {
+        if (disposed) return
         synchronized(initLock) {
             // 防御性：个别 ROM 会重复走 SystemUIApplication.onCreate
             if (initSucceeded) {
@@ -582,7 +621,6 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             // 配置读取改到后台线程，这里只发起，不阻塞（见 refreshConfig 注释）
             refreshConfig(force = true)
 
-            step("通知管理器") { nm = SafeWalkNotificationManager(ctx!!) }
             step("传感器服务") {
                 sm = ctx!!.getSystemService(Context.SENSOR_SERVICE) as SensorManager
             }
@@ -655,12 +693,48 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         } catch (_: Throwable) {
         }
 
+        var justReady = false
         synchronized(initLock) {
             initRunning = false
-            if (coreOk) initSucceeded = true
+            if (coreOk && !initSucceeded) {
+                initSucceeded = true
+                justReady = true
+            }
         }
-        if (!coreOk) scheduleInitRetry(appCtx)
+        if (!coreOk) {
+            scheduleInitRetry(appCtx)
+        } else if (justReady) {
+            // 跟热重载状态对齐：只在模块真正初始化完成后，才告诉 App「当前版本已经在跑」。
+            // 装完 APK 但 SystemUI 里还是旧代码时不会走到这里，首页的重启提示照旧。
+            notifyModuleReady(appCtx)
+        }
     }
+
+    /**
+     * 通知 App：Hook 这一代已经初始化完成，当前实际运行 versionCode 是多少。
+     *
+     * 用显式 `setPackage(APP_PKG)` 只投给本应用，并带令牌；App 侧的静态接收器
+     * 收到后把「运行版本 + 本次安装指纹」写进 SP。首页拿这组值判断是否需要
+     * 重启：热重载成功时标记匹配 → 不弹误报；热重载失败 / 模块没加载 → 没标记
+     * 或标记属于上一次安装 → 正常提示重启。
+     */
+    private fun notifyModuleReady(appCtx: Context) {
+        try {
+            val i = Intent(RestartReminderPolicy.ACTION_MODULE_READY).apply {
+                setPackage(APP_PKG)
+                putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN)
+                putExtra(RestartReminderPolicy.EXTRA_MODULE_VERSION_CODE, BuildConfig.VERSION_CODE)
+                putExtra(RestartReminderPolicy.EXTRA_MODULE_VERSION_NAME, BuildConfig.VERSION_NAME)
+                putExtra(RestartReminderPolicy.EXTRA_MODULE_INIT_SOURCE, initTrigger)
+            }
+            appCtx.sendBroadcast(i)
+            diag("[reload] 已通知 App：模块运行版本=" + BuildConfig.VERSION_NAME
+                + "(" + BuildConfig.VERSION_CODE + ") 触发源=" + initTrigger)
+        } catch (t: Throwable) {
+            diag("[reload] 通知 App 模块已就绪失败: $t")
+        }
+    }
+
 
     /** 单步初始化兜底：一步失败不影响后面的步骤，也不会把整个 init 卡死 */
     private inline fun step(name: String, block: () -> Unit) {
@@ -751,7 +825,13 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         // 日志回传：App 启动时来要一份本进程日志，由 App 统一落盘。
         // SystemUI 自己的外部目录是 Android/data/com.android.systemui/…，
         // 用户根本进不去，只有回传到 App 才看得到。
-        registerOnce("log", logRequestReceiver, IntentFilter(DiagLog.ACTION_REQUEST_LOG))
+        registerOnce(
+            "log", logRequestReceiver,
+            IntentFilter().apply {
+                addAction(DiagLog.ACTION_REQUEST_LOG)
+                addAction(DiagLog.ACTION_LOG_RESET)
+            }
+        )
 
         // 预览实际状态回执：App 侧手动开/关过预览后，本进程的
         // lastSentShow 必须跟着改，否则「去重」会把下一次显示指令吞掉
@@ -774,11 +854,91 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         if (!registeredReceivers.add(name)) return
         try {
             ReceiverCompat.registerExportedWithPermission(c, receiver, filter, CONTROL_PERMISSION)
+            // 【5.7.3 热重载】留下引用，重载时才能真的反注册掉旧一代，
+            // 否则旧闭包会一直挂在 SystemUI 上，收到广播还去操作已经作废的内核。
+            receiverRefs[name] = receiver
         } catch (t: Throwable) {
             // 从登记表里摘掉，让下一次 init 重试还能补上
             registeredReceivers.remove(name)
             diag("❌ 注册广播失败[$name]: $t")
         }
+    }
+
+    /**
+     * 【5.7.3 热重载】释放旧一代占用的全部资源。
+     *
+     * libxposed 102 的 `onHotReloading` 只负责换钩子；本内核在 SystemUI 里另外持有
+     * 传感器监听、动态广播接收器、tick 链、看门狗状态和配置快照，这些**不会**
+     * 随钩子替换自动消失。不处理的话会出现：旧闭包继续收广播（操作已作废的 ctx）、
+     * 加速度计被两代同时监听（双倍耗电、重复计步）、tick 链续命导致日志翻倍。
+     *
+     * 这里的顺序：先停链 → 再断传感器 → 再反注册接收器 → 最后清状态与上下文。
+     * 全部 try-catch 包住：任何一项失败都不能把 SystemUI 带崩。
+     */
+    fun disposeForReload(reason: String) {
+        diag("[reload] 释放旧一代资源：$reason")
+        disposed = true
+        tickStarted = false
+        // ① 传感器：主计步器监听（this）、加速度计兜底、环境光、撞击检测
+        try { sm?.unregisterListener(this) } catch (_: Throwable) {}
+        try { stopAccFallback() } catch (_: Throwable) {}
+        try { luxListener?.let { sm?.unregisterListener(it) } } catch (_: Throwable) {}
+        luxListener = null
+        try { crashDetector?.stop() } catch (_: Throwable) {}
+        crashDetector = null
+        stepSensorRegistered = false
+        // ② 动态广播：逐个反注册，清空两个登记表（新一代 init 会重新注册）
+        val c = ctx
+        if (c != null) {
+            for ((name, r) in receiverRefs) {
+                try { c.unregisterReceiver(r) } catch (_: Throwable) {
+                    diag("[reload] 反注册失败[$name]（多半已随进程重建）")
+                }
+            }
+        }
+        receiverRefs.clear()
+        registeredReceivers.clear()
+        batteryReceiverRegistered = false
+        torchActionReceiver = null
+        try { torchReminder?.reset() } catch (_: Throwable) {}
+        // 手电回调必须显式反注册：它持有 CameraManager 与旧 Context，
+        // 只把字段置 null 的话回调仍会活着，新一代再注册就变成两份。
+        try { torchNotifyManager?.stopMonitor() } catch (_: Throwable) {}
+        // 急救浮层是直接挂在 WindowManager 上的 View，必须收起并释放，否则热重载后
+        // 旧一代的急救卡会一直留在屏幕上（静态持有旧 Context）。
+        try { EmergencyOverlay.dispose() } catch (_: Throwable) {}
+        torchReminder = null
+        torchNotifyManager = null
+        // ③ 内核状态：配置快照与各类时间戳必须作废，新一代重新读一遍真实配置
+        configJson = null
+        lastConfigTs = 0L
+        configLoading = false
+        configReloadPending = false
+        steps.clear()
+        lastStepTs = 0L
+        lastAppStepTotal = -1L
+        lastAppStepSession = 0L
+        lastAppStepFeedAt = 0L
+        lastSitRemindTs = 0L
+        lastTriggerTs = 0L
+        lastSentShow = null
+        lastSentAt = 0L
+        previewUntil = 0L
+        lastHeartbeatAt = 0L
+        hookReadyAt = 0L
+        lastReviveAt = 0L
+        reviveCount = 0
+        lastAutoStartTry = 0L
+        // ④ 配置线程：单线程守护池，每重载一代就会多一条 "SafeWalk-config" 线程。
+        // 旧实例不会再用，直接 shutdownNow；正在跑的读取最多被打断一次，新一代会重读配置。
+        try { configExecutor.shutdownNow() } catch (_: Throwable) {}
+        // ⑤ 上下文最后清：上面的反注册都要用到它
+        sm = null
+        ctx = null
+        initSucceeded = false
+        initRunning = false
+        initAttempts = 0
+        diag("[reload] 旧一代已释放完毕，等待新一代重新挂锚点")
     }
 
     private fun startTick() {
@@ -804,6 +964,12 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
      * 保证两边的状态机行为完全一致。
      */
     private fun recordStep(now: Long) {
+        // App 供数在线：硬件计步已经由心跳补进窗口，本进程的同一条物理步
+        // 不能再记一次。等 App 心跳断掉超过一个看门狗周期，才退回本地兜底。
+        if (lastAppStepTotal > 0L
+            && SystemClock.elapsedRealtime() - lastAppStepFeedAt
+            < KeepAlivePolicy.HEARTBEAT_TIMEOUT_MS
+        ) return
         // 系统计步器与加速度计同时在跑，同一步会被两边各报一次。
         // 300ms 内的重复事件直接丢弃 —— 人走不出 3.3 步/秒，不会误杀真实步数。
         if (now - lastStepTs < 300L) return
@@ -849,6 +1015,15 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             startAccFallback("设备无计步器")
             return
         }
+        // 【5.7.3】SystemUI 一定没有 ACTIVITY_RECOGNITION（它是系统进程，用户无法给它授权），
+        // 直接注册必然返回 false —— 旧版每次重启都要走一遍「❌ 注册被拒绝」再降级，
+        // 日志里像出了故障，其实只是已知限制。先查权限，缺权限就静默走加速度计，
+        // 只在真能注册的机器（少数 ROM 把 SystemUI 列进健康权限白名单）走系统计步器。
+        if (!stepPermissionGranted()) {
+            diag("⏭ SystemUI 无 ACTIVITY_RECOGNITION（系统进程无法授权），直接用加速度计计步")
+            startAccFallback("系统界面无计步权限")
+            return
+        }
         val ok = try {
             sm?.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL) ?: false
         } catch (t: Throwable) {
@@ -861,6 +1036,23 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         } else {
             diag("❌ 计步器注册被拒绝（系统界面多半没有 ACTIVITY_RECOGNITION 权限），改用加速度计自行计步")
             startAccFallback("注册被拒")
+        }
+    }
+
+    /**
+     * SystemUI 进程是否持有 ACTIVITY_RECOGNITION（Android 10+ 才需要）。
+     *
+     * 查询失败一律返回 false —— 宁可走加速度计兜底（功能等价、稍费电），
+     * 也不要拿一个必然失败的注册去刷错误日志。
+     */
+    private fun stepPermissionGranted(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 29) return true
+        return try {
+            val c = ctx ?: return false
+            c.checkSelfPermission(android.Manifest.permission.ACTIVITY_RECOGNITION) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+        } catch (t: Throwable) {
+            false
         }
     }
 
@@ -1047,7 +1239,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             if (now - lastSummaryTs > 120_000L) {
                 lastSummaryTs = now
                 val gap = if (lastStepTs == 0L) "从未" else "${(now - lastStepTs) / 1000}s 前"
-                diag("📊 状态=$state 窗口步数=${steps.size}/${stepThreshold()} 上一步(Hook侧)=$gap 计步来源=${stepSource()} 累计=$stepEventCount（Hook侧时钟，与App判停不同源）")
+                diag("📊 状态=$state 窗口步数=${steps.size}/${stepThreshold()} 上一步(Hook侧)=$gap 计步来源=${stepSource()} 累计=$stepEventCount（Hook侧时钟，与App判停不同源）"
+                        + (fbDetector?.let { " | " + it.debugInfo() } ?: ""))
             }
 
             // 静置判定：一段时间没有新步 → 认为停下了。
@@ -1153,6 +1346,15 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             if (intent?.getStringExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN)
                 != SafeWalkPrefKey.BROADCAST_TOKEN
             ) return
+            // 【5.6.15】App 侧判定「新安装事件」后已把 diag.log 删掉重建。
+            // 本进程还握着旧文件的写句柄（outFor 一直等于那个 File），不主动关掉，
+            // 后续写入会落到已被 unlink 的 inode 上——用户看到的文件里从此
+            // 只剩 App 进程的内容，Hook 的相机/避让日志整段消失。
+            if (intent.action == DiagLog.ACTION_LOG_RESET) {
+                DiagLog.resetForRebuild()
+                diag("[log] 已按 App 请求释放旧文件流（日志已清空重建，后续写入落到新文件）")
+                return
+            }
             // 索取日志时先补一条「此刻的现场」，否则回传的只有两分钟一次的摘要，
             // 正好卡在「刚走完但还没到摘要时间」的瞬间会看不出任何动静
             val gapNow = if (lastStepTs == 0L) "从未" else "${(System.currentTimeMillis() - lastStepTs) / 1000}s 前"
@@ -1266,7 +1468,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         if (isNightTime()) return
         if (now - lastStepTs > SIT_REMIND_MS && now - lastSitRemindTs > DAILY_COOLDOWN) {
             if (pref(SafeWalkPrefKey.enableSitHealthRemind, true)) {
-                nm?.sitRemind()
+                notifyApp(WalkPreviewService.NOTIFY_SIT)
                 lastSitRemindTs = now
             }
         }
@@ -1379,10 +1581,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             if (pref(SafeWalkPrefKey.enableNightTorchGait, false)) {
                 diag("[torch] 小窗联动开关已开：闪光灯随角落小窗显示时点亮、收起时熄灭，跳过旧自动点灯")
             } else if (pref(SafeWalkPrefKey.enableNightTorch, true)) {
-                nm?.let {
-                    it.flashlightSuggest()
-                    fired.add("夜间手电")
-                }
+                notifyApp(WalkPreviewService.NOTIFY_TORCH)
+                fired.add("夜间手电")
             }
         }
 
@@ -1467,7 +1667,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     if (level * 100 / scale <= 15) {
                         val now = System.currentTimeMillis()
                         if (now - lastBatteryWarnTs > BATTERY_COOLDOWN) {
-                            nm?.batteryWarning()
+                            notifyApp(WalkPreviewService.NOTIFY_BATTERY)
                             lastBatteryWarnTs = now
                         }
                     }
@@ -1482,6 +1682,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     // ========== 定时轮询：单一入口 ==========
     private val tickRunnable = object : Runnable {
         override fun run() {
+            // 【5.7.3 热重载】旧一代被释放后，已排队的那一帧不能再跑：
+            // 否则它会拿着已经置空的 ctx 再发一轮指令，并把链自己续上。
+            if (!tickStarted) return
             try {
                 // 【v1.1 T04】急救覆盖层 TTL 兜底：Activity 可见 ACK 丢失时，
                 // 20s 后自动 hide()，复用既有 2s/5s tick，不另起定时器、不开 wake lock。
@@ -1499,7 +1702,9 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
             val now = System.currentTimeMillis()
             // 【省电计划】自适应节拍：只在「正在走 / 预览显示中」维持 2 秒响应，
             // 静置时放慢到 5 秒。计步是传感器事件驱动，放慢轮询不影响走路检测延迟。
-            val previewActive = lastSentShow == true || previewUntil > now
+            // 【5.7】让路保持期间也维持 2 秒：否则收窗后立刻降到 5 秒节拍，
+            // 用户离开相机要等 5 秒才恢复，而相机再打开又要等 5 秒才收。
+            val previewActive = lastSentShow == true || previewUntil > now || lastCamAvoidPkg != null
             val interval = PowerPolicy.tickIntervalMs(masterEnabled(), walking, previewActive)
             Handler(Looper.getMainLooper()).postDelayed(this, interval)
         }
@@ -1519,6 +1724,11 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     private fun updateOverlay() {
         if (!masterEnabled() || !pref(SafeWalkPrefKey.enableRearCamera, false)) {
             previewUntil = 0L
+            // 关掉预览的这段时间看门狗不该再判活：显式记住「这一拍期望是关」，
+            // 否则 lastWatchdogDesired 会一直停在 true，用户隔几分钟重新拨开时
+            // 被当成「一起就是开的」，拿早已过期的旧心跳立刻拉起透明页，
+            // 和用户自己的 startForegroundService 撞成两条启动链（重复 doShow）。
+            lastWatchdogDesired = false
             sendOverlayCmd(false)
             return
         }
@@ -1576,6 +1786,16 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         val desired = KeepAlivePolicy.desired(
             masterEnabled(), pref(SafeWalkPrefKey.enableRearCamera, false)
         )
+        // 用户刚拨开开关（上一拍是关、这一拍是开）：把心跳基线挪到此刻。
+        // 服务还在 onCreate 里，第一条心跳最快也要几十毫秒后才到；不能让看门狗
+        // 拿旧心跳判死，否则会和用户自己的启动抢跑，重复 startForegroundService
+        // 在 30 秒后触发前台服务超时，直接把 App 进程杀掉。
+        val resetBaseline = KeepAlivePolicy.resetBaselineOnStart(lastWatchdogDesired, desired)
+        lastWatchdogDesired = desired
+        if (resetBaseline) {
+            lastHeartbeatAt = now
+            diag("[keep] 行走模式刚开启 → 看门狗重置心跳基线，等首个心跳")
+        }
         if (!KeepAlivePolicy.shouldRevive(
                 desired, lastHeartbeatAt, now, hookReadyAt, lastReviveAt, reviveCount
             )
@@ -1653,6 +1873,29 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     // ========== 手电（系统进程侧） ==========
 
     /**
+     * 【5.6.16】把「该提醒了」的结论交给 App 进程去发通知。
+     *
+     * 为什么不在本进程直接 notify：通知的归属包名由发通知的 Context 决定。
+     * SystemUI 进程里发出去的提醒，package 是 `com.android.systemui`——
+     * 系统界面自己的通知会被系统压制，超级岛（以及「超级岛增强」模块）也
+     * 不会把它算成本应用的岛。用户侧看到的正是「只有前台服务那条上岛」。
+     * 现在只保留判定，真正 notify 由 App 侧执行，包名回到本应用。
+     */
+    private fun notifyApp(kind: String) {
+        try {
+            ctx?.sendBroadcast(
+                Intent(WalkPreviewService.ACTION_HOOK_NOTIFY).apply {
+                    setPackage(APP_PKG)
+                    putExtra(WalkPreviewService.EXTRA_NOTIFY_KIND, kind)
+                    putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN)
+                }
+            )
+        } catch (t: Throwable) {
+            diag("[notif] 委托 App 发通知失败($kind): ${t.message}")
+        }
+    }
+
+    /**
      * 让应用进程收起后视预览，把摄像头让给手电。
      *
      * 手电和预览用的是同一颗后置摄像头，同一时刻只能有一个使用者。
@@ -1727,9 +1970,18 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     }
 
 
-    // 相机前台检测节流：每 5 秒最多反射查一次，避免高频调用 system_server
-    private var lastCameraCheckTs = 0L
+    // 相机前台检测：**每次 tick 都查**（5.7 去掉了旧的 5 秒结果缓存）。
+    //
+    // 旧实现缓存 5 秒、tick 又是 2 秒，最坏要 5~7 秒才收窗，用户看到的就是
+    // 「打开相机后小窗还在那儿停一会儿」。检测本身只是一次 getRunningTasks 反射，
+    // 2 秒一次的开销可以忽略，没有必要缓存。
     private var cameraInFront = false
+
+    /** 让路保持到的时刻：真机日志显示层级 3 会在相机/桌面之间来回跳，靠它压住抖动 */
+    private var camAvoidHoldUntil = 0L
+
+    /** 连续多少次检测「不是相机」才算真的离开（每次 tick 一次，约 2 秒） */
+    private var camClearStreak = 0
 
     /** 上次成功的检测层级（1..4），下次优先用它，别每次都从失败的那层开始试 */
     private var camDetectLayer = 0
@@ -1740,27 +1992,66 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
     /** 上一次因哪个相机包让路，用于「进入/离开」只记一次日志 */
     private var lastCamAvoidPkg: String? = null
 
+    /**
+     * 前台是不是相机类应用（决定小窗让不让路）。
+     *
+     * 【5.7 修复 · 「不避让 / 停一会儿才关 / 关了又冒出来」】
+     * 1. **不再缓存 5 秒**：每次 tick（小窗显示中 2 秒）都实时查一次，收窗延迟从
+     *    5~7 秒压到 2 秒内。
+     * 2. **不对称迟滞**：看到相机立刻让路，并且至少保持 [CAM_AVOID_HOLD_MS]；
+     *    解除让路要连续 [CAM_CLEAR_STREAK] 次非相机。真机日志里 `getRunningTasks`
+     *    会在 `com.android.camera` 与 `com.miui.home` 之间反复跳（09:58:31 相机、
+     *    09:58:36 桌面、09:58:42 又相机），旧实现每跳一次就解除让路 → 小窗被重新
+     *    挂出来，于是「关了又回来」。
+     */
     private fun cameraInForeground(): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastCameraCheckTs < 5_000L) return cameraInFront
-        lastCameraCheckTs = now
 
         val pkg = foregroundPackage()
-        val inCam = pkg != null && isCameraPackage(pkg)
-        if (inCam) {
-            if (lastCamAvoidPkg != pkg) {
-                lastCamAvoidPkg = pkg
-                diag("[cam] 前台是相机应用 $pkg → 让路收起预览")
+        val hit = pkg != null && isCameraPackage(pkg)
+        // 诊断：记录前台包名 / 命中层级 / 是否判为相机类，区分「检测失败(null)」与「包名不匹配漏判」
+        DiagLog.logThrottled(
+            "cam.fg", "dump",
+            "[cam] 前台检测 pkg=${pkg ?: "null"} 层级=$camDetectLayer 相机=$hit"
+                + if (lastCamAvoidPkg != null) "（让路保持中）" else "",
+            2_000L, 120_000L
+        )
+
+        if (hit) {
+            if (lastCamAvoidPkg == null) {
+                diag("[cam] 前台是相机应用 $pkg → 立即让路收起预览")
             }
-        } else {
-            lastCamAvoidPkg = null
-            if (pkg == null && !camDetectBroken) {
-                camDetectBroken = true
-                diag("[cam] ⚠️ 四级前台检测全部失败：相机避让失效（在相机界面悬浮窗不会收起）")
-            }
+            lastCamAvoidPkg = pkg
+            camClearStreak = 0
+            camAvoidHoldUntil = now + CAM_AVOID_HOLD_MS
+            cameraInFront = true
+            return true
         }
-        cameraInFront = inCam
-        return inCam
+
+        if (lastCamAvoidPkg != null) {
+            // 还在保持期：ROM 报一次桌面不代表用户离开了相机，继续让路
+            if (now < camAvoidHoldUntil) {
+                cameraInFront = true
+                return true
+            }
+            camClearStreak++
+            if (camClearStreak < CAM_CLEAR_STREAK) {
+                cameraInFront = true
+                return true
+            }
+            diag(
+                "[cam] 离开相机应用（${lastCamAvoidPkg}）→ 解除让路，恢复按步态判定"
+                    + " | 前台=${pkg ?: "null"} 连续非相机=$camClearStreak 次"
+            )
+            lastCamAvoidPkg = null
+            camClearStreak = 0
+        } else if (pkg == null && !camDetectBroken) {
+            camDetectBroken = true
+            diag("[cam] ⚠️ 四级前台检测全部失败：相机避让失效（在相机界面悬浮窗不会收起）")
+        }
+
+        cameraInFront = false
+        return false
     }
 
     /**
@@ -1785,6 +2076,7 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
         } else {
             intArrayOf(1, 2, 3, 4)
         }
+        val failures = ArrayList<String>()
         for (layer in order) {
             val pkg = try {
                 when (layer) {
@@ -1793,7 +2085,8 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     3 -> pkgFromRunningTasks()
                     else -> pkgFromUsageEvents()
                 }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                failures.add("$layer:${t.javaClass.simpleName}")
                 null
             }
             if (!pkg.isNullOrEmpty()) {
@@ -1802,7 +2095,16 @@ class SafeWalkLSPHook : IXposedHookLoadPackage, SensorEventListener {
                     diag("[cam] 前台检测启用第 $layer 级（${camLayerName(layer)}）")
                 }
                 return pkg
+            } else {
+                failures.add(if (pkg == null) "$layer:空" else "$layer:空白")
             }
+        }
+        if (failures.isNotEmpty()) {
+            DiagLog.logThrottled(
+                "cam.detect", "layers",
+                "[cam] 四级前台检测均未取到包名 | ${failures.joinToString(",")}",
+                5_000L, 120_000L
+            )
         }
         return null
     }

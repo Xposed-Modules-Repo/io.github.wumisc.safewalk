@@ -21,6 +21,15 @@ class SafeWalkNotificationManager(private val ctx: Context) {
 
     companion object {
         const val CHANNEL_ID = "SAFEWALK_REMIND"
+        /**
+         * 【5.6.17】夜间照明「已点亮」专用渠道（名为「夜间照明」）。
+         *
+         * 这条不是提醒，而是状态展示：灯亮着 -> 给一个随时能关灯的入口。
+         * 复用 [CHANNEL_ID] 会连带它的默认铃声 + 振动，夜里小窗每出现一次就震一次，
+         * 属于纯骚扰。所以单开一个渠道：importance 仍是 HIGH（超级岛/焦点通知
+         * 要求高重要性，低重要性不会上岛），但**静音、不振动**。
+         */
+        const val CHANNEL_NIGHT_TORCH = "SAFEWALK_NIGHT_TORCH"
         const val ID_BATTERY = 1001
         const val ID_IDCARD = 1002
         const val ID_SIT = 1003
@@ -52,13 +61,18 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         private const val SYSTEMUI_PKG = "com.android.systemui"
 
         private const val NOTIFY_COOLDOWN_MS = 60_000L
+
+        /** 「夜间照明已点亮」的兜底存活时间：进程没了这条通知也不会永远挂在岛上 */
+        private const val NIGHT_TORCH_FAILSAFE_MS = 60L * 60_000L
     }
 
     // 通知冷却：按通道分别计时。
     // ① 原先是一个全局时间戳，一次出门同时满足证件/社交/夜间提醒时只有第一条能弹；
     // ② 必须放实例字段而不是 companion：静态表会在进程内永久累积，
     //    Hook 重新初始化后仍带着旧时间戳，导致提醒长时间不出现。
-    private val lastNotifyTs = HashMap<Int, Long>()
+    // ③ 【5.6.17】必须是并发安全容器：委托通知走主线程、闪光灯状态回调走相机线程，
+    //    普通 HashMap 在并发 put 下可能出现丢更新甚至死循环。
+    private val lastNotifyTs = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
     init { createChannel() }
 
@@ -73,8 +87,20 @@ class SafeWalkNotificationManager(private val ctx: Context) {
                 setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION), null)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
-            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(ch)
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(ch)
+
+            // 【5.6.17】状态类渠道：同为 HIGH（保住超级岛资格），但静音不震动
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_NIGHT_TORCH, "夜间照明", NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "小窗点亮闪光灯时的状态展示，可一键关灯"
+                    setSound(null, null)
+                    enableVibration(false)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                }
+            )
         }
     }
 
@@ -105,8 +131,12 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         )
     }
 
-    private fun baseBuilder(title: String, msg: String): NotificationCompat.Builder {
-        return NotificationCompat.Builder(ctx, CHANNEL_ID)
+    private fun baseBuilder(
+        title: String,
+        msg: String,
+        channelId: String = CHANNEL_ID
+    ): NotificationCompat.Builder {
+        return NotificationCompat.Builder(ctx, channelId)
             // 点通知主体直接进 App，此前所有通知都没设 contentIntent，点了没反应
             .setContentIntent(openAppPi())
             .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -123,11 +153,27 @@ class SafeWalkNotificationManager(private val ctx: Context) {
             // 旧实现塞的是 Bundle（miui.focus.template=notification），系统直接忽略，
             // 注释写着「全部走超级岛」实际一条都没上岛。改用 FocusNotifyParam 正确构造，
             // 单点修复后全部提醒/故障告知正确上岛；无焦点权限自动退化普通通知。
+            //
+            // 【5.6.16】焦点参数**始终下发**：官方路径要小米白名单，但「超级岛增强」
+            // 模块默认就开了「破解焦点白名单和签名验证」，破解后这条参数是真生效的。
+            // 因此不能因为检测到模块就把它去掉——那等于砍掉唯一可用的原生上岛路径。
+            // 之前「一条都没上岛」的根因是通知归属包名错了（见 Hook 侧 notifyApp），
+            // 不是参数问题。
             .addExtras(
                 Bundle().apply {
                     putString("miui.focus.param", FocusNotifyParam.json(title, msg, islandTag(title)))
                 }
             )
+            .also {
+                // 上岛路径诊断：区分「原生焦点参数生效」与「靠增强模块转发」，
+                // 排查「为什么没上岛」时一眼能看出走的哪条路。节流避免刷屏。
+                DiagLog.logThrottled(
+                    "notif.island", "dump",
+                    "[notif] 上岛路径=" + (if (HyperIslandCompat.installed(ctx))
+                        "超级岛增强模块+原生焦点参数" else "原生焦点参数") + " | $title",
+                    5_000L, 120_000L
+                )
+            }
     }
 
     /** 岛摘要态短标签（≤4 字）：按标题关键词归类，调用方无需逐个传参。 */
@@ -160,6 +206,9 @@ class SafeWalkNotificationManager(private val ctx: Context) {
         focusActions: Bundle
     ) {
         val n = b.build()
+        // 焦点参数与岛内按钮照常挂：超级岛增强模块的「破解焦点白名单」一开，
+        // 系统就认这条参数了，去掉反而上不了岛。模块若选择拦截标准通知，
+        // 按钮本来也在 notification.actions 里，两条路互不冲突。
         n.extras.putString("miui.focus.param", focusJson)
         n.extras.putBundle("miui.focus.actions", focusActions)
         (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, n)
@@ -421,5 +470,63 @@ class SafeWalkNotificationManager(private val ctx: Context) {
             hintAction = "miui.focus.action_torch"
         )
         notifyWithActions(ID_TORCH, b, focusJson, focusActions)
+    }
+
+    /**
+     * 【5.6.16】夜间照明**已点亮**的岛通知（不是「建议开灯」）。
+     *
+     * 小窗联动模式下灯是真亮着的，通知语义应该是「已开启」+ 一键关灯，
+     * 而不是再提示用户去开。与 [flashlightSuggest] 共用 [ID_TORCH]：
+     * 两者是同一个「夜间照明」条目，切换模式时互相覆盖，不会在岛上堆两条。
+     *
+     * 不走冷却：亮/灭由真实手电状态驱动，同一次会话只会切换一次；
+     * 频繁亮灭的场景（反复开关小窗）由 [cancelTorchNotice] 先撤掉再发。
+     */
+    fun torchLitNotice() {
+        val offIntent = Intent(io.github.wumisc.safewalk.torch.ACTION_APP_TORCH_OFF).apply {
+            setClassName(APP_PKG, "$APP_PKG.TorchActionActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN, SafeWalkPrefKey.BROADCAST_TOKEN)
+        }
+        val offPi = PendingIntent.getActivity(ctx, 2, offIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        // 常驻（ongoing）：灯亮着就一直显示，避免被用户顺手划掉后再也看不到状态。
+        // 【5.6.17】改走静音渠道「夜间照明」：状态类通知不该响铃震动；
+        // 另加 60 分钟兜底超时——进程被 ROM 回收/崩溃时，通知不会变成
+        // 岛上一条永远撤不掉、点了也没人接的死条目。真实状态一变就覆盖/撤销，
+        // 正常使用中这条超时根本不会触发。
+        val b = baseBuilder(
+            "SafeWalk 夜间照明",
+            "已随路况小窗点亮，点「关灯」可立即熄灭",
+            CHANNEL_NIGHT_TORCH
+        )
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .addAction(android.R.drawable.ic_media_play, "关灯", offPi)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
+            .setTimeoutAfter(NIGHT_TORCH_FAILSAFE_MS)
+
+        val offAction = Notification.Action.Builder(
+            Icon.createWithResource(ctx, android.R.drawable.ic_media_play), "关灯", offPi
+        ).build()
+        val focusActions = Bundle().apply {
+            putParcelable("miui.focus.action_torch_off", offAction)
+        }
+        val focusJson = FocusNotifyParam.json(
+            "SafeWalk 夜间照明", "已随路况小窗点亮", "照明",
+            actions = listOf("miui.focus.action_torch_off"),
+            hintAction = "miui.focus.action_torch_off"
+        )
+        notifyWithActions(ID_TORCH, b, focusJson, focusActions)
+    }
+
+    /** 灯灭/小窗收起：撤掉「已点亮」通知，避免岛上挂着一条过时状态 */
+    fun cancelTorchNotice() {
+        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(ID_TORCH)
+        // 顺手清掉该 id 的冷却，保证「关灯后又想开灯」时建议通知不被 60 秒冷却挡住
+        lastNotifyTs.remove(ID_TORCH)
     }
 }

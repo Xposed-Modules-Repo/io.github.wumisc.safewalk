@@ -30,6 +30,8 @@ public class ThanksActivity extends Activity {
 
     /** 名单数据。加人只改这里。avatarRes 传 0 用首字母，传 drawable id 用真实头像。 */
     private static final Helper[] HELPERS = new Helper[]{
+            new Helper("酷安", "酷安社区", "感谢支持与帮助", 0),
+            new Helper("不羁", "酷安", "· 资金支持（赞助）\n· 感谢对本项目的支持", 0),
             new Helper("我是寂寞的花", "酷安", "· 真机测试\n· 超广角思路与看法", 0),
             new Helper("小鳥游星野酱", "酷安", "提出 HyperOS 3 适配问题", 0),
     };

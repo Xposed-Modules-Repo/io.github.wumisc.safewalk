@@ -61,13 +61,21 @@ import kotlin.jvm.JvmOverloads
  *                  再往下就是「这功能是假的」。
  * @param onStage   预览链路每走一步就回调一次（窗口挂载 / 相机打开 / 收到画面…）。
  *                  Hook 端把它转发回 App 显示在页面上——黑屏时不用再猜卡在哪。
+ * @param onTorchLit 小窗联动闪光灯**真实点亮状态**变化回调（true=已下发 TORCH）。
+ *                  只在这一刻才知道灯到底亮没亮，夜间照明的岛通知据此挂/撤。
  */
-class RearCameraOverlay(
+class RearCameraOverlay @JvmOverloads constructor(
     private val ctx: Context,
     private val onFailure: ((String) -> Unit)? = null,
     private val onStage: ((String) -> Unit)? = null,
     /** 仅测试用：注入一个可记录的 WindowManager，验证窗口参数是否合法 */
-    wmOverride: WindowManager? = null
+    wmOverride: WindowManager? = null,
+    private val onTorchLit: ((Boolean) -> Unit)? = null,
+    /**
+     * 【5.7】预览会话被其他应用抢占（系统相机打开取景 / 扫码 / 视频通话）时回调。
+     * 窗口已经自行收起，服务据此在几秒内不要再把它拉起来，避免两边来回抢设备。
+     */
+    private val onPreempted: (() -> Unit)? = null
 ) {
 
     companion object {
@@ -153,6 +161,26 @@ class RearCameraOverlay(
         const val FRAMING_MIN_PCT = 0
         const val FRAMING_MAX_PCT = 100
         const val FRAMING_DEFAULT_PCT = 0
+
+        /**
+         * 【5.7.1】按源画面真实宽高比算竖条窗「折中填充」缩放（纯函数，无实例状态）。
+         *
+         * fill = 铺满竖条槽需要放大几倍（横画幅内容按宽度放进 boxW 后，高度 = boxW×srcH/srcW，
+         * fill = boxH / 该高度）；折中取「1:1 与铺满的中点」= 1 + (fill-1)/2。
+         *
+         * · 16:9 源（1920×1080 档）：fill ≈ 3.08 → 2.04，与 5.4.0 的固定 2.0 等价，老画面不变；
+         * · 4:3 源（隐藏超广角 id=3 的 3264×2448 / 960×720 档）：fill ≈ 2.31 → 1.65，
+         *   横向多留约 15% 视野 —— 这正是 5.7.0 日志「放大=2.00x」把超广角白裁一半、
+         *   用户感觉「超广角像没开」的直接原因（固定 2.0 是按 16:9 定死的，套到 4:3 上裁得过多）。
+         *
+         * 横条窗 / 参数非法一律 1f，不做任何裁切。
+         */
+        fun compromiseZoomFor(boxW: Int, boxH: Int, srcW: Int, srcH: Int): Float {
+            if (boxH <= boxW || boxW <= 0 || srcW <= 0 || srcH <= 0) return 1f
+            val fill = boxH.toFloat() * srcW.toFloat() / (boxW.toFloat() * srcH.toFloat())
+            if (fill <= 1f) return 1f
+            return 1f + (fill - 1f) * 0.5f
+        }
 
         /** 小窗描边 0~4dp：0 = 不画 */
         const val BORDER_MIN_DP = 0
@@ -256,6 +284,18 @@ class RearCameraOverlay(
          * 窗口保持未显示，回执稳定为 false，乒乓自然消失。
          */
         private const val CAMERA_BUSY_BACKOFF_MS = 15_000L
+
+        /**
+         * 【5.7.3】独立子相机（隐藏超广角）打不开后的冷却时长。
+         *
+         * 失败多半是瞬时的相机占用，不是这台机器的 HAL 不支持；
+         * 冷却太短会「失败→立刻重试→再失败」刷屏，太长则等于永久拉黑。
+         * 10 分钟：用户走一段路就自动恢复正常选镜，期间稳定走主摄不出黑屏。
+         */
+        private const val LENS_RETRY_COOLDOWN_MS = 10 * 60 * 1000L
+
+        /** 【5.7.3】同一镜头连续失败几次才进冷却（用户要求：先试 2 次） */
+        private const val LENS_MAX_ATTEMPTS = 2
     }
 
     /**
@@ -472,6 +512,14 @@ class RearCameraOverlay(
     private var flashAvailable = false
 
     /**
+     * 【5.6.16】上一次向外部报告的「闪光灯真实点亮」状态。
+     *
+     * 只在 false↔true 翻转时回调一次：夜间照明的岛通知是「状态型」的，
+     * 反复重建 request 时不能重复发，收起时还必须撤掉。
+     */
+    private var torchLitReported = false
+
+    /**
      * 【5.0.0 低光增强】要下发的曝光补偿档数。
      *
      * 由 openCamera 按机型读取：`CONTROL_AE_COMPENSATION_RANGE` 给上限，
@@ -500,6 +548,48 @@ class RearCameraOverlay(
      */
     private var openedCameraId: String? = null
     private var openedCameraSupportsZoom = false
+
+    /**
+     * 【5.7.1】本次枚举到底有没有拿到「真正的超广角」。
+     *
+     * 判据与 [CameraLensPolicy.select] 一致：等效焦距 ≤ 主摄的 [CameraLensPolicy.ULTRAWIDE_EFL_RATIO]
+     * 倍；逻辑摄像头机型（id 不变、靠 CONTROL_ZOOM_RATIO<1 实现）也算真广角。
+     * 覆盖安装 / 冷启动后第一次枚举时，HyperOS 的隐藏子相机（id=2/3/4）有时还没就绪，
+     * 于是「UI 明明选着超广角、开出来却是主摄」，再点一次超广角才恢复 —— 用户反馈的正是这个。
+     */
+    private var lastPickRealUltrawide = false
+
+    /** 【5.7.1】进程内只做一次「超广角自愈重开」：真没广角的机型不该每次显示都闪一下 */
+    private var ultrawideHealAttempted = false
+
+    /**
+     * 【5.7.3 冷却重试】打不开的非主摄镜头 id → 冷却截止时刻（elapsedRealtime）。
+     *
+     * 5.3.0 用的是「一次失败永久拉黑到进程结束」，但失败常常只是瞬时占用
+     * （真机 15:35:19 id=3 打不开，这段时间相机正被别的应用拿着），
+     * 之后整段会话都再没试过超广角。现在失败只写冷却时间戳，
+     * [isLensCooling] 到点后自动放行，主摄本身永不入表。
+     */
+    private val lensCooldownUntil = HashMap<String, Long>()
+
+    /**
+     * 【5.7.3】同一镜头的连续失败次数：先给 2 次机会，第 2 次仍失败才进冷却。
+     *
+     * 用户明确要求「超广角可以尝试 2 次，实在获取不到再加入（黑名单）」——
+     * 一次失败可能是相机被占用或被 HAL 拒了一次，立刻冷却等于白白损失整个步行时段。
+     * 收到画面即清零，下一次出问题仍然有完整的 2 次额度。
+     */
+    private val lensFailCount = HashMap<String, Int>()
+
+    private fun isLensCooling(id: String): Boolean {
+        val until = lensCooldownUntil[id] ?: return false
+        if (SystemClock.elapsedRealtime() < until) return true
+        lensCooldownUntil.remove(id)
+        return false
+    }
+
+    /** 【超广角兜底】当前选中超广角独立镜头时，记下对应的主摄 id，供失败回退 */
+    private var fallbackMainId: String? = null
 
     /**
      * 【5.3.0 画面方向】后置传感器的安装角度。
@@ -1114,6 +1204,12 @@ class RearCameraOverlay(
         // 这个占着摄像头的设备永久留在那里了——手电也就跟着点不亮。
         if (!isShowing && camera == null && tv == null) return
         isShowing = false
+        // 【5.6.16】窗口收起 = 预览会话结束 = 常亮闪光灯随之失效，
+        // 立刻撤掉「夜间照明已点亮」的岛通知，不能留一条过时状态挂着。
+        if (torchLitReported) {
+            torchLitReported = false
+            try { onTorchLit?.invoke(false) } catch (_: Throwable) {}
+        }
         cancelWatchdog()
         teardown()
         Log.i(TAG, "隐藏悬浮窗")
@@ -1767,7 +1863,31 @@ class RearCameraOverlay(
             // 【5.4.14】用窗口真实朝向判定，而非旋转后 box 形状：deg=90 翻框后横条窗虽 boxH>boxW，
             // 仍是横条窗，走 1:1；只有真竖条窗（!landscapeWindow）才折中填充。f>0 分支在下方，未动。
             if (!landscapeWindow && boxH > boxW) {
-                val z = portraitCompromiseZoom(boxW, boxH)
+                // 【5.7.2 超广角不裁】选中的是真超广角镜头（等效焦距 ≤ 主摄 0.8 倍）时，
+                // 任何放大都等于把广角宽度丢回去：15.6mm 配 2.04 倍 = 31.8mm，比系统相机
+                // 0.6x（15.6mm）窄一倍，用户看到的就是「选着超广角、画面还是主摄」。
+                // 所以这里**整幅给全**（1:1，水平 100% 视野），上下留白交给取景滑杆补：
+                // 取景 >0 走下面 f>0 分支，照常按用户设定裁切放大。
+                if (lastPickRealUltrawide && style.cameraLens == CameraLensPolicy.MODE_ULTRAWIDE) {
+                    view.scaleX = 1f
+                    view.scaleY = 1f
+                    view.pivotX = boxW / 2f
+                    view.pivotY = boxH / 2f
+                    DiagLog.logThrottled(
+                        "framing.ultrawide", "dump",
+                        "[cam] 超广角完整取景：不做折中裁切（1:1），保留整幅横向视野"
+                            + "（真机日志里 2.04x 会把 15.6mm 放大成约 31.8mm，等于白开广角）",
+                        5_000L, 120_000L
+                    )
+                    return
+                }
+                // 【5.7.1】主摄等非广角镜头：有真实源尺寸时按源宽高比算（16:9 ≈2.04 与旧值等价；
+                // 4:3 ≈1.65）；源尺寸未知（极端兜底/单测）时退回 5.4.0 的固定 2.0。
+                val z = if (previewSrcW > 0 && previewSrcH > 0) {
+                    compromiseZoomFor(boxW, boxH, previewSrcW, previewSrcH)
+                } else {
+                    portraitCompromiseZoom(boxW, boxH)
+                }
                 view.pivotX = boxW / 2f
                 view.pivotY = boxH / 2f
                 view.scaleX = z
@@ -2217,6 +2337,7 @@ class RearCameraOverlay(
                     cameraBusyUntil = 0L
                     // 通了就把失败计数清零：下次再出问题仍然有完整的重试额度
                     retryCount = 0
+                    openedCameraId?.let { lensFailCount.remove(it) }
                     if (!firstFrameReported) {
                         firstFrameReported = true
                         // 【5.3.5】方向摘要必须和「已收到画面」同一行落盘。
@@ -2225,6 +2346,8 @@ class RearCameraOverlay(
                         // 日志文件被轮转/截断就整段没了。这一行是用户回传时
                         // 一定看得到的锚点，把方向参数挂上去，下次不用再猜。
                         stage("✅ 已收到画面 | " + orientationSummary())
+                        // 【5.7.1】超广角自愈：首帧通了但本次枚举没拿到真广角时重开一次
+                        maybeSelfHealUltrawide()
                     }
                 }
             }
@@ -2561,8 +2684,21 @@ class RearCameraOverlay(
             builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom)
         }
         val torchOn = style.torchWithPreview && flashAvailable
+        // 【5.6.16】真实点亮状态变化才回调：buildPreviewRequest 会因切 zoom / 换参数
+        // 反复重建，不能每次都发通知；只有 false→true / true→false 这一下才有意义。
+        if (torchOn != torchLitReported) {
+            torchLitReported = torchOn
+            try { onTorchLit?.invoke(torchOn) } catch (_: Throwable) {}
+        }
         val aeCompApplied = style.lowLight && aeCompTarget > 0 && !torchOn
-        diag("[cam] preview req | torch=$torchOn flash=${if (torchOn) "TORCH" else "-"} aeComp=${if (aeCompApplied) aeCompTarget else 0} lowLight=${style.lowLight} zoom=${zoom ?: 1.0f}")
+        // 实际下发的 zoom 走独立节流通道，避免被高频计步日志挤出环形缓冲后看不到
+        DiagLog.logThrottled(
+            "lens.req", "dump",
+            "[cam] preview req | torch=$torchOn flash=${if (torchOn) "TORCH" else "-"}"
+                + " aeComp=${if (aeCompApplied) aeCompTarget else 0} lowLight=${style.lowLight}"
+                + " zoom=${zoom ?: 1.0f}",
+            5_000L, 120_000L
+        )
         return builder.build()
     }
 
@@ -2596,6 +2732,41 @@ class RearCameraOverlay(
     }
 
     @android.annotation.SuppressLint("MissingPermission")
+    /**
+     * 【5.7.1】「UI 选着超广角、开出来却是主摄」的自愈。
+     *
+     * 真机现象（用户反馈）：覆盖安装后第一次打开，开关明明停在「超广角」，画面却是主摄，
+     * 再点一次「超广角」才变成广角。原因是首轮枚举时 HyperOS 的隐藏物理子相机
+     * （id=2/3/4）还没就绪，[backCameraId] 只看到 id=0 → 选到主摄；
+     * 等会儿再枚举它们才出现（日志里 `隐藏子相机=2,3,4` 就是这么来的）。
+     *
+     * 处理：首帧已经通了、但 [lastPickRealUltrawide] 为 false 时，1 秒后关掉重开一次，
+     * 让第二轮枚举重新按焦距挑。**进程内只试一次**：真没有超广角的机型不该每次显示都闪一下。
+     * 重试后仍不是广角，就明确落一条「本机按主摄出图」，不再循环。
+     */
+    private fun maybeSelfHealUltrawide() {
+        if (style.cameraLens != CameraLensPolicy.MODE_ULTRAWIDE) return
+        if (lastPickRealUltrawide) return
+        if (ultrawideHealAttempted) {
+            diag("[cam] ⚠️ 重试后仍未拿到超广角，本机按主摄出图（选项保持=${style.cameraLens}）")
+            return
+        }
+        ultrawideHealAttempted = true
+        diag("[cam] ⚠️ 选了超广角但本次只枚举到主摄(id=" + openedCameraId
+                + ") → 1 秒后重开重试一次（覆盖安装/冷启动时隐藏子相机可能未就绪）")
+        mainHandler.postDelayed({
+            try {
+                if (isShowing) {
+                    closeCamera()
+                    // 重开后重新落一条「已收到画面」，顺带把最终结论写进日志
+                    firstFrameReported = false
+                    openCamera()
+                }
+            } catch (_: Throwable) {
+            }
+        }, 1_000L)
+    }
+
     private fun openCamera() {
         try {
             if (!isShowing) return
@@ -2833,7 +3004,21 @@ class RearCameraOverlay(
                     camera = null
                     session = null
                     cancelSessionTimeout()
-                    diag("⚠️ 相机被其他应用抢占")
+                    // 【5.7 修复 · 避让兜底】相机被别的应用抢占（系统相机打开取景、
+                    // 扫码、视频通话）时，我们这边拿到的是 onDisconnected。旧实现只把
+                    // 设备句柄置空，窗口继续挂着 —— 用户看到的就是「相机界面右上角
+                    // 还压着一个不动的小窗」。这里直接收窗，并给 5 秒冷静期，
+                    // 避免下一轮 show 立刻又把相机抢回来，形成来回抢设备的死循环。
+                    cameraBusyUntil = System.currentTimeMillis() + 5_000L
+                    diag("⚠️ 相机被其他应用抢占 → 立即收起小窗（5 秒内不重开）")
+                    // 回调跑在相机线程，removeView 必须回主线程（窗口归主线程所有）
+                    mainHandler.post {
+                        try {
+                            hide()
+                            try { onPreempted?.invoke() } catch (_: Throwable) {}
+                        } catch (_: Throwable) {
+                        }
+                    }
                 }
 
                 override fun onError(d: CameraDevice, error: Int) {
@@ -2893,6 +3078,24 @@ class RearCameraOverlay(
         if (!isShowing) {
             closeCamera()
             return
+        }
+        // 【5.7.3 冷却重试】独立子相机（被裁掉的隐藏超广角）打不开：**冷却**而不是永久拉黑。
+        // 5.3.0 起这里是「一次失败写进本会话黑名单」，结果真机上被别的应用短暂占着相机
+        // （15:35:19 id=3 打不开）就把超广角整段封死，用户后面再看还是主摄。
+        // 现在改成带冷却的软禁用：失败后 LENS_RETRY_COOLDOWN_MS 内不再尝试，
+        // 冷却结束后重新参与选择；主摄本身永不入表。
+        val cur = openedCameraId
+        if (cur != null && fallbackMainId != null && cur != fallbackMainId) {
+            val nowElapsed = SystemClock.elapsedRealtime()
+            val n = (lensFailCount[cur] ?: 0) + 1
+            lensFailCount[cur] = n
+            if (n >= LENS_MAX_ATTEMPTS) {
+                lensFailCount.remove(cur)
+                lensCooldownUntil[cur] = nowElapsed + LENS_RETRY_COOLDOWN_MS
+                diag("⚠️ 镜头 id=$cur 连续 $n 次打不开，冷却 ${LENS_RETRY_COOLDOWN_MS / 1000}s 后再试，本次回退主摄 id=$fallbackMainId")
+            } else {
+                diag("⚠️ 镜头 id=$cur 第 $n 次打不开，再试一次（共 $LENS_MAX_ATTEMPTS 次），本次回退主摄 id=$fallbackMainId")
+            }
         }
         closeCamera()
         if (retryCount >= MAX_CAMERA_RETRY) {
@@ -3007,57 +3210,117 @@ class RearCameraOverlay(
     }
 
     /**
+     * 【超广角 · 兼容探测】被 HAL 裁剪的隐藏物理子相机，按序号试探的最大下标。
+     *
+     * 小米 / HyperOS 对未进相机白名单的第三方应用，`cameraIdList` 往往只枚举主摄 +
+     * 前摄，超广角 / 长焦以序号 id 2、3… 挂在 HAL 里但不公开列出。真机实测（K90
+     * 至尊版）：id=0 主摄虽上报 zoom 0.6~10.0，但下发 0.6 并不切物理广角；真正的
+     * 超广角是隐藏的后置物理镜头（等效 15.6mm）。因此这里按序号试探，**后置物理镜头
+     * 纳入选择候选**，交策略层按等效焦距判据选中直开；隐藏前摄只落诊断。
+     */
+    private val hiddenCameraProbeMaxId = 6
+
+    /**
+     * 读取一颗相机的候选数据与诊断摘要。读不到（id 不存在 / HAL 拒绝访问）时
+     * 返回 `(null, null)`，调用方按「无此相机」静默跳过。
+     *
+     * @param hidden 该 id 是否为按序号试探的隐藏子相机（仅影响诊断标注）
+     */
+    private fun readCameraCandidate(id: String, hidden: Boolean): Pair<CameraLensPolicy.Candidate?, String?> {
+        val cc = try { cm.getCameraCharacteristics(id) } catch (_: Throwable) { return null to null }
+        val back = cc.get(CameraCharacteristics.LENS_FACING) ==
+                CameraCharacteristics.LENS_FACING_BACK
+        // 焦距列表：超广角判据。拿不到就留 null，策略层自动回退第一颗后置。
+        val focal = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+        var minF: Float? = null
+        var maxF: Float? = null
+        if (focal != null && focal.isNotEmpty()) {
+            var lo = Float.MAX_VALUE
+            var hi = -1f
+            for (f in focal) {
+                if (f <= 0f) continue
+                if (f < lo) lo = f
+                if (f > hi) hi = f
+            }
+            if (lo != Float.MAX_VALUE) minF = lo
+            if (hi > 0f) maxF = hi
+        }
+        // 【5.6.0 等效焦距】传感器物理尺寸（mm）。有了它才能把「物理焦距」
+        // 换算成 35mm 等效焦距，消掉不同 sensor 尺寸带来的不可比性
+        // （见 CameraLensPolicy.ULTRAWIDE_EFL_RATIO 的推导）。
+        // 读不到的机型（部分魅族 / 类原生精简 HAL）留 null，策略层自动降级。
+        var diagMm: Float? = null
+        try {
+            val size = cc.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            if (size != null && size.width > 0f && size.height > 0f) {
+                diagMm = kotlin.math.sqrt(
+                    size.width * size.width + size.height * size.height
+                )
+            }
+        } catch (_: Throwable) {
+        }
+        val zoomRange = cc.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+        val caps = cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+        // 传感器原生像素阵列：广角小底（800 万级）与主摄大底（5000 万级）阵列尺寸
+        // 差异明显，用于从日志佐证选中镜头的流确实来自对应传感器（而非被降级成主摄流）。
+        val arraySize = try {
+            cc.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        } catch (_: Throwable) { null }
+        val cand = CameraLensPolicy.Candidate(id, back, minF, maxF, diagMm)
+        val note = buildString {
+            append("id=").append(id).append("(").append(if (back) "后" else "前")
+            if (hidden) append("·隐藏")
+            append(") 焦距=").append(minF ?: "?").append("mm")
+            append(" 对角=").append(diagMm ?: "?").append("mm")
+            append(" 等效=").append(cand.eflMm?.let {
+                String.format(java.util.Locale.US, "%.1fmm", it)
+            } ?: "?")
+            append(" 阵列=").append(arraySize?.let { "${it.width}x${it.height}" } ?: "?")
+            append(" zoom=").append(zoomRange?.let { "${it.lower}~${it.upper}" } ?: "无")
+            append(" cap=").append(caps?.joinToString(",") ?: "?")
+        }
+        return cand to note
+    }
+
+    /**
      * 按用户选的镜头挑后置摄像头。
      *
-     * 旧实现只返回「第一颗后置」，是哪颗全看厂商 id 顺序。现在把每颗后置的
-     * 焦距读出来交给 [CameraLensPolicy]：选超广角就挑焦距最短那颗（短到阈值以下
-     * 才算真有广角），选主摄挑焦距最长那颗，没有焦距信息时退回第一颗后置。
-     * 这样「无超广角自动用主摄代替」是策略层保证的，不会开出黑屏。
+     * 每颗后置的焦距读出来交给 [CameraLensPolicy]：选超广角就挑焦距最短那颗
+     * （短到阈值以下才算真有广角），选主摄挑最接近标准焦距那颗；没有焦距信息时
+     * 退回第一颗后置。「无超广角自动用主摄代替」由策略层保证，不会开出黑屏。
+     * 被 HAL 裁剪的隐藏后置物理镜头（被裁掉的超广角）一并纳入候选参与选择。
      */
     private fun backCameraId(): String? {
         try {
             val candidates = ArrayList<CameraLensPolicy.Candidate>()
+            val hiddenCandidates = ArrayList<CameraLensPolicy.Candidate>()
+            val notes = ArrayList<String>()
+            val listed = cm.cameraIdList.toSet()
+            // ① 系统公开枚举的相机（已判定打不开的非主摄镜头直接排除）
             for (id in cm.cameraIdList) {
-                val cc = cm.getCameraCharacteristics(id)
-                val back = cc.get(CameraCharacteristics.LENS_FACING) ==
-                        CameraCharacteristics.LENS_FACING_BACK
-                if (!back) {
-                    candidates.add(CameraLensPolicy.Candidate(id, false, null, null))
-                    continue
+                if (isLensCooling(id)) continue
+                val (c, note) = readCameraCandidate(id, false)
+                if (c != null) candidates.add(c)
+                if (note != null) notes.add(note)
+            }
+            // ② 按序号试探被 HAL 裁剪的隐藏物理子相机。后置物理镜头（被裁剪的超广角）
+            //    纳入选择候选，交策略层按等效焦距判据选中；隐藏前摄只落诊断，不进后置选择。
+            for (n in 2..hiddenCameraProbeMaxId) {
+                val hid = n.toString()
+                if (hid in listed || isLensCooling(hid)) continue
+                val (c, note) = readCameraCandidate(hid, true)
+                if (c != null) {
+                    hiddenCandidates.add(c)
+                    if (c.back) candidates.add(c)
                 }
-                // 焦距列表：超广角判据。拿不到就留 null，策略层自动回退第一颗后置。
-                val focal = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                var minF: Float? = null
-                var maxF: Float? = null
-                if (focal != null && focal.isNotEmpty()) {
-                    var lo = Float.MAX_VALUE
-                    var hi = -1f
-                    for (f in focal) {
-                        if (f <= 0f) continue
-                        if (f < lo) lo = f
-                        if (f > hi) hi = f
-                    }
-                    if (lo != Float.MAX_VALUE) minF = lo
-                    if (hi > 0f) maxF = hi
-                }
-                // 【5.6.0 等效焦距】传感器物理尺寸（mm）。有了它才能把「物理焦距」
-                // 换算成 35mm 等效焦距，消掉不同 sensor 尺寸带来的不可比性
-                // （见 CameraLensPolicy.ULTRAWIDE_EFL_RATIO 的推导）。
-                // 读不到的机型（部分魅族 / 类原生精简 HAL）留 null，策略层自动降级。
-                var diagMm: Float? = null
-                try {
-                    val size = cc.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-                    if (size != null && size.width > 0f && size.height > 0f) {
-                        diagMm = kotlin.math.sqrt(
-                            size.width * size.width + size.height * size.height
-                        )
-                    }
-                } catch (_: Throwable) {
-                }
-                candidates.add(CameraLensPolicy.Candidate(id, true, minF, maxF, diagMm))
+                if (note != null) notes.add(note)
             }
             val picked = CameraLensPolicy.select(candidates, style.cameraLens)
+            val backs = candidates.filter { it.back }
+            val mainId = backs.firstOrNull()?.let { CameraLensPolicy.pickMain(backs).id }
             if (picked != null) {
+                // 选中的是独立超广角子相机时记下主摄 id，供打开失败回退；选中主摄则不设。
+                fallbackMainId = if (picked != mainId) mainId else null
                 // 【超广角 · 逻辑摄像头】关键是这里：现代机型 cameraIdList 只有一颗后置，
                 // 超广角不是独立 id，而是同一颗 id 上把 CONTROL_ZOOM_RATIO 拉到 0.6x。
                 // 读不到 range / 下限 ≥1（无广角端）时策略返回 null → 保持原生 1.0。
@@ -3065,22 +3328,42 @@ class RearCameraOverlay(
                 val zoomRange = pickedChars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
                 requestedZoomRatio = CameraLensPolicy.zoomForLogicalUltrawide(
                     style.cameraLens, zoomRange?.lower, zoomRange?.upper)
-                diag("[cam] 镜头选择=${style.cameraLens} → id=$picked"
+                // 【5.7.1】记录本次是否真的选到广角，供首帧自愈判断（相当于策略判据的复算）
+                val pickCand = candidates.firstOrNull { it.id == picked }
+                val mainCand = backs.firstOrNull { it.id == mainId }
+                lastPickRealUltrawide = pickCand != null && (
+                    (requestedZoomRatio != null && requestedZoomRatio!! < 1f)
+                        || (pickCand.eflMm != null && mainCand?.eflMm != null
+                        && pickCand.eflMm!! <= mainCand.eflMm!! * CameraLensPolicy.ULTRAWIDE_EFL_RATIO)
+                    )
+                val hiddenNote = if (hiddenCandidates.isEmpty()) ""
+                    else " | 隐藏子相机=" + hiddenCandidates.joinToString {
+                        "${it.id}(${it.minFocalMm ?: "?"}mm/等效=${
+                            it.eflMm?.let { e -> String.format(java.util.Locale.US, "%.1fmm", e) } ?: "?"})"
+                    }
+                // 镜头选择结论与选中 zoom 走独立节流通道：避免被高频计步日志挤出环形缓冲。
+                DiagLog.logThrottled(
+                    "lens.pick", "dump",
+                    "[cam] 镜头选择=${style.cameraLens} → id=$picked"
                         + " zoom=" + (requestedZoomRatio?.toString() ?: "1.0(原生)")
                         + " zoomRange=" + (zoomRange?.let { "${it.lower}~${it.upper}" } ?: "不支持")
-                        + " | 候选=" + candidates.filter { it.back }
-                        .joinToString { "${it.id}(${it.minFocalMm ?: "?"}~${it.maxFocalMm ?: "?"}mm)" })
-                // 【5.6.0 多厂商校准】设备清单一行输出，含焦距 / 传感器对角 / 等效焦距。
-                // 三星、魅族、Pixel、类原生的 id 顺序与上报字段各不相同，只能靠真机数据校准；
-                // 这一行就是用户回传的那行，节流避免每次开相机刷屏。
+                        + hiddenNote,
+                    5_000L, 120_000L
+                )
+                // 【5.6.0 多厂商校准】设备清单一行输出，含焦距 / 传感器对角 / 等效焦距 /
+                // 变焦范围 / 能力位。三星、魅族、Pixel、类原生、小米的 id 顺序与上报字段
+                // 各不相同，只能靠真机数据校准；节流避免每次开相机刷屏。
                 DiagLog.logThrottled(
                     "lens.inventory", "dump",
                     "[lens] 后摄清单 | " + CameraLensPolicy.describe(candidates)
-                            + " | 主摄=" + CameraLensPolicy.pickMain(candidates.filter { it.back }).id,
+                        + hiddenNote
+                        + " | 主摄=" + mainId
+                        + " | 能力=" + notes.joinToString(" ; "),
                     5_000L, 120_000L
                 )
             } else {
                 requestedZoomRatio = null
+                fallbackMainId = null
             }
             return picked
         } catch (_: Throwable) {

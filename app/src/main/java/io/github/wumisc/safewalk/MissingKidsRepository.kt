@@ -34,12 +34,24 @@ object MissingKidsRepository {
      */
     const val RETRY_BACKOFF_MS = 6L * 3600_000L
 
+    /** 轮换周期（天）：公益卡每 24 小时整对前进，与数据源的隔天更新节奏对齐 */
+    const val ROTATE_DAYS = 1L
+
     private const val RAW = "https://raw.githubusercontent.com/wumisc/antiburn-missing-kids/main/kids.json"
     private const val CDN = "https://cdn.jsdelivr.net/gh/wumisc/antiburn-missing-kids@main/kids.json"
     private const val CACHE = "missing_kids.json"
+    /** APK 内置快照（assets/kids.json）：网络与缓存都没有时的最后一级，随包更新 */
+    private const val ASSET = "kids.json"
     private const val SP = "safewalk"
     private const val KEY_TS = "missingKidsTs"
     private const val KEY_FAIL_TS = "missingKidsFailTs"
+    /** 轮换锚点：首次看到当前这份数据的日期（天序号） */
+    private const val KEY_ANCHOR_DAY = "missingKidsAnchorDay"
+    /** 轮换锚点绑定的数据版本（updated 变了就重置锚点，新的顶到最前） */
+    private const val KEY_ANCHOR_SRC = "missingKidsAnchorSrc"
+
+    /** 一天的毫秒数：轮换按「自然天」推进，同一天里两张卡不重复 */
+    private const val DAY_MS = 24L * 3600_000L
 
     /** 照片磁盘缓存目录（filesDir 下），避免每次进首页重复下载解码。 */
     private const val PHOTO_DIR = "kid_photos"
@@ -58,7 +70,12 @@ object MissingKidsRepository {
     /** 首页公益卡展示的孩子条数（一天两条）。 */
     const val SHOW_COUNT = 2
 
-    /** 内置兜底快照（离线/首次无网时展示），与数据源 schema 一致。 */
+    /**
+     * 最后一级兜底（**只在 assets/kids.json 读取失败时**才会用到，正常永远走内置快照）。
+     *
+     * 旧实现把它当常驻兜底，于是国内网络下每次打开都退回这两条老数据 —— 用户看到的
+     * 就是「覆盖安装后公益卡又变回第一次打开的样子」。现在它退化成纯保险。
+     */
     private const val FALLBACK = """{"items":[
         {"id":748652,"name":"牛乾坤","gender":"男","lost_time":"1995-08-16","lost_place":"河北省,邯郸市,丛台区,三陵乡陈窑村","feature":"额头圆形。下嘴唇有一点小芭、头和脖子有分离形态，耳轮廓大，大眼晴。","url":"https://baobeihuijia.com/bbhj/contents/3/282279.html","photo":"https://baobeihuijia.com/bbhj/special/2026/9/s_773b7bf3f4b893a7.png"},
         {"id":747933,"name":"李茜","gender":"女","lost_time":"2001-11-06","lost_place":"湖南省,长沙市,市辖区,长沙市第一社会福利院","feature":"走失时短发。","url":"https://baobeihuijia.com/bbhj/contents/3/281580.html","photo":"https://baobeihuijia.com/bbhj/special/2026/8/s_b2c58a5f2e7ea1e9.png"}
@@ -71,8 +88,19 @@ object MissingKidsRepository {
         val lostPlace: String,
         val feature: String,
         val url: String,
-        val photo: String
+        val photo: String,
+        /** 登记日期（yyyy-MM-dd，可空）：数据源已按它倒序，内置快照再做一次排序兜底 */
+        val regDate: String = "",
+        /** 宝贝回家编号：同日期的二次排序键，0 表示数据没给 */
+        val id: Int = 0
     )
+
+    /**
+     * 一整份数据（不是「两条」）：轮换需要全量条目才能每天换一对。
+     *
+     * @param updated 数据版本串（ISO 时间），既用来判断「哪份更新」，也当轮换锚点的归属标识
+     */
+    data class Snapshot(val updated: String, val kids: List<Kid>)
 
     /** 纯解析（可单测）：取前 [limit] 条。失败返回空列表。 */
     @JvmStatic
@@ -82,17 +110,73 @@ object MissingKidsRepository {
         val out = ArrayList<Kid>()
         for (i in 0 until minOf(a.length(), limit)) {
             val o = a.getJSONObject(i)
-            out.add(
-                Kid(
-                    o.optString("name"), o.optString("gender"),
-                    o.optString("lost_time"), o.optString("lost_place"),
-                    o.optString("feature"), o.optString("url"), o.optString("photo")
-                )
-            )
+            out.add(kidOf(o))
         }
         out
     } catch (_: Throwable) {
         emptyList()
+    }
+
+    /**
+     * 纯解析（可单测）：整份快照，条目按「最新发布优先」排好。
+     *
+     * 上游自己就是倒序，但内置快照是手工维护的，两次排序键（登记日期、编号）兜一层，
+     * 保证轮换从最新的一条开始。结构不对返回 null，绝不抛。
+     */
+    @JvmStatic
+    fun parseSnapshot(json: String): Snapshot? = try {
+        val o = JSONObject(json)
+        val a = o.optJSONArray("items") ?: return null
+        val out = ArrayList<Kid>(a.length())
+        for (i in 0 until a.length()) {
+            val k = a.optJSONObject(i) ?: continue
+            val kid = kidOf(k)
+            if (kid.name.isBlank() && kid.lostPlace.isBlank()) continue
+            out.add(kid)
+        }
+        out.sortWith(compareByDescending<Kid> { it.regDate }.thenByDescending { it.id })
+        if (out.isEmpty()) null else Snapshot(o.optString("updated"), out)
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * 锚点决策（纯函数，可单测）：什么时候把「今天」重新当成第一对。
+     *
+     * 【5.6.19】只有两种情况重置：
+     *  · 第一次看到（没有任何锚点）；
+     *  · **真的从网络拉到新的数据版本**（fresh=true 且 updated 变了）。
+     *
+     * 关键点：仅仅因为「包内快照比缓存新」就重置锚点，会让每次覆盖安装都跳回第一对 ——
+     * 用户看到的就是「又变回第一次」。所以升级后应当接着上次的位置继续往前转，
+     * 只有数据源真的更新了才把新发布的孩子顶到最前。
+     */
+    @JvmStatic
+    fun anchorDayOf(anchorDay: Long, anchorSrc: String, today: Long, updated: String, fresh: Boolean): Long =
+        if (anchorDay < 0L || (fresh && anchorSrc != updated)) today else anchorDay
+
+    private fun kidOf(o: JSONObject): Kid = Kid(
+        o.optString("name"), o.optString("gender"),
+        o.optString("lost_time"), o.optString("lost_place"),
+        o.optString("feature"), o.optString("url"), o.optString("photo"),
+        o.optString("reg_date"), o.optInt("id")
+    )
+
+    /**
+     * 轮换下标（纯函数，可单测）：两张卡从 [anchorDay] 起每 [ROTATE_DAYS] 整对前进
+     * [SHOW_COUNT] 位 —— 每天两张卡各换一位，同一天里不重复，条目少于一整对时也
+     * 不会越界（只有 1 条就两张都指向它）。
+     *
+     * 为什么要有轮换：公益卡的信息价值在于「每天看到的人不一样」。一直钉在第一条，
+     * 用户看到的永远是同一张脸，反而更像一张不会更新的静态图。
+     */
+    @JvmStatic
+    fun pairIndices(todayDay: Long, anchorDay: Long, size: Int): Pair<Int, Int> {
+        if (size <= 0) return 0 to 0
+        if (size == 1) return 0 to 0
+        val steps = (todayDay - anchorDay).coerceAtLeast(0L)
+        val base = ((steps * ROTATE_DAYS * SHOW_COUNT) % size).toInt()
+        return base to ((base + 1) % size)
     }
 
     /** 纯解析（可单测）：取第一条。失败返回 null。 */
@@ -117,6 +201,20 @@ object MissingKidsRepository {
         }.start()
     }
 
+    /**
+     * 阻塞加载（后台线程）：一级级往下退，任何一级都不抛。
+     *
+     * 顺序：24h 内缓存 → 失败退避期用本地 → 联网（raw → CDN）→ 本地 → 内置快照。
+     *
+     * 【5.6.18 BUG 修复 · 覆盖安装后又回到「第一次」】
+     * 旧实现最后一级是**写死在代码里的两条老数据**，而国内网络下 raw / jsDelivr 常年
+     * 被 reset，缓存根本没机会写入 → 每次打开都退回那两条，看起来就是「覆盖安装把
+     * 上一次的卡丢了，又换回第一次打开的样子」。现在：
+     * · 最后一级改成随包更新的 `assets/kids.json`（7 条，与 antiburn 同一份数据源），
+     *   覆盖安装本身就带来最新快照；
+     * · 缓存与内置快照之间按 `updated` 取新的那份，不会拿旧快照盖掉新缓存；
+     * · 两张卡按天轮换，即便一直离线也不会永远钉在同一张脸。
+     */
     private fun loadBlocking(ctx: Context): List<Kid> {
         val sp = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE)
         val cache = File(ctx.filesDir, CACHE)
@@ -125,44 +223,105 @@ object MissingKidsRepository {
         val now = System.currentTimeMillis()
         // 缓存新鲜 → 直接用，不请求网络
         if (cache.exists() && now - ts < REFRESH_MS) {
-            parseList(cache.readText()).let { if (it.isNotEmpty()) return it }
+            readSnap(cache)?.let { return rotated(ctx, it, now) }
         }
-        // 【省流量 · 退避】上一轮失败不到 6 小时 → 这次不联网，直接用缓存/兜底。
+        // 【省流量 · 退避】上一轮失败不到 6 小时 → 这次不联网，直接用缓存/内置快照。
         // 不能因为「昨天没取到」就每次进首页都重打两轮请求。
         if (now - failTs < RETRY_BACKOFF_MS) {
-            val cached = cachedOrFallback(ctx)
-            DiagLog.log("[kids] 失败退避中（${(RETRY_BACKOFF_MS - (now - failTs)) / 60_000} 分钟后重试），用缓存")
-            return cached
+            val local = localBest(ctx, cache)
+            DiagLog.log(
+                "[kids] 失败退避中（${(RETRY_BACKOFF_MS - (now - failTs)) / 60_000} 分钟后重试），"
+                    + "用本地快照 v${local.updated}"
+            )
+            return rotated(ctx, local, now)
         }
         for (u in listOf(RAW, CDN)) {
             val body = httpGet(u) ?: continue
-            val list = parseList(body)
-            if (list.isEmpty()) continue
+            val snap = parseSnapshot(body) ?: continue
             // 【省流量 · 先取到再替换】只有拿到有效新数据才覆盖旧缓存；
             // 覆盖的同一时刻清掉失败标记，并把不再需要的旧照片按上限淘汰。
             try {
+                cache.parentFile?.mkdirs()
                 cache.writeText(body)
                 sp.edit().putLong(KEY_TS, now).putLong(KEY_FAIL_TS, 0L).commit()
             } catch (_: Throwable) {
             }
-            prunePhotos(ctx, list)
-            return list
+            prunePhotos(ctx, snap.kids)
+            return rotated(ctx, snap, now, fresh = true)
         }
-        // 网络全失败：记失败时刻进入退避，再用旧缓存 → 兜底快照
+        // 网络全失败：记失败时刻进入退避，再用本地快照 → 内置快照
         try {
             sp.edit().putLong(KEY_FAIL_TS, now).commit()
         } catch (_: Throwable) {
         }
-        return cachedOrFallback(ctx)
+        return rotated(ctx, localBest(ctx, cache), now)
     }
 
-    /** 旧缓存优先、其次内置兜底快照；两者都不会触发任何网络请求。 */
-    private fun cachedOrFallback(ctx: Context): List<Kid> {
-        val cache = File(ctx.filesDir, CACHE)
-        if (cache.exists()) {
-            parseList(cache.readText()).let { if (it.isNotEmpty()) return it }
+    /**
+     * 本地可用的最优数据：本机缓存 vs APK 内置快照，按 `updated` 取新的那份。
+     *
+     * 这条规则是「覆盖安装不倒退」的关键：装新包后内置快照可能比磁盘缓存还新，
+     * 就应当用新包里的；反过来缓存里是上次成功拉到的更新数据，也不能被旧快照盖掉。
+     */
+    private fun localBest(ctx: Context, cache: File): Snapshot {
+        val cached = if (cache.exists()) readSnap(cache) else null
+        val asset = assetSnapshot(ctx)
+        if (cached == null) return asset ?: Snapshot("", parseList(FALLBACK))
+        if (asset == null) return cached
+        return if (cached.updated >= asset.updated) cached else asset
+    }
+
+    /** 读本机缓存；不存在 / 解析空返回 null。 */
+    private fun readSnap(file: File): Snapshot? = try {
+        if (!file.exists() || file.length() <= 0L) null
+        else parseSnapshot(file.readText())
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** 读 APK 内置快照（只读一次，缓存在内存里）。 */
+    private var assetSnap: Snapshot? = null
+
+    private fun assetSnapshot(ctx: Context): Snapshot? {
+        assetSnap?.let { return it }
+        val s = try {
+            ctx.assets.open(ASSET).use { parseSnapshot(it.bufferedReader().readText()) }
+        } catch (_: Throwable) {
+            null
         }
-        return parseList(FALLBACK)
+        assetSnap = s
+        return s
+    }
+
+    /**
+     * 按「天」轮换出本次要展示的两条。
+     *
+     * 锚点 = 第一次看到时的日期；之后每过一天整对前进两位。
+     * **只有真拿到网络新数据（fresh=true）且数据版本变了才重置锚点**：这样覆盖安装、
+     * 包内快照更新都不会把用户从「昨天看到哪儿」拽回第一对，而数据源真的发布了
+     * 新的孩子时，最新的一条能第一时间顶到最前（判定见 [anchorDayOf]）。
+     */
+    private fun rotated(ctx: Context, snap: Snapshot, now: Long, fresh: Boolean = false): List<Kid> {
+        val kids = snap.kids
+        if (kids.isEmpty()) return parseList(FALLBACK)
+        val sp = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE)
+        val today = now / DAY_MS
+        val storedAnchor = sp.getLong(KEY_ANCHOR_DAY, -1L)
+        val anchorSrc = sp.getString(KEY_ANCHOR_SRC, "") ?: ""
+        val anchor = anchorDayOf(storedAnchor, anchorSrc, today, snap.updated, fresh)
+        try {
+            if (anchor != storedAnchor) {
+                sp.edit().putLong(KEY_ANCHOR_DAY, anchor).apply()
+            }
+            // 版本标识跟着当前这份数据走，但**不因此重置位置**（见 anchorDayOf）
+            if (anchorSrc != snap.updated) {
+                sp.edit().putString(KEY_ANCHOR_SRC, snap.updated).apply()
+            }
+        } catch (_: Throwable) {
+        }
+        if (kids.size == 1) return listOf(kids[0])
+        val (a, b) = pairIndices(today, anchor, kids.size)
+        return listOf(kids[a], kids[b])
     }
 
     private fun httpGet(u: String): String? = try {

@@ -226,6 +226,60 @@ public class GaitDetectorPureTest {
                 + g.debugInfo() + "）", triggered);
     }
 
+    /**
+     * 【5.7.3 平放持握走路】手机屏幕朝上平拿（gz≈9.8），手臂前后摆让水平能量占优：
+     * 真机日志里这种姿态占了大半，垂直占比只有 0.15~0.35、步频被抬阈值压成 0.6Hz，
+     * 走两圈一次都不弹。修复后平放改用「幅值 0.85 + 步频 + 主轴多数」判步。
+     */
+    @Test
+    public void flatHeldWalking_countsSteps() {
+        GaitDetector g = new GaitDetector();
+        g.setConfirmSteps(8);
+        g.reset();
+        long t = 0L;
+        // 先静止 2 秒让姿态稳定器收敛到 LAY_FLAT
+        for (int i = 0; i < 100; i++) {
+            g.feedAcc(0f, 0f, GRAVITY, t);
+            t += FRAME_MS;
+        }
+        assertEquals("平放持握应判为 LAY_FLAT", PhoneAttitude.LAY_FLAT, g.getAttitude());
+        boolean triggered = false;
+        for (int i = 0; i < 600; i++) {
+            double sec = i / 50.0;
+            double w = 2 * Math.PI * 1.8 * sec;
+            // 垂直颠簸 1.2、水平摆动 2.0（能量比 0.26，远低于 0.5 的旧闸门）
+            float az = (float) (GRAVITY + 1.2 * Math.sin(w));
+            float ax = (float) (2.0 * Math.sin(w));
+            if (g.feedAcc(ax, 0f, az, t)) { triggered = true; break; }
+            t += FRAME_MS;
+        }
+        assertTrue("平放持握走路必须能攒出合格步（debug=" + g.debugInfo() + "）", triggered);
+        assertTrue("连续合格步应达到门槛 8（实际=" + g.confirmedStepCount() + "）",
+                g.confirmedStepCount() >= 8);
+    }
+
+    /** 平放但只是捏着手机搓屏 / 桌面微震：幅值小、节律散，绝不能攒成合格步 */
+    @Test
+    public void flatHeldSmallJitter_notCounted() {
+        GaitDetector g = new GaitDetector();
+        g.setConfirmSteps(8);
+        g.reset();
+        long t = 0L;
+        for (int i = 0; i < 100; i++) {
+            g.feedAcc(0f, 0f, GRAVITY, t);
+            t += FRAME_MS;
+        }
+        boolean triggered = false;
+        for (int i = 0; i < 900; i++) {
+            double sec = i / 50.0;
+            // 0.5 m/s² 的弱抖动，频率还在步频窗口内（0.5~2.5Hz），只有幅值闸门能拦
+            float az = (float) (GRAVITY + 0.5 * Math.sin(2 * Math.PI * 1.6 * sec));
+            if (g.feedAcc(0f, 0f, az, t)) { triggered = true; break; }
+            t += FRAME_MS;
+        }
+        assertFalse("平放弱抖动不得算成走路（debug=" + g.debugInfo() + "）", triggered);
+    }
+
     // ======================================================================
     // 返工第 1 轮 · B 组：stepActivityTs() 时序回归 —— Tess 纯追加，不改上方 8 条
     //

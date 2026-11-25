@@ -41,3 +41,18 @@
 # 但 R8 缺类会直接以 ERROR 终止构建 —— 显式忽略，别让它把发布流程卡死。
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
+
+# 【libxposed 102】入口类由框架按 META-INF/xposed/java_init.list 里的**类名字符串**
+# 反射加载，R8 看不到任何代码引用，会在 shrink 阶段直接裁掉 —— 表现就是「模块装了、
+# 角标显示 API 102，但 SystemUI 里一行日志都没有」。业务内核同理（入口按名 new）。
+-keep class io.github.wumisc.safewalk.SafeWalkLibxModule { *; }
+-keep class io.github.wumisc.safewalk.SafeWalkLSPHook { *; }
+
+# 【libxposed API 102 官方要求】入口类按 java_init.list 里的类名反射加载。
+# 即使本工程暂时 -dontobfuscate，也把官方三条规则放齐：将来打开混淆时
+# java_init.list 里的类名会被同步改写，不会出现「类名改了、清单没改」的静默失效。
+-dontwarn io.github.libxposed.annotation.**
+-adaptresourcefilecontents META-INF/xposed/java_init.list
+-keep,allowoptimization,allowobfuscation public class * extends io.github.libxposed.api.XposedModule {
+    public <init>();
+}

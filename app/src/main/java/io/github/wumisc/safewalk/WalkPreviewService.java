@@ -272,6 +272,15 @@ public final class WalkPreviewService extends Service {
     private long everSteppedTotal = 0L;
     /** TYPE_STEP_COUNTER 是累计传感器，values[0]=总步数；记录上次回调的总步数以算增量 */
     private long lastTotalSteps = -1L;
+    /**
+     * 本次注册以来两条计步通道各自的步数。
+     *
+     * 不能直接相加：TYPE_STEP_DETECTOR 与 TYPE_STEP_COUNTER 会同时报同一步。
+     * 对 SystemUI 供数时取两者的**较大值**，既不会把同一步算两遍，也能在
+     * DETECTOR 被限流时用 COUNTER 的增量补齐。
+     */
+    private long detectorSessionSteps = 0L;
+    private long counterSessionSteps = 0L;
 
     /** 静置超过该时长判定为停下（与 Hook 默认 20s 一致） */
     private static final long GAIT_STATIC_MS = 10_000L;
@@ -350,7 +359,7 @@ public final class WalkPreviewService extends Service {
                     boolean screenOn = screenInteractive;
                     float tilt = gait == null ? -1f : gait.tiltDegrees();
                     if (HeadDownPolicy.evaluate(true, gaitWalking, screenOn, tilt, now, headDownState)) {
-                        new SafeWalkNotificationManager(WalkPreviewService.this).headDownRemind();
+                        notifier().headDownRemind();
                         DiagLog.log("[head-down] 行走中持续低头 → 已提醒抬头 | tilt="
                                 + Math.round(tilt) + "°");
                     }
@@ -369,7 +378,7 @@ public final class WalkPreviewService extends Service {
                         LongWalkPolicy.DEFAULT_PAUSE_GRACE_MS,
                         LongWalkPolicy.DEFAULT_COOLDOWN_MS)) {
                     int minutes = (int) (LongWalkPolicy.DEFAULT_WALK_MS / 60_000L);
-                    new SafeWalkNotificationManager(WalkPreviewService.this).longWalkRemind(minutes);
+                    notifier().longWalkRemind(minutes);
                     DiagLog.log("[long-walk] 累计行走满 " + minutes + " 分钟 → 已提醒歇脚");
                 }
             } catch (Throwable t) {
@@ -387,7 +396,7 @@ public final class WalkPreviewService extends Service {
                         LongWalkPolicy.NIGHT_PAUSE_GRACE_MS,
                         LongWalkPolicy.NIGHT_COOLDOWN_MS)) {
                     int minutes = (int) (LongWalkPolicy.NIGHT_WALK_MS / 60_000L);
-                    new SafeWalkNotificationManager(WalkPreviewService.this).nightSoloRemind(minutes);
+                    notifier().nightSoloRemind(minutes);
                     DiagLog.log("[night-solo] 夜间累计行走满 " + minutes + " 分钟 → 已提醒留意周边");
                 }
             } catch (Throwable t) {
@@ -483,6 +492,25 @@ public final class WalkPreviewService extends Service {
     public static final String ACTION_HOOK_HIDE = "io.github.wumisc.safewalk.REAR_CAM_HOOK_HIDE";
 
     /**
+     * 【5.6.16】Hook 委托本应用发通知（SystemUI → App）。
+     *
+     * 为什么必须绕这一道：通知的归属包名由发通知的 Context 决定。Hook 跑在
+     * SystemUI 进程里，用它自己的 Context 发通知，通知的 package 就是
+     * `com.android.systemui` —— 系统界面自己发的通知会被系统压制，超级岛也
+     * 不会把它算成本应用的岛，用户侧表现就是「只有前台服务那条上岛，提醒一条都没有」。
+     * 现在 Hook 只发这条委托广播，真正 notify 由本应用进程执行，包名回到自己。
+     */
+    public static final String ACTION_HOOK_NOTIFY = "io.github.wumisc.safewalk.REAR_CAM_HOOK_NOTIFY";
+    /** 要发哪一条：battery / sit / torch */
+    public static final String EXTRA_NOTIFY_KIND = "notify_kind";
+    /** 待机提醒类型：电量预警 */
+    public static final String NOTIFY_BATTERY = "battery";
+    /** 待机提醒类型：久坐 */
+    public static final String NOTIFY_SIT = "sit";
+    /** 待机提醒类型：夜间照明建议 */
+    public static final String NOTIFY_TORCH = "torch";
+
+    /**
      * 预览实际状态回执（App → SystemUI）。
      *
      * Hook 端发显示/收起指令时做了「只发变化」去重，它必须知道预览的**真实**
@@ -540,6 +568,88 @@ public final class WalkPreviewService extends Service {
         return CameraAppPolicy.isCameraLike(pkg);
     }
 
+    /**
+     * 【5.6.16】执行 Hook 委托过来的提醒通知。
+     *
+     * Hook 侧只判「该不该提醒」（它拿得到步态与屏幕状态），文案与 PendingIntent
+     * 全部交给本进程的 [SafeWalkNotificationManager]，保证通知包名是本应用、
+     * 点击落点也在本应用（过去用 SystemUI 的 Context 构造，通知归属系统界面，
+     * 超级岛与增强模块都不认）。
+     */
+    private void handleHookNotify(String kind) {
+        if (kind == null) return;
+        DiagLog.log("[notif] 收到 Hook 委托提醒: " + kind);
+        // 通知被用户关掉/渠道被 ROM 静默时 notify() 不会报错，也不会弹。
+        // 以前日志里只有“已触发”没有“没弹出来”，用户无法区分两者；这里先留证据。
+        NotificationManager systemNm =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (systemNm != null) {
+            if (!systemNm.areNotificationsEnabled()) {
+                DiagLog.log("[notif] ⛔ 系统通知总开关已关闭，提醒无法显示");
+                return;
+            }
+            NotificationChannel channel =
+                    systemNm.getNotificationChannel(SafeWalkNotificationManager.CHANNEL_ID);
+            if (channel != null
+                    && channel.getImportance() == NotificationManager.IMPORTANCE_NONE) {
+                DiagLog.log("[notif] ⛔ SafeWalk 提醒渠道被关闭，提醒无法显示");
+                return;
+            }
+        }
+        SafeWalkNotificationManager nm = notifier();
+        switch (kind) {
+            case NOTIFY_BATTERY:
+                nm.batteryWarning();
+                break;
+            case NOTIFY_SIT:
+                nm.sitRemind();
+                break;
+            case NOTIFY_TORCH:
+                nm.flashlightSuggest();
+                break;
+            default:
+                DiagLog.log("[notif] 未知的委托通知类型: " + kind);
+        }
+    }
+
+    /**
+     * 【5.6.16】夜间照明「已点亮」上岛通知。
+     *
+     * 5.6.13 起夜间手电改成「随角落小窗点亮」，不再弹确认通知——于是超级岛上
+     * 完全没有它的位置。现在在**闪光灯真正被下发 FLASH_MODE_TORCH 的那一刻**
+     * 补一条岛通知（带「关灯」按钮），小窗收起或灯灭时撤掉：用户既知道灯亮着，
+     * 也能一键关掉，不会变成一条挂在岛上的死通知。
+     */
+    void onTorchLitChanged(boolean lit) {
+        try {
+            if (lit) {
+                notifier().torchLitNotice();
+            } else {
+                notifier().cancelTorchNotice();
+            }
+        } catch (Throwable t) {
+            DiagLog.log("[notif] 夜间照明岛通知切换失败: " + t.getMessage());
+        }
+    }
+
+    /**
+     * 【5.7】预览会话被其他应用抢占（系统相机取景/扫码/视频通话）。
+     *
+     * 窗口本身已经由 RearCameraOverlay 收掉了；这里再压 5 秒不让 evaluateShow
+     * 把它拉回来 —— 否则两边会来回抢同一颗摄像头：我们收窗 → 系统相机拿到 →
+     * 我们 2 秒后又拉起 → 系统相机被踢（黑屏）→ 它再抢回来。
+     *
+     * 5 秒后无条件重评估一次：如果用户还在相机里，Hook 的让路会继续挡住显示；
+     * 如果用户已经退出，这一下就把小窗恢复回来。
+     */
+    private long preemptSuppressUntil = 0L;
+
+    void onOverlayPreempted() {
+        preemptSuppressUntil = SystemClock.elapsedRealtime() + 5_000L;
+        DiagLog.log("[cam] 预览被其他应用抢占 → 5 秒内不重新拉起小窗");
+        main.postDelayed(this::evaluateShow, 5_300L);
+    }
+
     private void handleForegroundApp(String pkg) {
         boolean camera = isCameraLikePackage(pkg);
         if (camera == a11yCameraForeground) return;   // 只在状态跳变时动，避免每次窗口切换都重评估
@@ -560,12 +670,35 @@ public final class WalkPreviewService extends Service {
      */
     public static void start(Context ctx, boolean fromRevive) {
         try {
+            // 【稳定修复】先把「马上要起服务」告诉 SystemUI 看门狗，再发 start 请求。
+            // 否则用户刚拨开开关的那一拍，看门狗可能拿旧心跳判死，和这次启动抢跑：
+            // 两条 startForegroundService，第二条没人应答，30 秒后 FGS 超时杀进程。
+            pingHookStarting(ctx);
             Intent i = new Intent(ctx, WalkPreviewService.class);
             if (fromRevive) i.putExtra(KeepAlivePolicy.EXTRA_FROM_REVIVE, true);
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i);
             else ctx.startService(i);
         } catch (Throwable t) {
             Toast.makeText(ctx, "预览服务启动失败: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * 启动前心跳：只更新 Hook 里的 lastHeartbeatAt，不做任何 I/O。
+     * 与正式心跳同一条 signature 权限通道；第三方广播在分发阶段就会被丢掉。
+     */
+    private static void pingHookStarting(Context ctx) {
+        String[] targets = {"com.android.systemui", "com.miui.systemui"};
+        for (String pkg : targets) {
+            try {
+                Intent i = new Intent(KeepAlivePolicy.ACTION_HEARTBEAT);
+                i.setPackage(pkg);
+                i.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
+                        SafeWalkPrefKey.BROADCAST_TOKEN);
+                i.putExtra("keepalive.starting", true);
+                ctx.sendBroadcast(i);
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -606,6 +739,9 @@ public final class WalkPreviewService extends Service {
         // 否则它会在 90 秒后误判失联并再拉一次服务。
         startHeartbeat();
         sm = (SensorManager) getSystemService(SENSOR_SERVICE);
+        // 智能提醒的硬件计步供数不依赖「自动跟随步行」：服务活着就一直采。
+        // 这样即使用户用常显模式、或只是让服务常驻，SystemUI 也能收到 50 步判据。
+        registerStepCounter();
         // 【5.3.0 横竖屏】记下服务启动时的朝向，之后对比才能判断「方向真的变了」。
         // 不初始化的话第一次 onConfigurationChanged 会被当成「竖→横」，
         // 即使只是切了深色模式，也会白重排一次窗口。
@@ -624,7 +760,7 @@ public final class WalkPreviewService extends Service {
                     // 锁屏/灭屏期间的失败一律静默：多半是系统暂时禁用相机，
                     // 弹通知只会变成锁屏上的骚扰（用户反复反馈的「还是显示这个问题」）。
                     if (isScreenUsable()) {
-                        new SafeWalkNotificationManager(WalkPreviewService.this).previewFailed(reason);
+                        notifier().previewFailed(reason);
                     } else {
                         DiagLog.log("[cam] 锁屏/灭屏期间预览失败，静默处理不弹通知: " + reason);
                     }
@@ -634,11 +770,12 @@ public final class WalkPreviewService extends Service {
                     return kotlin.Unit.INSTANCE;
                 },
                 step -> {
-                    DiagLog.log("[cam] " + step);
+                    // 分步日志已由 RearCameraOverlay.stage() 统一写一次；
+                    // 这里再写会变成每条 [cam] 日志重复两遍，白耗 I/O。
                     // 画面恢复后立刻撤掉上一条「后视画面打不开」，
                     // 否则旧通知还挂在锁屏上误导用户（截图里的现象）。
                     if (step != null && step.startsWith("✅ 已收到画面")) {
-                        new SafeWalkNotificationManager(WalkPreviewService.this)
+                        notifier()
                                 .cancelPreviewFailed();
                     }
                     // 分步诊断推回行走模式页（同进程广播，也走令牌校验保持一致）
@@ -652,7 +789,19 @@ public final class WalkPreviewService extends Service {
                     }
                     return kotlin.Unit.INSTANCE;
                 },
-                null);
+                null,
+                lit -> {
+                    // 闪光灯真实点亮状态变了：App 侧才知道要不要在岛上挂「夜间照明」。
+                    // 由本进程发通知，包名才是本应用，超级岛/增强模块才认得出来。
+                    onTorchLitChanged(lit != null && lit);
+                    return kotlin.Unit.INSTANCE;
+                },
+                () -> {
+                    // 【5.7】预览被别的应用抢走：窗口已自行收起，这里再压 5 秒，
+                    // 别让 evaluateShow 立刻把它拉回来跟系统相机来回抢设备。
+                    onOverlayPreempted();
+                    return kotlin.Unit.INSTANCE;
+                });
 
         // Hook 的指挥广播。为了跨进程（SystemUI → App）必须 EXPORTED，
         // 令牌校验挡掉随手发的假指令
@@ -669,7 +818,11 @@ public final class WalkPreviewService extends Service {
                     return;
                 }
                 String action = i.getAction();
-                if (ACTION_HOOK_SHOW.equals(action)) {
+                if (ACTION_HOOK_NOTIFY.equals(action)) {
+                    // Hook 委托发通知：真正 notify 由本进程执行，包名才是本应用，
+                    // 超级岛/增强模块才认得出这是 SafeWalk 的通知
+                    handleHookNotify(i.getStringExtra(EXTRA_NOTIFY_KIND));
+                } else if (ACTION_HOOK_SHOW.equals(action)) {
                     // 让路解除：恢复信号。具体显不显示由本服务按自身 walking 决定
                     hookHidden = false;
                     evaluateShow();
@@ -684,6 +837,7 @@ public final class WalkPreviewService extends Service {
         IntentFilter f = new IntentFilter();
         f.addAction(WalkPreviewService.ACTION_HOOK_SHOW);
         f.addAction(WalkPreviewService.ACTION_HOOK_HIDE);
+        f.addAction(WalkPreviewService.ACTION_HOOK_NOTIFY);
         ReceiverCompat.registerExported(this, hookCmdReceiver, f);
 
         // 【BUG 修复 · 锁屏误报】亮屏/解锁状态变化要重新评估预览：
@@ -714,7 +868,12 @@ public final class WalkPreviewService extends Service {
 
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
-        goForeground();
+        // 【稳定修复】只有「裸启动」才来自 startForegroundService（启动预览 /
+        // 系统重建 / 自动恢复页），必须补一次 startForeground；ACTION_STOP /
+        // ACTION_SHOW 等指令是 startService 进来的，服务已在前台时不需要再提，
+        // 否则关闭预览的第一条日志会莫名其妙变成「补 startForeground」。
+        boolean needsForeground = intent == null || intent.getAction() == null;
+        goForeground(needsForeground);
         // 服务起来了：磁贴副标题里的「服务未运行」提示要立刻消失
         WalkTileService.refresh(this);
 
@@ -841,6 +1000,8 @@ public final class WalkPreviewService extends Service {
             return;
         }
         if (hookHidden) return;
+        // 【5.7】预览刚被别的应用抢走：冷却期内不要再拉起，避免和系统相机来回抢设备
+        if (SystemClock.elapsedRealtime() < preemptSuppressUntil) return;
         // 无障碍通道：相机 / 录像 / 视频通话类应用在前台时让路（避免遮挡取景、抢占摄像头）
         if (a11yCameraForeground) {
             if (overlay != null && overlay.getShowing()) {
@@ -975,7 +1136,7 @@ public final class WalkPreviewService extends Service {
             DiagLog.log("[overlay] ⛔ 悬浮窗权限不可用（系统已回收）→ 本次不显示；"
                     + "累计 " + overlayLostCount + " 次。请在应用内「权限与无障碍」重新授予「悬浮窗」");
             try {
-                new SafeWalkNotificationManager(this).overlayLost();
+                notifier().overlayLost();
             } catch (Throwable ignored) {
             }
             reportPreviewState();
@@ -1449,7 +1610,8 @@ public final class WalkPreviewService extends Service {
             try { sm.unregisterListener(gaitListener); } catch (Throwable ignored) {}
             gaitListener = null;
         }
-        unregisterStepCounter();
+        // 步数传感器不跟着预览一起停：智能提醒的「50 步」判据要靠它给 SystemUI
+        // 供数（SystemUI 没有 ACTIVITY_RECOGNITION）。服务销毁时统一反注册。
         gaitWalking = false;
         lastStepTs = 0L;
         gaitShowTs = 0L;
@@ -1483,6 +1645,8 @@ public final class WalkPreviewService extends Service {
         stepEventQueue.clear();
         stepCounterAlive = false;
         everSteppedTotal = 0L;
+        detectorSessionSteps = 0L;
+        counterSessionSteps = 0L;
         lastTotalSteps = -1L;
         lastStepCallbackTs = 0L;
         stepCallbackIntervalEma = 0L;
@@ -1512,7 +1676,8 @@ public final class WalkPreviewService extends Service {
                 long now = SystemClock.elapsedRealtime();
                 markStepCallback(now);
                 stepCounterAlive = true;
-                everSteppedTotal++;
+                detectorSessionSteps++;
+                everSteppedTotal = Math.max(detectorSessionSteps, counterSessionSteps);
                 stepEventQueue.addLast(now);
                 trimStepQueue(now, StepHealthPolicy.MAX_WINDOW_MS);
                 onStepObserved(1L, null);
@@ -1560,7 +1725,8 @@ public final class WalkPreviewService extends Service {
                     lastTotalSteps = total;
                     markStepCallback(now);
                     stepCounterAlive = true;
-                    everSteppedTotal += delta;
+                    counterSessionSteps += delta;
+                    everSteppedTotal = Math.max(detectorSessionSteps, counterSessionSteps);
                     for (long i = 0; i < delta; i++) {
                         stepEventQueue.addLast(now);
                     }
@@ -1652,6 +1818,8 @@ public final class WalkPreviewService extends Service {
         stepEventQueue.clear();
         stepCounterAlive = false;
         everSteppedTotal = 0L;
+        detectorSessionSteps = 0L;
+        counterSessionSteps = 0L;
         lastTotalSteps = -1L;
         lastStepCallbackTs = 0L;
         stepCallbackIntervalEma = 0L;
@@ -2201,6 +2369,13 @@ public final class WalkPreviewService extends Service {
         // 与 notifyPreviewState() 同一条 SystemUI 通道；补一个小米变体包名，
         // 兼容把 SystemUI 放到 com.miui.systemui 的 ROM。两条都发不会重复计数
         // （Hook 只更新一个时间戳）。接收器挂 signature 级权限，第三方发不进来。
+        //
+        // 心跳顺便把 App 侧硬件计步的会话累计值带过去：SystemUI 没有
+        // ACTIVITY_RECOGNITION，Hook 自己注册不了系统计步器。取两条通道的较大值，
+        // 避免 DETECTOR / COUNTER 同时报同一步时翻倍。
+        boolean hasStepChannel = stepDetectorRegistered || stepCounterRegistered;
+        long stepTotal = Math.max(detectorSessionSteps, counterSessionSteps);
+        long stepSession = sessionStartTs;
         String[] targets = {"com.android.systemui", "com.miui.systemui"};
         for (String pkg : targets) {
             try {
@@ -2208,6 +2383,10 @@ public final class WalkPreviewService extends Service {
                 i.setPackage(pkg);
                 i.putExtra(SafeWalkPrefKey.EXTRA_BROADCAST_TOKEN,
                         SafeWalkPrefKey.BROADCAST_TOKEN);
+                if (hasStepChannel) {
+                    i.putExtra(KeepAlivePolicy.EXTRA_STEP_TOTAL, stepTotal);
+                    i.putExtra(KeepAlivePolicy.EXTRA_STEP_SESSION, stepSession);
+                }
                 sendBroadcast(i);
             } catch (Throwable ignored) {
             }
@@ -2271,7 +2450,7 @@ public final class WalkPreviewService extends Service {
             long last = sp.getLong(SafeWalkPrefKey.lastReviveNoticeTs, 0L);
             if (!KeepAlivePolicy.shouldNotifyRevive(last, now)) return;
             sp.edit().putLong(SafeWalkPrefKey.lastReviveNoticeTs, now).apply();
-            new SafeWalkNotificationManager(this).serviceRevived();
+            notifier().serviceRevived();
             DiagLog.log("[keep] 行走模式已自动恢复（系统曾回收预览进程）");
         } catch (Throwable ignored) {
         }
@@ -2292,10 +2471,28 @@ public final class WalkPreviewService extends Service {
      * 这样做的好处是：HyperOS 3 上第一条就成功、根本不进降级分支；HyperOS 4 上自动
      * 走降级；将来 HyperOS 5 换了限制，也不需要改代码 —— 不存在「版本判断猜错了就废掉」。
      */
-    private void goForeground() {
-        // 【省电专项】已提起则跳过：避免设置页频繁操作时同一秒重复 startForeground。
-        // 完全失败(fgsType==-2)不跳过，保留原有降级重试机会。
-        if (foregroundEstablished && fgsType != -2) return;
+    private void goForeground(boolean force) {
+        // 【省电专项】普通指令重复调用直接跳过：避免设置页频繁操作时同一秒重复
+        // startForeground。但每一次 startForegroundService 都必须补一次
+        // startForeground（force=true），否则 30 秒后系统按 FGS 超时杀进程。
+        if (foregroundEstablished && fgsType != -2) {
+            if (!force || lastFgsNotification == null) return;
+            try {
+                if (fgsType > 0 && Build.VERSION.SDK_INT >= 29) {
+                    startForeground(NOTIF_ID, lastFgsNotification, fgsType);
+                } else {
+                    startForeground(NOTIF_ID, lastFgsNotification);
+                }
+                DiagLog.log("[FGS] 收到新的 start 请求 → 已补一次 startForeground"
+                        + "（type=" + fgsTypeName(fgsType) + "）");
+            } catch (Throwable t) {
+                // 补提失败不能直接吞掉：降级到完整重建，至少保证这次 start 有应答
+                foregroundEstablished = false;
+                DiagLog.log("[FGS] 补 startForeground 失败，转入完整重建｜"
+                        + t.getClass().getSimpleName());
+            }
+            if (foregroundEstablished) return;
+        }
         NotificationChannel ch = new NotificationChannel(
                 CHANNEL_WALK, "行走模式", NotificationManager.IMPORTANCE_LOW);
         ch.setDescription("行走模式开启期间保持后台运行；关闭本渠道会导致常驻通知不显示");
@@ -2311,7 +2508,7 @@ public final class WalkPreviewService extends Service {
                 && !channelDisabledNotified) {
             channelDisabledNotified = true;
             try {
-                new SafeWalkNotificationManager(this).walkChannelDisabled();
+                notifier().walkChannelDisabled();
             } catch (Throwable ignored) {
             }
         }
@@ -2343,6 +2540,7 @@ public final class WalkPreviewService extends Service {
                     startForeground(NOTIF_ID, n, type);
                     fgsType = type;
                     foregroundEstablished = true;
+                    lastFgsNotification = n;
                     lastWalkNotifText = walkNotifSubtitle();
                     DiagLog.log("[FGS] 前台服务已提起｜type=" + fgsTypeName(type) + "｜" + osTag);
                     if (type != ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) {
@@ -2356,7 +2554,7 @@ public final class WalkPreviewService extends Service {
                         if (!fgsDegradeNotified) {
                             fgsDegradeNotified = true;
                             try {
-                                new SafeWalkNotificationManager(this).fgsDegraded();
+                                notifier().fgsDegraded();
                             } catch (Throwable ignored) {
                             }
                         }
@@ -2373,6 +2571,7 @@ public final class WalkPreviewService extends Service {
             startForeground(NOTIF_ID, n);
             fgsType = -1;
             foregroundEstablished = true;
+            lastFgsNotification = n;
             lastWalkNotifText = walkNotifSubtitle();
             DiagLog.log("[FGS] 已用无 type 方式提起前台｜" + osTag);
         } catch (Throwable t) {
@@ -2395,6 +2594,17 @@ public final class WalkPreviewService extends Service {
 
     /** 最近一次成功的前台服务类型：-1=无 type，-2=完全失败，0=尚未提起。仅用于诊断。 */
     private volatile int fgsType = 0;
+
+    /**
+     * 最近一条成功用于 startForeground 的通知。
+     *
+     * 每次 startForegroundService 都必须对应一次 startForeground，否则系统会在
+     * 30 秒后按「前台服务未及时提起」杀掉进程（已在 KSU 沙盒复现：
+     * 自动恢复页与用户开关同时拉起服务，第二次 start 被 foregroundEstablished
+     * 直接跳过，30 秒后 data_app_crash 记录 FGS 超时）。
+     * 缓存通知对象，重复 start 时只补一次系统调用，不重建渠道、不跑降级链。
+     */
+    private Notification lastFgsNotification;
 
     /**
      * 【省电专项】前台服务是否已在本进程成功提起。
@@ -2436,6 +2646,29 @@ public final class WalkPreviewService extends Service {
         return (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
     }
 
+    /**
+     * 【5.6.17】复用同一个提醒管理器。
+     *
+     * 它的 60 秒冷却表是**实例字段**，每次 `new` 都等于把冷却清零 ——
+     * 委托来的久坐/电量/夜间提醒本来就会被反复触发，新建实例后冷却全失效。
+     * 服务是单例生命周期，缓存一个实例即可（channel 也只在首次构造时建一次）。
+     */
+    private volatile SafeWalkNotificationManager notifMgr;
+
+    private SafeWalkNotificationManager notifier() {
+        SafeWalkNotificationManager m = notifMgr;
+        if (m == null) {
+            synchronized (this) {
+                m = notifMgr;
+                if (m == null) {
+                    m = new SafeWalkNotificationManager(this);
+                    notifMgr = m;
+                }
+            }
+        }
+        return m;
+    }
+
     @Override
     public void onDestroy() {
         if (hookCmdReceiver != null) {
@@ -2447,6 +2680,8 @@ public final class WalkPreviewService extends Service {
             screenReceiver = null;
         }
         stopGait();
+        // 步数传感器是给智能提醒供数用的，不随 stopGait 反注册；服务真销毁才停。
+        unregisterStepCounter();
         stopHeartbeat();
         flushStepState();
         // 【5.6.0】日志改成批量落盘后，退出前必须把缓冲刷下去，否则最后几条（

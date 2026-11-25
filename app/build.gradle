@@ -23,8 +23,8 @@ android {
         // miuix-blur 的 AGSL RuntimeShader 要 Android 13+，minSdk 提到 33
         minSdk 33
         targetSdk 35
-        versionCode 100
-        versionName "5.6.13"
+        versionCode 122
+        versionName "5.7.3-lx102"
     }
 
     compileOptions {
@@ -36,6 +36,15 @@ android {
     buildFeatures {
         buildConfig true
         compose true
+    }
+
+    // 【libxposed 102】模块元数据是纯资源文件（META-INF/xposed/*），
+    // 必须显式声明合并规则，否则 AGP 的重复资源策略可能把它们挡在 APK 之外，
+    // 表现就是「模块装了但 LSPosed 不认、角标仍是 legacy」。
+    packaging {
+        resources {
+            merges += "META-INF/xposed/*"
+        }
     }
 
     testOptions {
@@ -88,7 +97,7 @@ kotlin {
 
 dependencies {
     // LSPosed API，仅编译期
-    compileOnly 'de.robv.android.xposed:api:82'
+    compileOnly 'io.github.libxposed:api:102.0.0'
     implementation 'com.google.android.material:material:1.12.0'
     // 显式对齐协程版本：material/lifecycle 的传递依赖会要 1.7.1，
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
