@@ -82,17 +82,29 @@ export async function onRequestPost({ request, env }) {
 
     await stmt.run();
 
-    // 按机型各留最新一条：同 manufacturer+model 只保留时间最新（id 兜底）的记录，
-    // 其余旧记录连带删除。新上报顶掉同型号历史反馈，库里不堆旧版本日志。
+    // 保留策略：按厂商 + 机型分组，只认最新 versionCode 的记录；在最新版本内留最新 3 条。
+    // 旧版本记录一律删除；同最新版本超出 3 条的删最旧的。新上报写入后连带清理。
     const clean = env.DB.prepare(
       `DELETE FROM diag_reports
          WHERE manufacturer = ? AND model = ?
-           AND id NOT IN (
-             SELECT id FROM diag_reports
-             WHERE manufacturer = ? AND model = ?
-             ORDER BY ts DESC, id DESC LIMIT 1
+           AND (
+             version_code <> (
+               SELECT MAX(version_code) FROM diag_reports
+               WHERE manufacturer = ? AND model = ?
+             )
+             OR id NOT IN (
+               SELECT id FROM (
+                 SELECT id FROM diag_reports
+                 WHERE manufacturer = ? AND model = ?
+                   AND version_code = (
+                     SELECT MAX(version_code) FROM diag_reports
+                     WHERE manufacturer = ? AND model = ?
+                   )
+                 ORDER BY ts DESC, id DESC LIMIT 3
+               )
+             )
            )`
-    ).bind(mfr, model, mfr, model);
+    ).bind(mfr, model, mfr, model, mfr, model, mfr, model);
     await clean.run();
 
     return json({ ok: true });
