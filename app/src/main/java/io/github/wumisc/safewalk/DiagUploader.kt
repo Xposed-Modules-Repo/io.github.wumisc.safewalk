@@ -41,6 +41,11 @@ object DiagUploader {
     private const val MAX_LOG_CHARS = 60_000
 
     private const val PREFS_NAME = "safewalk_xsp"
+    /** 上次「成功」上报的时间戳键；失败不写，避免网络抖动后罚站十分钟。 */
+    private const val KEY_LAST_OK_TS = "diag_upload_last_ok_ts"
+
+    /** 同一进程内的并发闸：连点两次不会真的发两个请求。 */
+    private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** 上报结果回调，回调发生在主线程。 */
     interface Callback {
@@ -52,25 +57,46 @@ object DiagUploader {
     fun isConfigured(): Boolean =
         !ENDPOINT_URL.contains("CHANGE_ME") && !UPLOAD_TOKEN.contains("CHANGE_ME")
 
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
     @JvmStatic
     fun hasConsented(ctx: Context): Boolean = SafePrefs.getBool(
-        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
-        SafeWalkPrefKey.logUploadConsented, false
+        prefs(ctx), SafeWalkPrefKey.logUploadConsented, false
     )
 
     @JvmStatic
     fun setConsented(ctx: Context, consented: Boolean) {
-        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean(SafeWalkPrefKey.logUploadConsented, consented).apply()
+        prefs(ctx).edit().putBoolean(SafeWalkPrefKey.logUploadConsented, consented).apply()
     }
 
     /**
      * 触发一次手动上报。在后台线程发请求，结果经主线程 [Callback] 回传。
-     * 未同意 / 未配置 / 异常都不会崩，失败信息落到本地诊断日志。
+     * 未同意 / 未配置 / 冷却中 / 异常都不会崩，失败信息落到本地诊断日志。
+     *
+     * 三道前置闸（缺一道都能被连点打穿，见 [UploadCooldown] 的注释）：
+     * 1. 未同意 → 不发请求（同意只在弹窗里写，撤回即生效）；
+     * 2. 同进程已有请求在飞 → 直接拒绝，不排队；
+     * 3. 同机 10 分钟内已成功上报过 → 拒绝，并告诉用户还要等几分钟。
      */
     @JvmStatic
     fun upload(ctx: Context, note: String?, cb: Callback?) {
         val app = ctx.applicationContext
+        if (!hasConsented(app)) {
+            cb?.onResult(false, "尚未同意上传诊断日志")
+            return
+        }
+        if (!inFlight.compareAndSet(false, true)) {
+            cb?.onResult(false, "正在上传中，请稍候")
+            return
+        }
+        val now = System.currentTimeMillis()
+        val lastOk = prefs(app).getLong(KEY_LAST_OK_TS, 0L)
+        if (!UploadCooldown.shouldAllow(lastOk, now)) {
+            inFlight.set(false)
+            val mins = UploadCooldown.remainingMinutes(lastOk, now)
+            cb?.onResult(false, "刚上传过，请 ${mins} 分钟后再试")
+            return
+        }
         Thread {
             val result = try {
                 uploadBlocking(app, note)
@@ -78,6 +104,10 @@ object DiagUploader {
                 DiagLog.log("[upload] 上报异常: ${t.javaClass.simpleName} ${t.message}")
                 false to "网络不可用，日志仍保存在本地"
             }
+            if (result.first) {
+                prefs(app).edit().putLong(KEY_LAST_OK_TS, System.currentTimeMillis()).apply()
+            }
+            inFlight.set(false)
             Handler(Looper.getMainLooper()).post { cb?.onResult(result.first, result.second) }
         }.start()
     }

@@ -18,8 +18,19 @@ CREATE TABLE IF NOT EXISTS diag_reports (
     ui             TEXT,                          -- 识别到的 ROM / UI 名
     note           TEXT,                          -- 用户备注（可空）
     log            TEXT,                          -- 已脱敏的诊断日志尾部
+    log_hash       TEXT,                          -- mfr|model|log 的 SHA-256，用于 10 分钟内重复上报去重
     client_ip      TEXT                           -- 边缘记录的来源 IP（仅排障用）
 );
 
 CREATE INDEX IF NOT EXISTS idx_diag_reports_ts ON diag_reports (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_diag_reports_model ON diag_reports (model, ts DESC);
+
+CREATE INDEX IF NOT EXISTS idx_diag_reports_hash ON diag_reports (model, log_hash, ts DESC);
+
+-- 上传限额：每个 IP 每天一个桶。空表即「今天还没人上传」。
+CREATE TABLE IF NOT EXISTS upload_quota (
+    ip   TEXT NOT NULL,                           -- cf-connecting-ip
+    day  TEXT NOT NULL,                           -- YYYY-MM-DD（UTC）
+    n    INTEGER NOT NULL DEFAULT 0,              -- 当日已成功落库次数
+    PRIMARY KEY (ip, day)
+);

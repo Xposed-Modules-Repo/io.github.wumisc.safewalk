@@ -1,5 +1,13 @@
 # 更新日志
 
+## [5.7.6-lx102 · 128] - 2026-11-26 诊断上报加额度闸（客户端冷却 + 服务端四道闸）
+
+- **为什么**：上传令牌写在 APK 里可反编译，而 Cloudflare 免费计划额度是全账号共享（Workers 100k 请求/天、D1 100k 行写入/天、5M 行读取/天、5GB 存储）。没有闸时，用户连点几十次就是几十条；被脚本刷几小时就能把当天请求与写入双额度打满，真实反馈当天全部 500 —— 不花钱，但反馈全丢且无告警。
+- **客户端三道前置闸**：未同意不发请求（撤回立即生效）/ 同进程已在飞则拒绝 / 同机 10 分钟内只允许成功一次（失败不占冷却，网络抖动可马上重试）。新增 `UploadCooldown`（纯逻辑，可单测）。
+- **服务端四道闸**（`cloudflare/functions/api/diag/upload.js`）：Bearer 鉴权 → 单 IP 每日 5 条（`upload_quota` 表 upsert 计数，落库成功才 +1）→ 同机型 + 同日志 SHA-256 10 分钟内去重（返回 `deduped`）→ 全表 500 行上限。机型名限长 60 字并剔控制字符，堵「随机编机型名撑存储」。
+- **D1 迁移**：`diag_reports` 增 `log_hash` 列与 `(model, log_hash, ts)` 索引；新增 `upload_quota(ip, day, n)` 表。
+- **契约测试**：新增 `UploadGuardContractTest`（冷却四条 + 服务端四闸存在性）。
+
 ## [5.7.6-lx102 · 127] - 2026-11-26 功能建议指向反馈仓库（镜像组织 Issues 已关闭）
 
 - **反馈通道修复**：`Xposed-Modules-Repo` 是 LSPosed 官方镜像组织，**组织级关闭了 Issues**（同组织的 antiburn、maihoku 均为 `has_issues=false`，`/issues/new` 实测 404）。原「关于 → 功能建议」直接拼该仓库的新建 issue 地址，用户写完一点提交只会看到 GitHub 错误页。现改指专门的反馈仓库 `wumisc/safewalk-feedback`（Issues 常开，源码与 APK 仍在镜像仓库）。
