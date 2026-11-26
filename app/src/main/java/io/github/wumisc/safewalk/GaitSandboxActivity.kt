@@ -45,10 +45,10 @@ class GaitSandboxActivity : Activity() {
     private lateinit var sm: SensorManager
     private var listener: SensorEventListener? = null
 
-    private val samples = ArrayList<FloatArray>(4096)   // [tMs, ax, ay, az]
+    private val samples = ArrayList<DoubleArray>(4096)  // [tMs, ax, ay, az]
     private var recording = false
-    private var recordStart = 0L
-    private var lastTrace: MutableList<FloatArray>? = null
+    private var firstNanos = 0L
+    private var lastTrace: MutableList<DoubleArray>? = null
     private val main = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -145,22 +145,26 @@ class GaitSandboxActivity : Activity() {
             return
         }
         samples.clear()
-        recordStart = System.currentTimeMillis()
+        firstNanos = 0L
         recording = true
         var count = 0
         val l = object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent?) {
                 val v = e?.values ?: return
                 if (v.size < 3 || samples.size >= MAX_SAMPLES) return
-                samples.add(floatArrayOf(
-                    (System.currentTimeMillis() - recordStart).toFloat(),
-                    v[0], v[1], v[2]))
+                // 【5.7.6】时间戳必须取硬件的 e.timestamp（纳秒），不能用 currentTimeMillis：
+                // 厂商批处理上报时一包 6~8 帧共用一个墙钟毫秒，导出的 trace 里
+                // 83.8% 的相邻样本时间戳完全相同，任何下游算法都还原不出真实步间隔。
+                // 这里存成「相对首个样本的毫秒」，保留三位小数。
+                if (firstNanos == 0L) firstNanos = e.timestamp
+                val tMs = (e.timestamp - firstNanos) / 1_000_000.0
+                samples.add(doubleArrayOf(tMs, v[0].toDouble(), v[1].toDouble(), v[2].toDouble()))
                 count++
                 if (count % 50 == 0) {
-                    val ms = System.currentTimeMillis() - recordStart
-                    main.post { tvStatus.text = "录制中 ${ms / 1000}s｜${samples.size} 帧" }
+                    val ms = (e.timestamp - firstNanos) / 1_000_000L
+                    main.post { tvStatus.text = "录制中 ${ms / 1000}s｜${samples.size} 帧｜${hzOf(samples)}Hz" }
                 }
-                if (System.currentTimeMillis() - recordStart >= MAX_RECORD_MS) {
+                if ((e.timestamp - firstNanos) / 1_000_000L >= MAX_RECORD_MS) {
                     main.post { stopRecord() }
                 }
             }
@@ -183,7 +187,7 @@ class GaitSandboxActivity : Activity() {
         listener = null
         if (recording && samples.isNotEmpty()) {
             lastTrace = ArrayList(samples)
-            tvStatus.text = "已录制 ${samples.size} 帧 / ${(samples.last()[0] / 1000).toInt()}s｜点「回放并判定」"
+            tvStatus.text = "已录制 ${samples.size} 帧 / ${(samples.last()[0] / 1000).toInt()}s｜${hzOf(samples)}Hz｜点「回放并判定」"
         } else {
             tvStatus.text = "没录到数据"
         }
@@ -217,8 +221,10 @@ class GaitSandboxActivity : Activity() {
             var lastReject = ""
             var frames = 0
             for (s in trace) {
-                val t = s[0].toLong()
-                val ok = detector.feedAcc(s[1], s[2], s[3], t)
+                // 【5.7.6】时间轴存的是小数毫秒，回放时四舍五入到毫秒再喂：
+                // 117Hz 下相邻帧是 8.5ms，截断会把它压成 8ms 并累积漂移，四舍五入的抖动只有 ±0.5ms。
+                val t = Math.round(s[0])
+                val ok = detector.feedAcc(s[1].toFloat(), s[2].toFloat(), s[3].toFloat(), t)
                 frames++
                 if (ok) {
                     stepHits++
@@ -267,25 +273,47 @@ class GaitSandboxActivity : Activity() {
             val arr = JSONArray()
             for (s in trace) {
                 arr.put(JSONObject()
-                    .put("t", s[0].toDouble())
-                    .put("x", s[1].toDouble())
-                    .put("y", s[2].toDouble())
-                    .put("z", s[3].toDouble()))
+                    .put("t", Math.round(s[0] * 1000.0) / 1000.0)
+                    .put("x", s[1])
+                    .put("y", s[2])
+                    .put("z", s[3]))
             }
+            val durationMs = if (trace.isEmpty()) 0.0 else trace.last()[0]
+            // 【5.7.6】hz 不再写死「≈50」。这行以前是硬编码的谎话：
+            // 真机实测同一段 30 秒导出了 3523 帧，实际 117Hz，文件里却写着 50Hz，
+            // 下游按 50Hz 换算窗口长度，步频直接算成 2.3 倍。现在从数据本身算。
+            val hz = if (durationMs > 0) trace.size * 1000.0 / durationMs else 0.0
             val dir = File(DiagLog.USER_DIR)
             if (!dir.exists()) dir.mkdirs()
             val f = File(dir, "gait_trace_${System.currentTimeMillis()}.json")
             f.writeText(JSONObject()
                 .put("frames", trace.size)
-                .put("hz", "≈50")
-                .put("note", "步态沙盒导出的加速度原始序列（t 为相对录制起点的毫秒）")
+                .put("hz", "%.1f".format(hz))
+                .put("durationMs", Math.round(durationMs))
+                .put("note", "步态沙盒导出的加速度原始序列（t=SensorEvent.timestamp 硬件时钟换算的相对毫秒，含三位小数；hz 为实际帧率）")
                 .put("samples", arr)
                 .toString())
             tvStatus.text = "已导出：${f.absolutePath}"
-            DiagLog.log("[sandbox] 步态 trace 已导出 ${f.absolutePath}（${trace.size} 帧）")
+            DiagLog.log("[sandbox] 步态 trace 已导出 ${f.absolutePath}（${trace.size} 帧 / ${"%.0f".format(hz)}Hz）")
         } catch (t: Throwable) {
             tvStatus.text = "导出失败：${t.message}"
         }
+    }
+
+    /**
+     * 【5.7.6】按样本间隔算实际帧率（Hz）。
+     *
+     * 用「总帧数 / 总时长」会被开头结尾的空档带偏，这里取间隔中位数，
+     * 对批处理上报造成的偶发长间隔更稳。
+     */
+    private fun hzOf(trace: List<DoubleArray>): String {
+        if (trace.size < 3) return "—"
+        val n = minOf(trace.size - 1, 400)
+        val dts = ArrayList<Double>(n)
+        for (i in 1..n) dts.add(trace[i][0] - trace[i - 1][0])
+        dts.sort()
+        val med = dts[dts.size / 2]
+        return if (med <= 0.0) "—" else "%.0f".format(1000.0 / med)
     }
 
     override fun onDestroy() {

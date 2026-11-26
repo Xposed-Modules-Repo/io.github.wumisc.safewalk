@@ -54,6 +54,58 @@ object MotionConfig {
      * 也够稳，不会被单帧的轴向瞬时抖动带偏。
      */
     const val VERTICAL_EMA = 0.9f
+
+    /**
+     * 【5.7.6】垂直能量 EMA 的时间常数（毫秒）。
+     *
+     * 5.6.4 ~ 5.7.5 用的是写死的逐帧系数 0.9，只在「采样率恰好 50Hz」时等于 0.2s 时间常数。
+     * 真机导出实测：同一台机器 30 秒 3523 帧 ≈ **117Hz**，是 50Hz 的 2.3 倍。
+     * 逐帧系数不变、采样率翻倍时，时间常数会跟着缩到 85ms —— 统计窗口短到只剩
+     * 一两个点，垂直占比在帧间剧烈抖动，平放判定与闸门都变得随机。
+     *
+     * 现在改成按实测帧间隔换算：`alpha = exp(-dt / tau)`，tau 恒定 190ms，
+     * 50Hz（dt=20ms）下正好还原成原来的 0.9，采样率变了几倍时间常数都不变。
+     */
+    const val EMA_TAU_VERTICAL_MS = 190.0
+    /** 【5.7.6】主轴能量 EMA 的时间常数（毫秒）。50Hz 下还原原来的逐帧系数 0.98 */
+    const val EMA_TAU_AXIS_MS = 990.0
+
+    /**
+     * 【5.7.6】瞬态（拿放手机、磕碰、甩手）的线性加速度判定阈值。
+     *
+     * 真机导出里 |a| 峰值到过 23.88 m/s²，扣掉重力后仍是十几个 m/s² 的单帧跳变。
+     * 这类尖峰幅值远超任何真实脚步（1.5~6），却是"上升沿"、间隔也常落在步频窗口，
+     * 于是一次磕碰就能顶出一个假步。7.5 以上统一按瞬态处理：进入冷却、
+     * 不更新包络、不计步、不推进判停时钟。
+     *
+     * 取 7.5 而不是 6.0：合成波形单测里"一步 = 单帧 +6.0"是刻意构造的合法步峰，
+     * 阈值必须留在它上面，否则会把所有步态单测一起判死。
+     */
+    const val TRANSIENT_VALUE = 7.5f
+    /** 瞬态之后的冷却时长：这期间即使幅值重新越阈也不计步 */
+    const val TRANSIENT_COOLDOWN_MS = 300L
+
+    /**
+     * 【5.7.6】静默降阈：多久没有合格步之后开始放宽阈值下限。
+     *
+     * 真机导出里有一段 5 秒窗口幅值 std 只有 0.62 m/s²（手机在包里、步子很轻），
+     * 而阈值下限写死 0.6 —— 峰刚好贴着阈值走，整段只留下 0~1 个峰，步频被拉成
+     * 0.5Hz 以下。真实步行的亮度差一个数量级，阈值却只有一档，轻步必然漏。
+     */
+    const val QUIET_RELAX_MS = 3000L
+    /** 静默期放宽后的阈值下限 */
+    const val RELAX_FLOOR = 0.35f
+    /**
+     * 允许放宽的前提：包络（最近的幅值峰值）必须至少是放宽下限的 1.37 倍。
+     *
+     * 否则纯噪声（包络 0.1~0.2）也会把阈值压到 0.35，噪声尖峰被当步。
+     * 0.35 × 1.37 ≈ 0.48，等价于「确实存在一次接近下限的往复」才给放宽。
+     *
+     * 【为什么是 0.48 而不是 0.56】轻步实测：幅值 0.58 的正弦经重力低通后
+     * 残差峰值约 0.545，若门槛卡在 0.56，这条最需要救的样本刚好被挡在门外，
+     * 降阈等于白加。0.48 仍远高于静止噪声（残差 0.1 量级），不会放开假步。
+     */
+    const val RELAX_MIN_ENVELOPE = 0.48f
     const val MIN_WALK_SPEED = 0.3f
     const val MAX_WALK_SPEED = 2.5f
     const val LOCATION_QUEUE_SIZE = 3
@@ -169,7 +221,23 @@ class GaitDetector {
     private var emaX = 0f
     private var emaY = 0f
     private var emaZ = 0f
-    private val emaAlpha = 0.98f
+
+    /**
+     * 【5.7.6】实测帧间隔的 EMA（毫秒），只用于诊断与采样率自适应。
+     *
+     * 真机上这一项会随传感器档位/厂商批处理策略变化（实测有 117Hz 的机型），
+     * 打日志时把 `hz=` 一起带上，就不用再靠猜「这机器到底多少赫兹」。
+     */
+    private var frameIntervalEmaMs = 0.0
+
+    /** 预热结束的那一帧（静默计时从这里起算，避免刚开机就判「静默 3 秒」） */
+    private var readyTs = 0L
+    /** 最近一个合格步的时间戳（静默降阈用，只在真正入队时推进） */
+    private var lastQualifiedTs = 0L
+    /** 瞬态冷却截止时间（毫秒） */
+    private var transientUntil = 0L
+    /** 瞬态剔除计数（诊断） */
+    private var transientDrops = 0
 
     /** 峰值包络：只升不降（按时间缓慢衰减） */
     private var envelope = 0f
@@ -368,16 +436,30 @@ class GaitDetector {
         val linY = ay - gravityY
         val linZ = az - gravityZ
 
+        // —— 1.1 帧间隔（【5.7.6】提前算，后面 EMA / 包络 / 步频全要用它） ——
+        // 上限 500ms 是「传感器被系统挂起后恢复」的保护：真实帧间隔不会超过它，
+        // 超过就当作重新开始，否则一次长暂停会把包络一次性衰减到底。
+        val dtMs = if (lastSampleTs == 0L) 20.0 else (now - lastSampleTs).coerceIn(5L, 500L).toDouble()
+        lastSampleTs = now
+        // 实测采样率（诊断用）：间隔做 EMA，避免单帧抖动把数字带飞
+        frameIntervalEmaMs = if (frameIntervalEmaMs <= 0.0) dtMs
+        else 0.85 * frameIntervalEmaMs + 0.15 * dtMs
+
         // —— 1.2 垂直（重力方向）能量占比 ——
         // 见 [emaVertical]：走路是沿重力的上下冲击，手持晃动是水平面内的往复。
         // 这里把线性加速度投影到重力方向，分别统计垂直/水平能量，做 EMA 平滑，
-        // 供下面的峰闸门使用（采样 50Hz，0.9 的系数对应约 0.2s 的时间常数）。
+        // 供下面的峰闸门使用。
+        //
+        // 【5.7.6】系数不再写死 0.9，改成按帧间隔换算的时间常数（tau=190ms）：
+        // 50Hz 下 = 0.9000（与旧版完全一致），117Hz 下自动变成 0.9563，
+        // 统计窗口始终是 0.2 秒，不随采样率漂。
         val gNorm = sqrt(gravityX * gravityX + gravityY * gravityY + gravityZ * gravityZ)
         if (gNorm > 1e-3f) {
             val linG = (linX * gravityX + linY * gravityY + linZ * gravityZ) / gNorm
             val linH2 = (linX * linX + linY * linY + linZ * linZ) - linG * linG
-            emaVertical = MotionConfig.VERTICAL_EMA * emaVertical + (1f - MotionConfig.VERTICAL_EMA) * linG * linG
-            emaHorizontal = MotionConfig.VERTICAL_EMA * emaHorizontal + (1f - MotionConfig.VERTICAL_EMA) * max(0f, linH2)
+            val aVert = exp(-dtMs / MotionConfig.EMA_TAU_VERTICAL_MS).toFloat()
+            emaVertical = aVert * emaVertical + (1f - aVert) * linG * linG
+            emaHorizontal = aVert * emaHorizontal + (1f - aVert) * max(0f, linH2)
         }
 
         updateAttitude(gravityX, gravityY, gravityZ, now)
@@ -386,15 +468,21 @@ class GaitDetector {
         if (warmupLeft > 0) {
             warmupLeft--
             lastSampleTs = now
+            if (warmupLeft == 0) readyTs = now
             return false
         }
 
         // —— 2. 主轴自适应 ——
         // 手机在口袋里是斜的、在手里是竖的、放在包里可能是横的。
         // 固定看某一个轴，换个姿势就完全测不到；这里取最近能量最大的那个轴。
-        emaX = emaAlpha * emaX + (1 - emaAlpha) * linX * linX
-        emaY = emaAlpha * emaY + (1 - emaAlpha) * linY * linY
-        emaZ = emaAlpha * emaZ + (1 - emaAlpha) * linZ * linZ
+        //
+        // 【5.7.6】同样改成时间常数（tau=990ms），50Hz 下 = 原来的 0.9800。
+        // 旧版写死 0.98 在 117Hz 上等于 0.33 秒的主轴记忆，手机换个方向拿，
+        // 主轴要 1 秒多才跟上，这段时间的帧全用错轴。
+        val aAxis = exp(-dtMs / MotionConfig.EMA_TAU_AXIS_MS).toFloat()
+        emaX = aAxis * emaX + (1 - aAxis) * linX * linX
+        emaY = aAxis * emaY + (1 - aAxis) * linY * linY
+        emaZ = aAxis * emaZ + (1 - aAxis) * linZ * linZ
         val value = when {
             emaX >= emaY && emaX >= emaZ -> { currentAxis = 0; linX }
             emaY >= emaZ -> { currentAxis = 1; linY }
@@ -402,16 +490,32 @@ class GaitDetector {
         }
 
         // —— 3. 包络阈值 ——
-        val dtMs = if (lastSampleTs == 0L) 20.0 else (now - lastSampleTs).coerceIn(5L, 500L).toDouble()
-        lastSampleTs = now
-        // 包络封顶：拿放/翻转手机的大瞬态（>8）不参与包络更新，
-        // 否则阈值被顶到 7~8，之后几秒正常步伐全被压住
-        val rawEnv = max(abs(value), (envelope * exp(-dtMs / MotionConfig.ENV_DECAY_MS)).toFloat())
-        envelope = min(rawEnv, MotionConfig.MAX_PEAK_VALUE)
+        // 【5.7.6 瞬态剔除】一帧跳变就冲到 7.5 以上的，只可能是磕碰 / 甩手 / 拿放。
+        // 这类帧**完全不喂包络**：以前只是封顶到 8，包络仍被顶到 8，
+        // 阈值随之升到 4.8 并要衰减 4 秒才回来，这期间真实步伐（峰 2.5）一个都过不去，
+        // 真机表现就是「磕一下之后走了十几步一次都没弹」。现在只让它自然衰减。
+        val decayed = (envelope * exp(-dtMs / MotionConfig.ENV_DECAY_MS)).toFloat()
+        if (value > MotionConfig.TRANSIENT_VALUE) {
+            if (now >= transientUntil) transientDrops++
+            transientUntil = now + MotionConfig.TRANSIENT_COOLDOWN_MS
+        }
+        val inTransientCooldown = now < transientUntil
+        envelope = if (inTransientCooldown) decayed else min(max(abs(value), decayed), MotionConfig.MAX_PEAK_VALUE)
 
-        // 平躺时阈值放大 1.45 倍：躺着刷手机不应该被算成走路
+        // 平躺时阈值放大：躺着刷手机不应该被算成走路（系数见 LAY_FLAT_WEIGHT，现为 1.0）
         var threshold = max(MotionConfig.MIN_PEAK_THRESHOLD, envelope * MotionConfig.ENV_FACTOR)
         if (currentAttitude == PhoneAttitude.LAY_FLAT) threshold *= MotionConfig.LAY_FLAT_WEIGHT
+
+        // 【5.7.6 静默降阈】长时间（>3s）没有合格步、而包里确实还有往复（包络 ≥0.56）时，
+        // 把阈值下限从 0.6 放到 0.35。轻步（幅值 0.6~0.9）原来整段贴着阈值走、几乎全漏；
+        // 出现第一个合格峰立刻恢复，不会长期停在低阈值上放大误判。
+        val quietRef = if (lastQualifiedTs != 0L) lastQualifiedTs else readyTs
+        val quietRelax = quietRef != 0L && now - quietRef > MotionConfig.QUIET_RELAX_MS
+                && envelope >= MotionConfig.RELAX_MIN_ENVELOPE
+        if (quietRelax) {
+            threshold = max(MotionConfig.RELAX_FLOOR, envelope * MotionConfig.ENV_FACTOR)
+            if (currentAttitude == PhoneAttitude.LAY_FLAT) threshold *= MotionConfig.LAY_FLAT_WEIGHT
+        }
         currentAdaptiveThreshold = threshold
 
         // —— 4. 上升沿计峰（仅限正常步行幅值区间，>MAX_PEAK_VALUE 的瞬态不计） ——
@@ -420,7 +524,7 @@ class GaitDetector {
         // 占比会明显低于 0.5；真走路的上下冲击则以垂直能量为主。
         val verticalOk = peakGateOk(value)
         if (value > threshold && value <= MotionConfig.MAX_PEAK_VALUE
-            && verticalOk
+            && verticalOk && !inTransientCooldown
         ) {
             if (!aboveThreshold) {
                 aboveThreshold = true
@@ -457,6 +561,8 @@ class GaitDetector {
                                 // 攒不满也照常推进；静止 / 无峰 / 平放抖动走不到这里，时钟自然冻结。
                                 // 越阈但频率落窗口外的兜底峰（下方 lastPeakTime = now）不写这里。
                                 lastStepActivityTs = now
+                                // 【5.7.6】静默降阈的锚点：只有真正入队的合格步才推进
+                                lastQualifiedTs = now
                                 // 有运动，重置静置计时器
                                 staticDetectTimerStart = null
                                 gaitStateCallback?.onLongStaticDetected(false)
@@ -530,6 +636,18 @@ class GaitDetector {
 
     /** 当前已累计的合格步数（诊断日志用，Java 侧读取） */
     fun confirmedStepCount(): Int = peakIntervals.size
+
+    /**
+     * 【5.7.6】最近这批合格步的平均步频（Hz）。没有合格步时返回 0。
+     *
+     * 只读派生值：步间隔队列的平均倒数。诊断日志与采样率回归单测用它，
+     * 用来验证「同一频率的步行，在 50Hz 和 117Hz 下算出的步频一致」。
+     */
+    fun stepFreqHz(): Float {
+        if (peakIntervals.isEmpty()) return 0f
+        val avg = peakIntervals.average()
+        return if (avg <= 0.0) 0f else (1000.0 / avg).toFloat()
+    }
 
     /**
      * 【5.3.8 审查返工】判停时钟数据源：最近一次「步频窗口内合格步峰」的时间戳（只读，单调递增）。
@@ -618,14 +736,19 @@ class GaitDetector {
         peakTs.clear()
         lastPeakTime = 0L
         lastStepActivityTs = 0L
+        lastQualifiedTs = 0L
         lastPeakFlat = false
         aboveThreshold = false
         verticalDropLatch = false
         gateVerticalDrop = 0
         gateFreqDrop = 0
         gateRefractoryDrop = 0
+        transientDrops = 0
+        transientUntil = 0L
         envelope = 0f
         lastSampleTs = 0L
+        frameIntervalEmaMs = 0.0
+        readyTs = 0L
         currentAdaptiveThreshold = MotionConfig.MIN_PEAK_THRESHOLD
         attitudeStabilizer.reset()
         // gravity / ema / warmupLeft 刻意不清：见上面的说明
@@ -635,6 +758,10 @@ class GaitDetector {
     }
 
     fun getCurrentThreshold(): Float = currentAdaptiveThreshold
+
+    /** 【5.7.6】实测采样率（Hz）。帧间隔 EMA 太小/未建立时返回 0，日志里显示「—」 */
+    fun sampleRateHz(): Float =
+        if (frameIntervalEmaMs <= 0.1) 0f else (1000.0 / frameIntervalEmaMs).toFloat()
 
     /**
      * 诊断信息：验证失败时写进日志。
@@ -646,11 +773,16 @@ class GaitDetector {
         else peakIntervals.joinToString(",") { "%.2fHz".format(1000.0 / it) }
         // 【5.7.3】拒因计数：每打一次日志清零，保证这一行反映「刚过去的 10 秒」
         // 卡在哪一道闸门，不用再靠猜（阈值 / 垂直 / 步频 / 不应期）。
-        val gateText = "闸门[垂直挡=$gateVerticalDrop 步频挡=$gateFreqDrop 间隔挡=$gateRefractoryDrop]"
+        // 【5.7.6】新增 hz= 与 瞬态挡=：前者暴露厂商真实采样率（真机有 117Hz 的），
+        // 后者统计磕碰/甩手被剔除的次数，这两个数字以前只能靠导出的 trace 反推。
+        val hz = sampleRateHz()
+        val hzText = if (hz <= 0f) "—" else "%.0f".format(hz)
+        val gateText = "闸门[垂直挡=$gateVerticalDrop 步频挡=$gateFreqDrop 间隔挡=$gateRefractoryDrop 瞬态挡=$transientDrops]"
         gateVerticalDrop = 0
         gateFreqDrop = 0
         gateRefractoryDrop = 0
-        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 垂直=%.2f 姿态=$currentAttitude $gateText"
+        transientDrops = 0
+        return "峰数=${peakIntervals.size} 步频=[$freqText] 阈值=%.2f 包络=%.2f 垂直=%.2f 姿态=$currentAttitude hz=$hzText $gateText"
             .format(currentAdaptiveThreshold, envelope, verticalRatio())
     }
 }

@@ -1153,7 +1153,12 @@ class SafeWalkLSPHook : SensorEventListener {
                 // 原始回调先计数：这是「传感器到底有没有供货」的唯一证据。
                 // 合格步（feedAcc 返回 true）只是它的子集，静止时可以是 0。
                 rawSensorCallbackCount++
-                val now = System.currentTimeMillis()
+                // 【5.7.6】改用硬件时钟（e.timestamp，纳秒）换算，不再用 currentTimeMillis。
+                // 这批 ROM 会把传感器事件按 ~66ms 一包批处理上报，逐条回调时墙钟早就走完，
+                // 同一包里 6~8 帧拿到同一个毫秒 → 步间隔变 0/66ms，步频窗口整段失效。
+                // 换算结果仍在墙钟域（见 [SensorClock]），lastStepTs / 判停 / 冷却都不用改。
+                val wallNow = System.currentTimeMillis()
+                val now = SensorClock.msFromNanos(e.timestamp, wallNow)
                 if (detector.feedAcc(v[0], v[1], v[2], now)) recordStep(now)
             }
 
