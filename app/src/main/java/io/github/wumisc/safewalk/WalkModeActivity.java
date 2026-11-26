@@ -670,14 +670,28 @@ public final class WalkModeActivity extends Activity {
             heroSummary.setText("已关闭");
         }
 
+        // 【步数源】自动跟随的地基是步数。拿不到步数时它永远弹不出来，所以强制关掉；
+        // 这一条**每次都重新判**（权限可能在页面之外被补上），不做一次性写死的降级。
+        boolean stepOk = StepSourceProbe.autoFollowAvailable(this);
+        if (!stepOk && auto) {
+            binding = true;
+            swAuto.setChecked(false);
+            binding = false;
+            sp.edit().putBoolean(SafeWalkPrefKey.rearCamAuto, false).commit();
+            SafeWalkConfig.exportConfig(this);
+            DiagLog.log("[walk] 本机拿不到步数 → 自动跟随强制关闭（磁贴同步改为路况预览开关）");
+            auto = false;
+        }
+
         // 自动开关在行走模式关着时变灰但仍可点：点了会走这里重算，副标题
         // 保持「已关闭」，用户能看出前置条件；彻底禁用反而像「点了没反应」
-        boolean autoUsable = rearOn;
+        boolean autoUsable = rearOn && stepOk;
         swAuto.setEnabled(autoUsable);
         swAuto.setAlpha(autoUsable ? 1f : 0.45f);
         if (tvAutoDesc != null) {
-            tvAutoDesc.setText(auto
-                    ? "走起来自动显示，停下自动收起"
+            tvAutoDesc.setText(!stepOk
+                    ? "本机拿不到步数（没计步器或没给「身体活动」权限），自动跟随已关闭；磁贴改为路况预览开关"
+                    : auto ? "走起来自动显示，停下自动收起"
                     : "关闭时路况常显，直到手动关闭开关");
         }
 

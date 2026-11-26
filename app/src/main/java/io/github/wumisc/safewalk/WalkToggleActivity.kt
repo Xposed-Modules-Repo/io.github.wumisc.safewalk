@@ -30,6 +30,14 @@ import android.provider.Settings
  */
 class WalkToggleActivity : Activity() {
 
+    companion object {
+        /**
+         * 【手动档】磁贴语义为「路况预览开关」时带上这个 extra：
+         * 写 `enableRearCamera=true` + `rearCamAuto=false`（常显），不起自动跟随。
+         */
+        const val EXTRA_MANUAL_PREVIEW = "manual_preview"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -68,12 +76,16 @@ class WalkToggleActivity : Activity() {
         // 配置先落盘再启动：服务 onCreate 就要读到「总开关=开 + 自动跟随=开」
         // 只写 enableRearCamera 会落到「常显」档，站着不动也一直挂着画面，
         // 与磁贴的「自动跟随」语义不符。
+        val manual = intent?.getBooleanExtra(EXTRA_MANUAL_PREVIEW, false) == true
         sp.edit()
             .putBoolean(SafeWalkPrefKey.enableRearCamera, true)
-            .putBoolean(SafeWalkPrefKey.rearCamAuto, true)
+            .putBoolean(SafeWalkPrefKey.rearCamAuto, !manual)
             .commit()
         SafeWalkConfig.exportConfig(this)
-        DiagLog.log("[tile] 中转页：已写「总开关=开 + 自动跟随=开」，启动预览服务")
+        DiagLog.log(
+            if (manual) "[tile] 中转页（手动档）：已写「总开关=开 + 自动跟随=关（常显）」，启动预览服务"
+            else "[tile] 中转页：已写「总开关=开 + 自动跟随=开」，启动预览服务"
+        )
         // 配置已是「开」，磁贴立刻切成激活态，不必等用户下次拉开面板
         WalkTileService.refresh(this)
 
@@ -90,7 +102,7 @@ class WalkToggleActivity : Activity() {
         if (started) {
             // 服务已经起来，但自动跟随要「走起来」才显示，先说清楚，
             // 否则用户点完磁贴站着不动、屏幕没动静，会以为磁贴没生效。
-            toast("已开启自动跟随：走起来才显示")
+            toast(if (manual) "已打开路况预览" else "已开启自动跟随：走起来才显示")
         }
 
         // 等服务把 startForeground() 提上去再退出，避免「Activity 已销毁 → 进程可回收」

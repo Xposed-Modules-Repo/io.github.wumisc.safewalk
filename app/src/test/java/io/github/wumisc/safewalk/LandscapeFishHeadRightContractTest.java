@@ -371,9 +371,9 @@ public class LandscapeFishHeadRightContractTest {
     /** A4 意图：版本号升到 86/5.5.1，旧号 85/5.5.0 清干净。 */
     @Test
     public void a4_versionIs5414Build79NoOldNumbers() {
-        assertTrue("A4 build.gradle 须含 versionCode 129", gradleSrc.contains("versionCode 129"));
-        assertTrue("A4 build.gradle 须含 versionName \"5.7.7-lx102\"",
-                gradleSrc.contains("versionName \"5.7.7-lx102\""));
+        assertTrue("A4 build.gradle 须含 versionCode 130", gradleSrc.contains("versionCode 130"));
+        assertTrue("A4 build.gradle 须含 versionName \"5.7.8-lx102\"",
+                gradleSrc.contains("versionName \"5.7.8-lx102\""));
         assertFalse("A4 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));
         assertFalse("A4 须已无 5.5.0", gradleSrc.contains("5.5.0"));
     }

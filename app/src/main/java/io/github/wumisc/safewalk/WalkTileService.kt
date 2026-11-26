@@ -70,6 +70,13 @@ class WalkTileService : TileService() {
         val walk = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
         val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
 
+        // 【步数源不可用 → 磁贴改语义】自动跟随没有步数就永远弹不出来，
+        // 与其留一个点了没反应的假开关，不如让它变成「路况预览」总开关。
+        if (TileSemanticPolicy.isManual(StepSourceProbe.issue(this))) {
+            onManualClick(sp, master, walk)
+            return
+        }
+
         when (WalkTileStatePolicy.resolve(master, walk, auto)) {
             WalkTileStatePolicy.UNAVAILABLE -> {
                 // 置灰状态通常点不动，但个别 ROM 仍会回调：给一句明确原因，别让人以为坏了
@@ -80,6 +87,56 @@ class WalkTileService : TileService() {
             WalkTileStatePolicy.ACTIVE -> turnOff()
 
             else -> turnOn(walk)
+        }
+        refreshTile()
+    }
+
+    /**
+     * 【手动档】步数源不可用时的点击：把路况预览当纯开关用（开 / 关画面）。
+     *
+     * 和自动档的区别只有一处：这里写的不是 `rearCamAuto`，而是 `enableRearCamera` 本身；
+     * `rearCamAuto` 会被强制写成 false，避免留着「自动跟随开」的配置让服务空等步态。
+     */
+    private fun onManualClick(sp: android.content.SharedPreferences, master: Boolean, walk: Boolean) {
+        if (!master) {
+            toast("总开关已关闭，请先在安全出行里打开")
+            startActivityAndCollapseCompat(mainIntent())
+            refreshTile()
+            return
+        }
+        if (walk) {
+            sp.edit()
+                .putBoolean(SafeWalkPrefKey.enableRearCamera, false)
+                .putBoolean(SafeWalkPrefKey.rearCamAuto, false)
+                .commit()
+            SafeWalkConfig.exportConfig(this)
+            WalkPreviewService.send(this, WalkPreviewService.ACTION_STOP, null)
+            DiagLog.log("[tile] 手动档 → 关闭路况预览")
+            toast("已关闭路况预览")
+        } else if (WalkPreviewService.isAlive()) {
+            sp.edit()
+                .putBoolean(SafeWalkPrefKey.enableRearCamera, true)
+                .putBoolean(SafeWalkPrefKey.rearCamAuto, false)
+                .commit()
+            SafeWalkConfig.exportConfig(this)
+            WalkPreviewService.send(this, WalkPreviewService.ACTION_SHOW, null)
+            DiagLog.log("[tile] 手动档 → 服务已在跑，打开路况预览（常显）")
+            toast("已打开路况预览")
+        } else {
+            DiagLog.log("[tile] 手动档 → 经中转页启动预览服务（常显）")
+            val launch = {
+                startActivityAndCollapseCompat(
+                    Intent(this, WalkToggleActivity::class.java)
+                        .putExtra(WalkToggleActivity.EXTRA_MANUAL_PREVIEW, true)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                )
+            }
+            val km = getSystemService(KeyguardManager::class.java)
+            if (km != null && km.isKeyguardLocked) {
+                unlockAndRun { launch() }
+            } else {
+                launch()
+            }
         }
         refreshTile()
     }
@@ -162,13 +219,40 @@ class WalkTileService : TileService() {
         val sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE)
         val master = SafePrefs.getBool(sp, SafeWalkPrefKey.masterEnable, true)
         val walk = SafePrefs.getBool(sp, SafeWalkPrefKey.enableRearCamera, false)
-        val auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
-        tile.state = WalkTileStatePolicy.resolve(master, walk, auto)
-        tile.label = getString(R.string.tile_walk_label)
-        // 副标题统一由纯策略给出：磁贴不因「图标已隐藏」改变文案或行为（恢复入口走通知/LSPosed）
-        tile.subtitle = WalkTileStatePolicy.subtitle(
-            master, walk, auto, WalkPreviewService.isAlive()
-        )
+        var auto = SafePrefs.getBool(sp, SafeWalkPrefKey.rearCamAuto, false)
+        val issue = StepSourceProbe.issue(this)
+        val manual = TileSemanticPolicy.isManual(issue)
+
+        // 【强制关自动跟随】步数不可用时 auto 留在配置里毫无意义：服务会一直等步态，
+        // 界面上的开关却还亮着。这里只清一次配置，不打扰用户（改变的是无效状态）。
+        if (manual && auto) {
+            sp.edit().putBoolean(SafeWalkPrefKey.rearCamAuto, false).commit()
+            SafeWalkConfig.exportConfig(this)
+            DiagLog.log("[tile] 步数源不可用（$issue）→ 强制关闭自动跟随")
+            auto = false
+        }
+
+        if (manual) {
+            tile.state = TileSemanticPolicy.manualState(master, walk)
+            tile.label = getString(R.string.tile_preview_label)
+            tile.subtitle = TileSemanticPolicy.manualSubtitle(
+                master, walk, WalkPreviewService.isAlive()
+            )
+        } else {
+            // 【有步数时预览必须开】自动跟随的点亮前提是「有画面」：
+            // 只写 rearCamAuto=true 而 enableRearCamera=false，服务起来也没画面，
+            // 用户看到的就是「开关亮着、屏幕空的」。这里补一次，和磁贴点亮时写的两个 key 一致。
+            if (master && auto && !walk) {
+                sp.edit().putBoolean(SafeWalkPrefKey.enableRearCamera, true).commit()
+                SafeWalkConfig.exportConfig(this)
+            }
+            tile.state = WalkTileStatePolicy.resolve(master, walk, auto)
+            tile.label = getString(R.string.tile_walk_label)
+            // 副标题统一由纯策略给出：磁贴不因「图标已隐藏」改变文案或行为（恢复入口走通知/LSPosed）
+            tile.subtitle = WalkTileStatePolicy.subtitle(
+                master, walk, auto, WalkPreviewService.isAlive()
+            )
+        }
         tile.updateTile()
     }
 
