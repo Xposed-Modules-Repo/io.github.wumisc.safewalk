@@ -1,0 +1,13 @@
+name = "safewalk-diag"
+pages_build_output_dir = "public"
+compatibility_date = "2026-11-26"
+
+# D1 诊断库绑定。database_id 在控制台创建 D1 后回填；
+# 表结构见 schema.sql，首次部署前执行一次。
+[[d1_databases]]
+binding = "DB"
+database_name = "safewalk-diag"
+database_id = "7875399d-bc05-4f55-ab26-0c4ccec39b8a"
+
+# UPLOAD_TOKEN 不在此明文写入：在 Pages 项目 Settings → Environment variables
+# （Production）里加密设置为 Secret，端侧 DiagUploader.UPLOAD_TOKEN 与之保持一致。

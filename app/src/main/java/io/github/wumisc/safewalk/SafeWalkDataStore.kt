@@ -33,6 +33,14 @@ object SafeWalkPrefKey {
     const val nightTorchEndHour = "nightTorchEndHour"
     /** 诊断日志总开关：关掉后不再写日志文件，省 I/O 省电。默认开 */
     const val enableDiagLog = "enableDiagLog"
+
+    /**
+     * 【诊断日志上报 · 同意标记】是否已在弹窗里显式同意上传诊断日志，默认 **false**。
+     *
+     * 纯 App 本地偏好，**刻意不进** ConfigProvider 白名单：Hook（SystemUI）进程
+     * 不参与上报，跨进程暴露这个键没有用途。未同意前 DiagUploader 绝不发请求。
+     */
+    const val logUploadConsented = "logUploadConsented"
     /** 步态确认步数：连续走够这么多步才弹预览（8~10），默认 8 */
     const val gaitConfirmSteps = "gaitConfirmSteps"
     /** 停下后多少秒收起预览（5~30），默认 10 */

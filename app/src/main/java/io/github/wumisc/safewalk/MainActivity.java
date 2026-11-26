@@ -50,6 +50,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private boolean hideFromRecentTasks;
     private TextView tvHideLauncherState, tvHideRecentState;
 
+    // ========== 诊断日志上报 ==========
+    private TextView tvUploadLogHint;
+
     // ========== 【系统 UI 适配 · 首页入口】 ==========
     // 4.3 起取代原来的「HyperOS 版本适配」三芯片。旧版让用户选 HyperOS 3 / 4，
     // 但三个策略函数（前台服务 / 手电 / 悬浮窗）都是运行时降级链，版本号根本没被读过；
@@ -545,6 +548,28 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     android.widget.Toast.LENGTH_SHORT).show();
         });
 
+        // 诊断日志上报：手动触发，首次点击先弹同意弹窗；未同意不发任何请求。
+        View tileUploadLog = findViewById(R.id.btn_upload_log);
+        tvUploadLogHint = findViewById(R.id.tv_upload_log_hint);
+        refreshUploadTile();
+        tileUploadLog.setOnClickListener(v -> onUploadLog());
+        tileUploadLog.setOnLongClickListener(v -> {
+            if (DiagUploader.hasConsented(this)) {
+                new AlertDialog.Builder(this)
+                        .setTitle("撤回上传同意")
+                        .setMessage("撤回后将不再上传诊断日志；此前已上传的数据仍按服务端保留期处理。")
+                        .setPositiveButton("撤回", (d, w) -> {
+                            DiagUploader.setConsented(this, false);
+                            refreshUploadTile();
+                            Toast.makeText(this, "已撤回上传同意", Toast.LENGTH_SHORT).show();
+                            DiagLog.log("[upload] 已撤回诊断日志上报同意");
+                        })
+                        .setNegativeButton("取消", null)
+                        .show();
+            }
+            return true;
+        });
+
         // 【5.5.0 隐私】两项本地隐私开关（5.6.13 起布局移入「关于」页，ID 不变，接线不变）
         tvHideLauncherState = findViewById(R.id.tv_hide_launcher_state);
         tvHideRecentState = findViewById(R.id.tv_hide_recent_state);
@@ -782,6 +807,50 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         } catch (Throwable t) {
             DiagLog.log("[privacy] 桌面图标 alias 切换失败: " + t.getMessage());
         }
+    }
+
+    /** 刷新上报入口副标：同意 / 未同意两态。 */
+    private void refreshUploadTile() {
+        if (tvUploadLogHint == null) return;
+        boolean agreed = DiagUploader.hasConsented(this);
+        tvUploadLogHint.setText(agreed ? "已同意 · 点此上传（长按撤回）" : "未同意上传");
+    }
+
+    /** 上报入口点击：未配置提示；未同意先弹同意弹窗；已同意直接上传。 */
+    private void onUploadLog() {
+        if (!DiagUploader.isConfigured()) {
+            Toast.makeText(this, "上报服务暂未配置", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!DiagUploader.hasConsented(this)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("上传诊断日志")
+                    .setMessage(uploadConsentMessage())
+                    .setPositiveButton("同意并上传", (d, w) -> {
+                        DiagUploader.setConsented(this, true);
+                        refreshUploadTile();
+                        doUploadLog();
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+            return;
+        }
+        doUploadLog();
+    }
+
+    private void doUploadLog() {
+        Toast.makeText(this, "正在上传诊断日志…", Toast.LENGTH_SHORT).show();
+        DiagUploader.upload(this, null, (ok, message) ->
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show());
+    }
+
+    /** 同意弹窗正文：写清收集什么、不上传什么、可否撤回。 */
+    private String uploadConsentMessage() {
+        return "上传诊断日志用于帮作者定位问题。发送内容仅包含：\n" +
+                "· 机型、系统版本、UI 与应用版本；\n" +
+                "· 最近一段诊断日志（已抹除手机号、MAC、坐标、IMEI）。\n\n" +
+                "不会上传行走轨迹、位置、急救卡与联系人信息。数据保留一段时间后删除，" +
+                "你可以随时在本页长按撤回同意。\n\n是否同意并立即上传？";
     }
 
     /** 隐藏前必须弹确认框，把系统级 / 磁贴 / adb 三条恢复路径一次讲清（功能 1 的 ①）。 */

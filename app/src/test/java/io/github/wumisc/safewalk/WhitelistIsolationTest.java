@@ -39,6 +39,13 @@ public class WhitelistIsolationTest {
     }
 
     @Test
+    public void whitelist_doesNotContainUploadConsentFlag() {
+        // 上报同意标记是纯 App 本地隐私状态，Hook（SystemUI）进程不参与上报，
+        // 不得跨进程透传，避免把用户同意状态暴露给另一个进程。
+        assertFalse(ConfigProvider.Companion.getWHITELIST().contains(SafeWalkPrefKey.logUploadConsented));
+    }
+
+    @Test
     public void displayChannel_isPhysicallySeparatedFromConfigChannel() {
         assertNotEquals("两条通道 authority 必须不同",
                 ConfigProvider.AUTHORITY, SafeWalkPrefKey.DISPLAY_AUTHORITY);

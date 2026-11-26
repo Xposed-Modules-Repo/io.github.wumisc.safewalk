@@ -584,7 +584,7 @@
                         android:paddingLeft="16dp"
                         android:paddingRight="16dp"
                         android:paddingBottom="12dp"
-                        android:text="步数、位置、急救信息等仅在本机处理，不上传服务器。"
+                        android:text="步数、位置、急救信息等仅在本机处理，不上传服务器；诊断日志需在上方主动同意后才会发送。"
                         android:textColor="@color/text_hint"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -601,6 +601,35 @@
                         style="@style/RowTitle"
                         android:layout_weight="1"
                         android:text="诊断日志：开" />
+
+                    <TextView
+                        style="@style/RowChevron" />
+                </LinearLayout>
+
+                <!-- 诊断日志上报：手动触发；首次点击弹同意弹窗，未同意不发任何请求。 -->
+                <LinearLayout
+                    android:id="@+id/btn_upload_log"
+                    style="@style/RowStyle"
+                    android:layout_marginTop="8dp"
+                    android:background="@color/card_bg">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tv_upload_log"
+                            style="@style/RowTitle"
+                            android:text="上传诊断日志" />
+
+                        <TextView
+                            android:id="@+id/tv_upload_log_hint"
+                            style="@style/RowHint"
+                            android:layout_marginTop="2dp"
+                            android:text="未同意上传" />
+                    </LinearLayout>
 
                     <TextView
                         style="@style/RowChevron" />

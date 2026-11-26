@@ -23,8 +23,8 @@ android {
         // miuix-blur 的 AGSL RuntimeShader 要 Android 13+，minSdk 提到 33
         minSdk 33
         targetSdk 35
-        versionCode 123
-        versionName "5.7.4-lx102"
+        versionCode 124
+        versionName "5.7.5-lx102"
     }
 
     compileOptions {
