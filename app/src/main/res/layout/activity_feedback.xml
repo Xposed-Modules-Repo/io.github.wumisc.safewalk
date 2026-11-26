@@ -142,7 +142,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
             android:lineSpacingExtra="3dp"
-            android:text="提交会打开 GitHub 页面，需要你有账号并已登录。没有账号也没关系：点「复制内容」，把文字发到酷安评论区同样能看到。"
+            android:text="提交会打开 GitHub 页面（反馈仓库 wumisc/safewalk-feedback），需要你有账号并已登录。没有账号也没关系：点「复制内容」，把文字发到酷安评论区同样能看到。"
             android:textColor="@color/text_hint"
             android:textSize="12sp" />
     </LinearLayout>

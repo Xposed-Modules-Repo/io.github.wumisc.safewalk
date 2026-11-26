@@ -34,8 +34,16 @@ import androidx.appcompat.widget.SwitchCompat;
  */
 public final class FeedbackActivity extends Activity {
 
+    /**
+     * 【5.7.6 · 126】issue 提交地址改到专门的反馈仓库。
+     *
+     * 原来指向 Xposed-Modules-Repo/io.github.wumisc.safewalk —— 那是 LSPosed 的官方
+     * 镜像组织，**组织级把 Issues 关掉了**（同组织下的 antiburn、maihoku 全部为 false），
+     * /issues/new 直接 404。用户认真写完点提交，只会看到 GitHub 的错误页。
+     * 现在落到只承担反馈的个人仓库，Issues 常开；源码与 APK 仍在镜像仓库。
+     */
     private static final String ISSUE_BASE =
-            "https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/issues/new";
+            "https://github.com/wumisc/safewalk-feedback/issues/new";
 
     private EditText etSuggestion;
     private SwitchCompat swAttach;
@@ -137,7 +145,7 @@ public final class FeedbackActivity extends Activity {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm != null) {
                 cm.setPrimaryClip(ClipData.newPlainText("SafeWalk 功能建议", text));
-                Toast.makeText(this, "已复制，可粘贴到酷安或 GitHub", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "已复制，可粘贴到酷安、群聊或反馈区", Toast.LENGTH_SHORT).show();
                 DiagLog.log("[feedback] 建议内容已复制到剪贴板");
                 return;
             }
