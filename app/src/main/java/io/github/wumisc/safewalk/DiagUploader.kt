@@ -159,8 +159,8 @@ object DiagUploader {
     fun redact(text: String): String {
         if (text.isEmpty()) return text
         var out = text
-        // 手机号：1 开头 11 位
-        out = Regex("1[3-9]\\d{9}").replace(out, "***(手机号)")
+        // 手机号：1 开头 11 位；前后不能再接数字，避免在毫秒时间戳 / IMEI 等长数字串中段误命中
+        out = Regex("(?<!\\d)1[3-9]\\d{9}(?!\\d)").replace(out, "***(手机号)")
         // MAC / BSSID：冒号或连分分隔的 6 段十六进制
         out = Regex("(?i)(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}").replace(out, "***(MAC)")
         // IMEI：15 位纯数字

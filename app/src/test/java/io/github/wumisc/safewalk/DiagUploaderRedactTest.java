@@ -25,6 +25,14 @@ public class DiagUploaderRedactTest {
     }
 
     @Test
+    public void redact_keepsPhoneLikeMillisecondTimestamp() {
+        // 13 位毫秒时间戳里含形似手机号的数字段，不得被手机号正则从中段抹掉
+        String out = redact("readyStamp=1795659272919 版本直取");
+        assertTrue("毫秒时间戳必须保留", out.contains("1795659272919"));
+        assertFalse("长数字串中段不应误判为手机号", out.contains("***(手机号)"));
+    }
+
+    @Test
     public void redact_masksMacAddress() {
         String out = redact("BSSID aa:bb:cc:dd:ee:ff 信号弱");
         assertFalse(out.contains("aa:bb:cc:dd:ee:ff"));
@@ -47,8 +55,7 @@ public class DiagUploaderRedactTest {
     }
 
     @Test
-    public void redact_keepsOrdinaryDiagnosticText() {
-        String text = "📊 状态=SLEEP 窗口步数=0/50 来源=加速度计兜底 姿态=TILTED";
+    public void redact_keepsOrdinaryDiagnosticText() {        String text = "📊 状态=SLEEP 窗口步数=0/50 来源=加速度计兜底 姿态=TILTED";
         String out = redact(text);
         assertTrue("普通诊断文本不得被破坏", out.contains("SLEEP"));
         assertTrue(out.contains("0/50"));

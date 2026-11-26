@@ -318,7 +318,7 @@ public class LandscapeNoRotateContractTest {
     /** A1 意图：版本号已升 5.6.2(89)，旧号 5.5.0/85 彻底清除。 */
     @Test
     public void a1_versionBumpedTo5414Build79() {
-        assertTrue("A1 build.gradle 须含 versionCode 124", gradleSrc.contains("versionCode 124"));
+        assertTrue("A1 build.gradle 须含 versionCode 125", gradleSrc.contains("versionCode 125"));
         assertTrue("A1 build.gradle 须含 versionName \"5.7.5-lx102\"",
                 gradleSrc.contains("versionName \"5.7.5-lx102\""));
         assertFalse("A1 须已无 versionCode 85", gradleSrc.contains("versionCode 85"));

@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -208,13 +209,13 @@ object PlaceArrivalMonitor {
         if (hit == null) {
             // 首次进入某类场所范围（还没够停留次数）留一条，方便真机确认「识别到了但没弹」
             if (kind != null && judge.pendingHits == 1) {
-                DiagLog.log("[place] 进入「$kind」类场所范围（待停留确认）| 地址=${shorten(addr)}")
+                DiagLog.log("[place] 进入「$kind」类场所范围（待停留确认）| 地址=${adminPrefix(addr)}")
             } else if (kind == null && prev != null) {
                 DiagLog.log("[place] 离开「$prev」类场所，候选清零")
             } else if (now - lastSampleLogTs > 10 * 60 * 1000L) {
                 lastSampleLogTs = now
                 DiagLog.log("[place] 采样：${if (kind == null) "不在已知场所" else "「$kind」类"}"
-                        + " | 地址=${shorten(addr)}")
+                        + " | 地址=${adminPrefix(addr)}")
             }
             return
         }
@@ -237,12 +238,12 @@ object PlaceArrivalMonitor {
             }
             val key = "id|$grid"
             if (!allow(prefs, key, now, TTL_ID_MS)) {
-                DiagLog.log("[place] 到达「旅游」场所（$grid），该地点今天已提醒过，跳过")
+                DiagLog.log("[place] 到达「旅游」场所（grid=${gridTag(grid)}），该地点今天已提醒过，跳过")
                 return
             }
             nm.idReminder(kind)
             mark(prefs, key, now)
-            DiagLog.log("[place] ✅ 到达「旅游」场所（$grid）→ 已发证件提醒 | 地址=${shorten(addr)}")
+            DiagLog.log("[place] ✅ 到达「旅游」场所（grid=${gridTag(grid)}）→ 已发证件提醒 | 地址=${adminPrefix(addr)}")
             return
         }
 
@@ -255,17 +256,29 @@ object PlaceArrivalMonitor {
         if (tips.isEmpty()) return
         val key = "soc|$grid"
         if (!allow(prefs, key, now, TTL_SOCIAL_MS)) {
-            DiagLog.log("[place] 到达「$kind」场所（$grid），该地点已提醒过，跳过")
+            DiagLog.log("[place] 到达「$kind」场所（grid=${gridTag(grid)}），该地点已提醒过，跳过")
             return
         }
         nm.socialTip(tips.joinToString("；"), kind)
         mark(prefs, key, now)
-        DiagLog.log("[place] ✅ 到达「$kind」场所（$grid）→ 已发到场提示 | 地址=${shorten(addr)}")
+        DiagLog.log("[place] ✅ 到达「$kind」场所（grid=${gridTag(grid)}）→ 已发到场提示 | 地址=${adminPrefix(addr)}")
     }
 
-    /** 约 1.1km 网格，用于「同一地点不重复提醒」；坐标精度降到 0.01° 也算轻度脱敏。 */
+    /**
+     * 约 1.1km 网格坐标串，**仅用于本地 SharedPreferences 去重 key**，不写进日志、不上报。
+     */
     private fun gridKey(loc: Location): String =
         String.format(Locale.US, "%.2f,%.2f", loc.latitude, loc.longitude)
+
+    /**
+     * 网格坐标 → 不可逆短哈希（SHA-1 前 4 字节，8 位十六进制），仅供日志里比对「是否同一网格」，
+     * 无法反推坐标；原始坐标串不进入诊断日志。
+     */
+    @JvmStatic
+    fun gridTag(grid: String): String {
+        val digest = MessageDigest.getInstance("SHA-1").digest(grid.toByteArray(Charsets.UTF_8))
+        return digest.take(4).joinToString("") { "%02x".format(Locale.US, it) }
+    }
 
     private fun allow(prefs: SharedPreferences, key: String, now: Long, ttl: Long): Boolean {
         val raw = prefs.getString(KEY_SEEN, null) ?: return true
@@ -292,8 +305,18 @@ object PlaceArrivalMonitor {
         }
     }
 
-    private fun shorten(addr: String?): String {
+    /**
+     * 日志地址只保留省/市级前缀，去掉区、街道、路名、门牌等可定位到具体住址的细址。
+     * 反编码地址会随诊断日志离开本机，落盘前先裁到行政区划粗粒度；识别不出行政区划时不落细址。
+     */
+    @JvmStatic
+    fun adminPrefix(addr: String?): String {
         if (addr.isNullOrBlank()) return "-"
-        return if (addr.length <= 40) addr else addr.substring(0, 40) + "…"
+        val s = addr.trim()
+        s.indexOf("市").let { if (it >= 0) return s.substring(0, it + 1) }
+        listOf("区", "县", "旗").map { s.indexOf(it) }.filter { it >= 0 }.minOrNull()?.let {
+            return s.substring(0, it + 1)
+        }
+        return "-"
     }
 }

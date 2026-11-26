@@ -519,12 +519,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 致敬名单（开源项目）
         findViewById(R.id.btn_credits).setOnClickListener(v ->
                 startActivity(new Intent(this, AcknowledgementsActivity.class)));
-        // 感谢名单（参与测试 / 反馈的用户，头像 + 名字）
+        // 感谢名单（参与测试 / 反馈的用户，头像 + 名字；页面底部合并支持作者收款码）
         findViewById(R.id.btn_thanks).setOnClickListener(v ->
                 startActivity(new Intent(this, ThanksActivity.class)));
-        // 支持捐赠（直接打开二维码页面）
-        findViewById(R.id.btn_donate).setOnClickListener(v ->
-                startActivity(new Intent(this, DonateQrActivity.class)));
 
         // 【5.6.13】功能实验区已整体删除：二级界面、入口、长按跳转及
         // 配套的一次性测试指令通道一并移除，普通用户界面不再出现实验入口。

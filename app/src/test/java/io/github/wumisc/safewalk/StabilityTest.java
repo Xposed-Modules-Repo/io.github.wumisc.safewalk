@@ -50,8 +50,7 @@ public class StabilityTest {
             WalkModeActivity.class,
             EmergencyCardActivity.class,
             ThanksActivity.class,
-            AcknowledgementsActivity.class,
-            DonateQrActivity.class
+            AcknowledgementsActivity.class
     };
 
     @Before

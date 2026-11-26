@@ -86,7 +86,6 @@ public class UiShotTest {
         shot(EmergencyCardActivity.class, "light_emergency");
         shot(SmartReminderActivity.class, "light_smart");
         shot(WalkModeActivity.class, "light_walk");
-        shot(DonateQrActivity.class, "light_donate");
     }
 
     @Test
@@ -97,6 +96,5 @@ public class UiShotTest {
         shot(EmergencyCardActivity.class, "dark_emergency");
         shot(SmartReminderActivity.class, "dark_smart");
         shot(WalkModeActivity.class, "dark_walk");
-        shot(DonateQrActivity.class, "dark_donate");
     }
 }

@@ -1,14 +1,20 @@
 package io.github.wumisc.safewalk;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.res.ColorStateList;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.Locale;
 
@@ -17,6 +23,7 @@ import java.util.Locale;
  *
  * 与「致敬名单」分开：致敬名单记的是开源项目与库，这一页记的是**参与测试、
  * 反馈问题的用户**，所以用「头像 + 名字 + 一句说明」的人名卡形式，而不是项目卡片。
+ * 页面底部合并了「支持作者」收款码区块（支付宝 / 微信，长按可存相册），不再单设捐赠页。
  *
  * 头像默认用名字首字母圆形徽标（不依赖任何图片资源）；若以后有真实头像，
  * 把图片放进 drawable 并把资源 id 填到 {@link Helper#avatarRes} 即可圆形裁切显示。
@@ -55,7 +62,65 @@ public class ThanksActivity extends Activity {
         super.onCreate(b);
         setContentView(R.layout.activity_thanks);
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
+
+        bindQr(R.id.iv_qr_alipay, R.drawable.ic_donate_alipay, "SafeWalk_donate_alipay");
+        bindQr(R.id.iv_qr_wechat, R.drawable.ic_donate_wechat, "SafeWalk_donate_wechat");
+
         render();
+    }
+
+    /** 绑收款码图 + 长按保存到相册。两个码走同一套逻辑，少一份重复代码 */
+    private void bindQr(int viewId, int resId, String fileName) {
+        ImageView iv = findViewById(viewId);
+        iv.setImageResource(resId);
+        iv.setOnLongClickListener(v -> {
+            saveToGallery(resId, fileName);
+            return true;
+        });
+    }
+
+    /**
+     * 存到相册。和「保存图片到相册」同一套 MediaStore 流程：
+     * 先插 pending 记录 → 写完再置 0，避免相册扫到半截图。
+     */
+    private void saveToGallery(int resId, String fileName) {
+        Uri uri = null;
+        try {
+            Bitmap bmp = BitmapFactory.decodeResource(getResources(), resId);
+            if (bmp == null) throw new IllegalStateException("图片解码失败");
+
+            ContentValues cv = new ContentValues();
+            cv.put(MediaStore.Images.Media.DISPLAY_NAME, fileName + ".png");
+            cv.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+            cv.put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/SafeWalk");
+            cv.put(MediaStore.Images.Media.IS_PENDING, 1);
+
+            uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+            if (uri == null) throw new java.io.IOException("相册拒绝了写入请求");
+
+            try (java.io.OutputStream os = getContentResolver().openOutputStream(uri)) {
+                // openOutputStream 在部分 ROM 上会返回 null
+                if (os == null) throw new java.io.IOException("无法打开输出流");
+                if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, os)) {
+                    throw new java.io.IOException("图片编码失败");
+                }
+            }
+
+            ContentValues done = new ContentValues();
+            done.put(MediaStore.Images.Media.IS_PENDING, 0);
+            getContentResolver().update(uri, done, null, null);
+
+            Toast.makeText(this, "已保存到 DCIM/SafeWalk/", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            // 失败要把占位记录删掉，否则相册里留一条打不开的空条目
+            if (uri != null) {
+                try {
+                    getContentResolver().delete(uri, null, null);
+                } catch (Throwable ignored) {
+                }
+            }
+            Toast.makeText(this, "保存失败: " + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void render() {
