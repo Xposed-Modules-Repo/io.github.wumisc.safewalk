@@ -1637,13 +1637,10 @@ class RearCameraOverlay @JvmOverloads constructor(
             if (stepBadge?.visibility == View.VISIBLE) stepText else null
         )
         if (desc.isBlank()) {
-            col.contentDescription = null
+            HudA11yBinder.clear(col)
             return
         }
-        col.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        hudView?.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        stepBadge?.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        if (col.contentDescription?.toString() != desc) col.contentDescription = desc
+        HudA11yBinder.bind(col, hudView, stepBadge, desc)
 
         val now = System.currentTimeMillis()
         val stepsDelta = (todaySteps - stepsAtLastHudAnnounce).coerceAtLeast(0L)
