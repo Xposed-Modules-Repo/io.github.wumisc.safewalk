@@ -441,6 +441,12 @@ class RearCameraOverlay @JvmOverloads constructor(
      * 在画面旋转后依然成立，不会出现「文字转了、步数没转」的错位。
      */
     private var hudColumn: LinearLayout? = null
+
+    // 【无障碍】HUD 播报状态：上一次播出去的整句、时间戳、当时的步数快照。
+    // 只在「文案变了」且过了节流窗（或走够 50 步里程碑）时才主动播，见 HudA11yPolicy。
+    private var lastHudDesc: String? = null
+    private var lastHudAnnounceTs: Long = 0L
+    private var stepsAtLastHudAnnounce: Long = 0L
     /** 今日步数文案；null / 空串 = 隐藏徽章。由 [setStepText] 写入 */
     private var stepText: String? = null
     /**
@@ -1407,6 +1413,9 @@ class RearCameraOverlay @JvmOverloads constructor(
             // 「路况预览中 · 增强对比度」—— 那句实现细节已经删掉。
             isClickable = false
             isFocusable = false
+            // 【无障碍】浮层里的文字必须进无障碍树，否则读屏用户听不到 HUD 与步数。
+            // 真正对外的节点在 hudColumn（整列合成一句），这里允许被读、但不单独念。
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             setPadding(dp(14), dp(8), dp(14), dp(8))
             applyLevel()
         }
@@ -1597,6 +1606,8 @@ class RearCameraOverlay @JvmOverloads constructor(
             hud.visibility = View.GONE
             stepBadge?.visibility = View.GONE
             hudColumn?.visibility = View.GONE
+            // 【无障碍】整列收起时清掉语义，避免读屏聚焦到已隐藏的旧文案
+            hudColumn?.contentDescription = null
             return
         }
         hud.visibility = View.VISIBLE
@@ -1608,6 +1619,43 @@ class RearCameraOverlay @JvmOverloads constructor(
         }
         hud.level = if (style.enhanceContrast) style.contrastLevel else 0
         applyStepBadge()
+        syncHudA11y()
+    }
+
+    /**
+     * 【无障碍】把 HUD 与步数徽章合成**一个**无障碍节点，并在必要时主动播一次。
+     *
+     * · 两行各念一句会被读屏拆成「路况预览中」「今日 12 步」两条碎片，所以整列挂
+     *   contentDescription，子 TextView 标 NO 让它们退出无障碍树。
+     * · 主动播报要节流（见 [HudA11yPolicy]）：步数每变一次就播 = 走路时读屏被刷屏。
+     * · 窗口没显示时不播，避免退出后还在念。
+     */
+    private fun syncHudA11y() {
+        val col = hudColumn ?: return
+        val desc = HudA11yPolicy.compose(
+            if (col.visibility == View.VISIBLE) style.hudText else null,
+            if (stepBadge?.visibility == View.VISIBLE) stepText else null
+        )
+        if (desc.isBlank()) {
+            col.contentDescription = null
+            return
+        }
+        col.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        hudView?.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        stepBadge?.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        if (col.contentDescription?.toString() != desc) col.contentDescription = desc
+
+        val now = System.currentTimeMillis()
+        val stepsDelta = (todaySteps - stepsAtLastHudAnnounce).coerceAtLeast(0L)
+        if (isShowing && HudA11yPolicy.shouldAnnounce(
+                lastHudDesc, desc, now, lastHudAnnounceTs, stepsDelta
+            )
+        ) {
+            col.announceForAccessibility(desc)
+            lastHudDesc = desc
+            lastHudAnnounceTs = now
+            stepsAtLastHudAnnounce = todaySteps
+        }
     }
 
     /**
