@@ -111,7 +111,7 @@
                     <TextView
                         android:id="@+id/chip_preset_day"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
@@ -122,7 +122,7 @@
                     <TextView
                         android:id="@+id/chip_preset_night"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -134,7 +134,7 @@
                     <TextView
                         android:id="@+id/chip_preset_plain"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -178,7 +178,7 @@
                     <TextView
                         android:id="@+id/tv_night_start"
                         android:layout_width="wrap_content"
-                        android:layout_height="32dp"
+                        android:layout_height="48dp"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:minWidth="76dp"
@@ -198,7 +198,7 @@
                     <TextView
                         android:id="@+id/tv_night_end"
                         android:layout_width="wrap_content"
-                        android:layout_height="32dp"
+                        android:layout_height="48dp"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
                         android:minWidth="76dp"
@@ -289,7 +289,7 @@
                     <TextView
                         android:id="@+id/chip_border_0"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
@@ -300,7 +300,7 @@
                     <TextView
                         android:id="@+id/chip_border_1"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -312,7 +312,7 @@
                     <TextView
                         android:id="@+id/chip_border_2"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -614,7 +614,7 @@
                     <TextView
                         android:id="@+id/chip_rot_auto"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
@@ -625,7 +625,7 @@
                     <TextView
                         android:id="@+id/chip_rot_fixed"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -637,7 +637,7 @@
                     <TextView
                         android:id="@+id/chip_rot_flip"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -692,7 +692,7 @@
                     <TextView
                         android:id="@+id/chip_land_auto"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
@@ -703,7 +703,7 @@
                     <TextView
                         android:id="@+id/chip_land_landscape"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -715,7 +715,7 @@
                     <TextView
                         android:id="@+id/chip_land_portrait"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -768,7 +768,7 @@
                     <TextView
                         android:id="@+id/chip_port_auto"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
@@ -779,7 +779,7 @@
                     <TextView
                         android:id="@+id/chip_port_landscape"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -791,7 +791,7 @@
                     <TextView
                         android:id="@+id/chip_port_portrait"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -846,7 +846,7 @@
                     <TextView
                         android:id="@+id/chip_facing_auto"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
                         android:gravity="center"
@@ -857,7 +857,7 @@
                     <TextView
                         android:id="@+id/chip_facing_up"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="6dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -869,7 +869,7 @@
                     <TextView
                         android:id="@+id/chip_facing_right"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="6dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -881,7 +881,7 @@
                     <TextView
                         android:id="@+id/chip_facing_down"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="6dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"
@@ -893,7 +893,7 @@
                     <TextView
                         android:id="@+id/chip_facing_left"
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="48dp"
                         android:layout_marginStart="6dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_choice_chip"

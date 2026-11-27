@@ -105,6 +105,8 @@ public final class PreviewStyleActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_preview_style);
+        // 【无障碍】开关/滑杆没有文字标签，读屏只会念「开关，已关闭」：整页一次性绑定 labelFor
+        A11yLabelBinder.bind(findViewById(android.R.id.content));
         sp = getSharedPreferences("safewalk_xsp", MODE_PRIVATE);
         DiagLog.init(getApplicationContext());
 

@@ -18,7 +18,10 @@
     <!-- 文字：主标题 / 正文 / 说明 / 更弱的灰 -->
     <color name="text_primary">#1D1D1D</color>
     <color name="text_body">#3A3A3C</color>
-    <color name="text_hint">#8E8E93</color>
+    <!-- 无障碍：说明文字原来 #8E8E93 在白卡上只有 3.26:1、在页面底 2.92:1，
+         正常字号 AA 要求 4.5:1。调到 #6D6D72 后白卡 5.15:1、页面底 4.61:1。
+         深色主题本来就是 #8E8E93 on #1C1C1E = 5.22:1，已达标，不动。 -->
+    <color name="text_hint">#6D6D72</color>
     <color name="text_muted">#B0B0B5</color>
 
     <!-- 行尾箭头、分隔线、卡片描边 -->
