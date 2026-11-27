@@ -502,7 +502,8 @@
                 <TextView
                     android:id="@+id/chip_job"
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_choice_chip"
                     android:gravity="center"
@@ -513,7 +514,8 @@
                 <TextView
                     android:id="@+id/chip_date"
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_choice_chip"
@@ -525,7 +527,8 @@
                 <TextView
                     android:id="@+id/chip_party"
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_choice_chip"
@@ -537,7 +540,8 @@
                 <TextView
                     android:id="@+id/chip_travel"
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_choice_chip"

@@ -128,7 +128,10 @@
     </style>
 
     <!-- 区块小标题 -->
+    <!-- 【无障碍】分区标题声明成 heading：读屏用户可以用「跳到下一个标题」快速掠过整页，
+         不必逐条念完 27 个分区里的每个开关。标题本身仍是普通 TextView，视觉不变。 -->
     <style name="SectionLabel">
+        <item name="android:accessibilityHeading">true</item>
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">20dp</item>

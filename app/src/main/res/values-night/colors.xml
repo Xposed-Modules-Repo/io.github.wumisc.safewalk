@@ -24,6 +24,7 @@
     <color name="on_accent">#FFFFFF</color>
 
     <color name="accent_warn">#FF9F0A</color>
+    <color name="warn_text">#FFB86C</color>
     <color name="beyond_orange">#FF9F0A</color>
     <color name="accent_green">#30D158</color>
     <color name="seal_red">#FF453A</color>

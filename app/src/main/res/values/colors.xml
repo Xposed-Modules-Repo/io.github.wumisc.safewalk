@@ -35,6 +35,9 @@
 
     <!-- 语义色：警告 / 正常 / 危险（急救提醒用） -->
     <color name="accent_warn">#FF9500</color>
+    <!-- 警示**文字**色：accent_warn 在白卡上只有 2.2:1，当字色读不清，只留给图标/描边。
+         这个是 #B45309，白卡 5.02:1，过 AA。 -->
+    <color name="warn_text">#B45309</color>
     <color name="beyond_orange">#FF9500</color>
     <color name="accent_green">#34C759</color>
     <color name="seal_red">#C8392E</color>

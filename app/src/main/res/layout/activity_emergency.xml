@@ -180,7 +180,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="严重过敏（锁屏前置★）"
-                android:textColor="@color/accent_warn"
+                android:textColor="@color/warn_text"
                 android:textSize="13sp" />
             <View android:layout_width="match_parent" android:layout_height="1px" android:background="@color/divider" android:layout_marginVertical="8dp"/>
 
@@ -303,7 +303,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="允许生成医疗 QR（明文，扫码可读全部信息）"
-                android:textColor="@color/accent_warn"
+                android:textColor="@color/warn_text"
                 android:textSize="13sp" />
 
             <Button
