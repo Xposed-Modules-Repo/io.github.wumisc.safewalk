@@ -202,6 +202,21 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         } catch (Throwable t) {
             return;
         }
+        /*
+         * 【独立模式不弹重启】重启系统界面只有在「SystemUI 里真会注入本模块」时才有意义。
+         * 纯独立模式（没装 LSPosed / KernelSU 之类入口，也从没收到过钩子心跳）重启只是白等
+         * 一次黑屏，还会让人以为「重启了还是没变化，是不是坏了」。这种情况首页那行状态条
+         * 已经写着「独立模式（无框架）」，不需要再多一个弹窗。
+         * 判据见 RuntimeStatusPolicy.allowsRestartPrompt：心跳来过或装了管理器就照常提示。
+         */
+        try {
+            if (!RuntimeStatusPolicy.allowsRestartPrompt(
+                    HookStatusStore.everSeen(this), FrameworkProbe.anyManagerInstalled(this))) {
+                DiagLog.log("[PERM] 独立模式（无框架入口、无心跳），跳过重启提示");
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
         // 【热重载对齐】Hook 已经初始化到当前版本，且 ready 标记属于这一次安装：
         // 模块确实在跑新代码，绝不能再弹「磁盘上新版、进程里旧版」的重启提示。
         // ready 标记由 KeepAliveReceiver 收到 MODULE_READY 后落盘；热重载失败时

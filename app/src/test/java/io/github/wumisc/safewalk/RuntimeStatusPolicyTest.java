@@ -119,6 +119,17 @@ public class RuntimeStatusPolicyTest {
     }
 
     @Test
+    public void restartPromptAllowedOnlyWhenHookCouldExist() {
+        // 纯独立模式：没装管理器、也没收到过心跳 → 不弹「重启系统界面」
+        assertFalse(RuntimeStatusPolicy.allowsRestartPrompt(false, false));
+        // 装了 LSPosed / KernelSU 但还没启用：可能只是没重启，照常提示
+        assertTrue(RuntimeStatusPolicy.allowsRestartPrompt(false, true));
+        // 心跳来过：框架肯定在跑，覆盖升级后该提示就提示
+        assertTrue(RuntimeStatusPolicy.allowsRestartPrompt(true, false));
+        assertTrue(RuntimeStatusPolicy.allowsRestartPrompt(true, true));
+    }
+
+    @Test
     public void agoFormatting() {
         assertEquals("刚刚", RuntimeStatusPolicy.ago(300L));
         assertEquals("12 秒", RuntimeStatusPolicy.ago(12_000L));
