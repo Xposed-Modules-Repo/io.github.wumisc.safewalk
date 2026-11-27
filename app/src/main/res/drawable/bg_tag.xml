@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 公益列表每条的栏目标签（家寻宝贝 / 宝贝寻家） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/tag_bg" />
+    <corners android:radius="6dp" />
+</shape>

@@ -34,6 +34,53 @@ public class MissingKidsRepositoryTest {
         assertEquals("https://baobeihuijia.com/x.html", k.getUrl());
     }
 
+    /** 姓名行 / 明细行 / 栏目名：数据源给什么就写什么，不许拿「走失」顶「被拐」。 */
+    @Test
+    public void kidTextLines() {
+        MissingKidsRepository.Kid k = MissingKidsRepository.parseKid(
+                "{\"items\":[{\"name\":\"牛乾坤\",\"gender\":\"男\",\"type\":\"遗弃\","
+                        + "\"category\":\"家寻宝贝\",\"lost_time\":\"1995-08-16\","
+                        + "\"lost_place\":\"河北省,邯郸市,丛台区\",\"url\":\"u\",\"photo\":\"p\"}]}");
+        assertNotNull(k);
+        assertEquals("牛乾坤，男，遗弃", MissingKidsRepository.headline(k));
+        assertEquals("1995-08-16 走失 · 河北省,邯郸市,丛台区", MissingKidsRepository.detailLine(k));
+        assertEquals("家寻宝贝", MissingKidsRepository.kindLabel(k.getCategory(), k.getType()));
+
+        // 缺 category / type：不瞎猜情形，栏目按「家寻」兜底
+        MissingKidsRepository.Kid bare = MissingKidsRepository.parseKid(
+                "{\"items\":[{\"name\":\"某\",\"gender\":\"女\",\"url\":\"u\",\"photo\":\"p\"}]}");
+        assertNotNull(bare);
+        assertEquals("某，女", MissingKidsRepository.headline(bare));
+        assertEquals("家寻宝贝", MissingKidsRepository.kindLabel("", ""));
+        // type 里带「寻家」的才翻成宝贝寻家
+        assertEquals("宝贝寻家", MissingKidsRepository.kindLabel("", "寻家"));
+    }
+
+    /**
+     * 「丁是丁卯是卯」：动词跟着栏目走（家寻=走失 / 寻家=失散），
+     * 上游脏值 undefined / null 逐段剔掉，绝不原样念给用户听。
+     */
+    @Test
+    public void detailLineVerbFollowsCategoryAndDropsJunk() {
+        MissingKidsRepository.Kid family = MissingKidsRepository.parseKid(
+                "{\"items\":[{\"name\":\"牛乾坤\",\"gender\":\"男\",\"type\":\"遗弃\","
+                        + "\"category\":\"家寻宝贝\",\"lost_time\":\"1995-08-16\","
+                        + "\"lost_place\":\"河北省,邯郸市,undefined\",\"url\":\"u\",\"photo\":\"p\"}]}");
+        assertNotNull(family);
+        assertEquals("1995-08-16 走失 · 河北省,邯郸市", MissingKidsRepository.detailLine(family));
+
+        MissingKidsRepository.Kid reunite = MissingKidsRepository.parseKid(
+                "{\"items\":[{\"name\":\"周群\",\"gender\":\"女\",\"type\":\"遗弃\","
+                        + "\"category\":\"宝贝寻家\",\"lost_time\":\"2007-05-26\","
+                        + "\"lost_place\":\"山东省,日照市,五莲县,undefined\",\"url\":\"u\",\"photo\":\"p\"}]}");
+        assertNotNull(reunite);
+        assertEquals("2007-05-26 失散 · 山东省,日照市,五莲县",
+                MissingKidsRepository.detailLine(reunite));
+
+        // 只有脏段时整段丢掉，不留「 · undefined」
+        assertEquals("", MissingKidsRepository.cleanPlace("undefined, null"));
+    }
+
     /** 列表轮换：四条互不重复；两天整批前进 4 位；条目不足时只取全部且不重复。 */
     @Test
     public void listIndicesRotatesBySlots() {

@@ -147,6 +147,37 @@ public class UiShotTest {
         }
     }
 
+    /** 公益列表一条：用真实文案渲染，核对「栏目 → 姓名，性别，情形 → 时间 · 地点」这个层级。 */
+    @Test
+    public void kidRow() {
+        try {
+            new File(OUT).mkdirs();
+            ActivityController<android.app.Activity> c =
+                    Robolectric.buildActivity(android.app.Activity.class).setup();
+            android.app.Activity a = c.get();
+            a.setTheme(R.style.Theme_Safewalk);
+            View root = a.getLayoutInflater().inflate(R.layout.item_kid, null);
+            ((android.widget.TextView) root.findViewById(R.id.tv_kid_tag)).setText("家寻宝贝");
+            ((android.widget.TextView) root.findViewById(R.id.tv_kid_name)).setText("牛乾坤，男，遗弃");
+            ((android.widget.TextView) root.findViewById(R.id.tv_kid_info))
+                    .setText("1995-08-16 走失 · 河北省,邯郸市,丛台区,三陵乡陈窑村");
+            int w = 1080;
+            root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            int h = root.getMeasuredHeight();
+            root.layout(0, 0, w, h);
+            Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            root.draw(new Canvas(bmp));
+            File f = new File(OUT, "kid_row.png");
+            try (FileOutputStream fos = new FileOutputStream(f)) {
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            }
+            System.out.println("SHOT " + f.getAbsolutePath() + " " + f.length() + "B h=" + h);
+        } catch (Throwable t) {
+            System.out.println("SHOT-FAIL kid_row -> " + t);
+        }
+    }
+
     @Test
     public void lightPages() {
         shot(ThanksActivity.class, "light_thanks");

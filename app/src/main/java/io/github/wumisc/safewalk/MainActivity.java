@@ -595,49 +595,56 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         setupMissingKidsCard();
     }
 
-    /**
-     * 公益列表四行的 id（[姓名, 副标题, 照片, 整行]）。改成列表以后不能再「0 和 1 分别写死」，
-     * 索引直接查表，多一行只要往表里加一行、布局里加一条。
-     */
-    private static final int[][] KID_ROW_IDS = {
-            {R.id.tv_kid_name_1, R.id.tv_kid_info_1, R.id.iv_kid_photo_1, R.id.kid_card_1},
-            {R.id.tv_kid_name_2, R.id.tv_kid_info_2, R.id.iv_kid_photo_2, R.id.kid_card_2},
-            {R.id.tv_kid_name_3, R.id.tv_kid_info_3, R.id.iv_kid_photo_3, R.id.kid_card_3},
-            {R.id.tv_kid_name_4, R.id.tv_kid_info_4, R.id.iv_kid_photo_4, R.id.kid_card_4},
-    };
-
     /** 公益卡片：加载/渲染/点击。任何失败都降级为占位文案，不影响首页。 */
     private void setupMissingKidsCard() {
         android.view.View card = findViewById(R.id.card_missing_kids);
         if (card == null) return;
         MissingKidsRepository.load(this, kids -> {
             if (isFinishing() || isDestroyed()) return kotlin.Unit.INSTANCE;
-            for (int i = 0; i < KID_ROW_IDS.length; i++) {
-                if (i < kids.size()) {
-                    bindKid(i, kids.get(i));
-                } else {
-                    // 数据源条数少于布局行数：把多出来的行藏掉，别留一排「加载中…」占位
-                    View row = findViewById(KID_ROW_IDS[i][3]);
-                    if (row != null) row.setVisibility(View.GONE);
-                }
-            }
+            renderKids(kids);
             return kotlin.Unit.INSTANCE;
         });
     }
 
-    /** 绑定第 idx（0 起）条公益卡：姓名/副标题/照片/点击跳官方登记页。 */
-    private void bindKid(int idx, MissingKidsRepository.Kid kid) {
-        if (idx < 0 || idx >= KID_ROW_IDS.length) return;
-        int[] ids = KID_ROW_IDS[idx];
-        int nameId = ids[0], infoId = ids[1], photoId = ids[2], cardId = ids[3];
-        final android.widget.TextView tvName = findViewById(nameId);
-        final android.widget.TextView tvInfo = findViewById(infoId);
-        final android.widget.ImageView ivPhoto = findViewById(photoId);
-        final android.view.View kidCard = findViewById(cardId);
+    /**
+     * 按数据渲染列表：有几条画几条。
+     *
+     * 布局里不再写死 4 行 —— 条数跟着数据走，每次整表重建（公益最多 4 条，
+     * 重建比做 diff 便宜，也不会留上一次的旧行）。
+     */
+    private void renderKids(java.util.List<MissingKidsRepository.Kid> kids) {
+        android.widget.LinearLayout list = findViewById(R.id.kid_list);
+        if (list == null) return;
+        list.removeAllViews();
+        // 一条都拿不到（离线且连内置快照都读失败）：整块隐藏，别留两行说明孤零零挂在页面上
+        View card = findViewById(R.id.card_missing_kids);
+        if (card != null) card.setVisibility(kids.isEmpty() ? View.GONE : View.VISIBLE);
+        if (kids.isEmpty()) return;
+        int show = Math.min(kids.size(), MissingKidsRepository.SHOW_COUNT);
+        for (int i = 0; i < show; i++) {
+            View row = getLayoutInflater().inflate(R.layout.item_kid, list, false);
+            bindKidRow(row, kids.get(i));
+            list.addView(row);
+        }
+    }
 
-        tvName.setText(kid.getName());
-        tvInfo.setText(MissingKidsRepository.subtitle(kid));
-        kidCard.setOnClickListener(v -> {
+    /** 绑定一条：栏目 / 姓名行 / 明细行 / 照片 / 点击跳官方登记页。 */
+    private void bindKidRow(View row, MissingKidsRepository.Kid kid) {
+        android.widget.TextView tvTag = row.findViewById(R.id.tv_kid_tag);
+        android.widget.TextView tvName = row.findViewById(R.id.tv_kid_name);
+        android.widget.TextView tvInfo = row.findViewById(R.id.tv_kid_info);
+        android.widget.ImageView ivPhoto = row.findViewById(R.id.iv_kid_photo);
+
+        String kind = MissingKidsRepository.kindLabel(kid.getCategory(), kid.getType());
+        String headline = MissingKidsRepository.headline(kid);
+        String detail = MissingKidsRepository.detailLine(kid);
+        if (tvTag != null) tvTag.setText(kind);
+        if (tvName != null) tvName.setText(headline);
+        if (tvInfo != null) tvInfo.setText(detail);
+
+        // 一条一块读：「家寻宝贝，牛乾坤，男，遗弃，1995-08-16 走失 · 河北…，点击查看详情」
+        row.setContentDescription(kind + "，" + headline + "，" + detail + "，点击查看详情");
+        row.setOnClickListener(v -> {
             try {
                 startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(kid.getUrl())));
             } catch (Throwable t) {

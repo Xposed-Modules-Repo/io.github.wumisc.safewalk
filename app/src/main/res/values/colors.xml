@@ -29,6 +29,9 @@
     <color name="divider">#E5E5EA</color>
     <color name="stroke">#E5E5EA</color>
 
+    <!-- 公益列表的栏目标签底色（家寻宝贝 / 宝贝寻家）：淡靛蓝，白字不加粗也读得清 -->
+    <color name="tag_bg">#E8F0FF</color>
+
     <!-- 主色（按钮、开关、选中态、链接） -->
     <color name="primary">#007AFF</color>
     <color name="on_accent">#FFFFFF</color>

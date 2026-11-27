@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【5.7.17】公益列表的一条。整条自己是一张圆角卡（不再挤在一张大卡里），
+     结构照参考：左边照片，右边「栏目 → 姓名，性别，情形 → 时间 · 地点」。
+
+     栏目（家寻宝贝 / 宝贝寻家）放在最上面单独一行：这两个方向完全相反，
+     写在名字前面容易被读成一串，单独一行才分得清。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/kid_card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp"
+    android:background="@drawable/bg_card_round"
+    android:clickable="true"
+    android:clipToOutline="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="14dp">
+
+    <ImageView
+        android:id="@+id/iv_kid_photo"
+        android:layout_width="84dp"
+        android:layout_height="84dp"
+        android:background="@drawable/bg_thumb"
+        android:clipToOutline="true"
+        android:contentDescription="走失者照片"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_kid_tag"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="家寻宝贝"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/tv_kid_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:text="姓名，性别，情形"
+            android:textColor="@color/text_primary"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_kid_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:ellipsize="end"
+            android:maxLines="3"
+            android:text="时间 · 地点"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:importantForAccessibility="no"
+        android:text="›"
+        android:textColor="@color/chevron"
+        android:textSize="18sp" />
+</LinearLayout>

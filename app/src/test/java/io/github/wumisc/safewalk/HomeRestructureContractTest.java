@@ -48,9 +48,9 @@ public class HomeRestructureContractTest {
         String home = s.substring(0, about);
         assertFalse("首页不再展示本机 UI 芯片", home.contains("chip_rom_auto"));
         assertTrue("首页底部必须有公益卡", home.contains("card_missing_kids"));
-        assertTrue("公益卡必须展示两条孩子",
-                home.contains("iv_kid_photo_1") && home.contains("iv_kid_photo_2")
-                        && home.contains("tv_kid_name_1") && home.contains("tv_kid_name_2"));
+        // 【5.7.17】条数改成跟着数据走：布局里只留容器，具体行由 item_kid.xml inflate
+        assertTrue("公益卡必须有列表容器", home.contains("kid_list"));
+        assertFalse("不许再把行 id 写死在首页布局里", home.contains("iv_kid_photo_1"));
     }
 
     @Test

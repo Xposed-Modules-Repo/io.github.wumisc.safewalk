@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 公益列表缩略图底：圆角 10dp，配 clipToOutline 把照片裁成圆角 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/bg" />
+    <corners android:radius="10dp" />
+</shape>

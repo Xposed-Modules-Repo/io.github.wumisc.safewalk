@@ -94,6 +94,10 @@ object MissingKidsRepository {
         {"id":747933,"name":"李茜","gender":"女","lost_time":"2001-11-06","lost_place":"湖南省,长沙市,市辖区,长沙市第一社会福利院","feature":"走失时短发。","url":"https://baobeihuijia.com/bbhj/contents/3/281580.html","photo":"https://baobeihuijia.com/bbhj/special/2026/8/s_b2c58a5f2e7ea1e9.png"}
     ]}"""
 
+    /** 两个栏目的标准写法，界面与文本函数只认这两个常量 */
+    const val KIND_FAMILY = "家寻宝贝"
+    const val KIND_REUNITE = "宝贝寻家"
+
     data class Kid(
         val name: String,
         val gender: String,
@@ -105,7 +109,16 @@ object MissingKidsRepository {
         /** 登记日期（yyyy-MM-dd，可空）：数据源已按它倒序，内置快照再做一次排序兜底 */
         val regDate: String = "",
         /** 宝贝回家编号：同日期的二次排序键，0 表示数据没给 */
-        val id: Int = 0
+        val id: Int = 0,
+        /**
+         * 数据源栏目：「家寻宝贝」（家属找孩子）/「宝贝寻家」（被拐孩子找家人）。
+         *
+         * 这两个栏目的叙事方向完全相反，界面上必须分开写，不能笼统叫「寻亲」：
+         * 家寻宝贝是「你看到这个孩子请联系家属」，宝贝寻家是「你认识这个人请联系他」。
+         */
+        val category: String = "",
+        /** 情形：遗弃 / 走失 / 被拐（数据源原样字段，界面直接念出来，不翻译不改写） */
+        val type: String = ""
     )
 
     /**
@@ -172,7 +185,7 @@ object MissingKidsRepository {
         o.optString("name"), o.optString("gender"),
         o.optString("lost_time"), o.optString("lost_place"),
         o.optString("feature"), o.optString("url"), o.optString("photo"),
-        o.optString("reg_date"), o.optInt("id")
+        o.optString("reg_date"), o.optInt("id"), o.optString("category"), o.optString("type")
     )
 
     /**
@@ -199,10 +212,60 @@ object MissingKidsRepository {
     @JvmStatic
     fun parseKid(json: String): Kid? = parseList(json).firstOrNull()
 
-    /** 展示用副标题：性别 · 走失时间 · 地点（压缩逗号）。 */
+    /**
+     * 栏目名（纯函数，可单测）：只认「家寻宝贝」和「宝贝寻家」两种写法。
+     *
+     * 数据源偶尔缺 `category`（早期快照、上游字段改版），这时用 `type` 兜一层：
+     * 带「寻家 / 找家」字样的按宝贝寻家，其余一律按家寻宝贝 —— 家寻是绝对多数，
+     * 猜错的代价（把家寻标成寻家）也更小：家属那头本来就在等线索。
+     */
+    @JvmStatic
+    fun kindLabel(category: String, type: String = ""): String {
+        val c = category.trim()
+        if (c == KIND_FAMILY || c == KIND_REUNITE) return c
+        if (c.contains("寻家") || c.contains("找家")) return KIND_REUNITE
+        val t = type.trim()
+        if (t.contains("寻家") || t.contains("找家")) return KIND_REUNITE
+        return KIND_FAMILY
+    }
+
+    /**
+     * 姓名行（纯函数，可单测）：`牛乾坤，男，遗弃`。
+     *
+     * 「丁是丁卯是卯」：情形字段原样用数据源写法，缺了就不写，绝不拿「走失」去顶「被拐」。
+     */
+    @JvmStatic
+    fun headline(k: Kid): String =
+        listOf(k.name, k.gender, k.type).filter { it.isNotBlank() }.joinToString("，")
+
+    /**
+     * 明细行（纯函数，可单测）：`1995-08-16 走失 · 河北省,邯郸市,…`。
+     *
+     * 动词必须跟栏目走：家寻宝贝是「孩子走失了」，宝贝寻家是「当年和亲人失散了」，
+     * 一律写「走失」等于把寻家者写成刚丢的人，方向就错了。
+     * 地点保持数据源里的逗号原样，不做美化 —— 用户要的是「能照着念给接线员听」；
+     * 但上游脏值（undefined / null / 空段）必须剔掉，那是数据缺陷，不该念出来。
+     */
+    @JvmStatic
+    fun detailLine(k: Kid): String {
+        val verb = if (kindLabel(k.category, k.type) == KIND_REUNITE) "失散" else "走失"
+        val head = listOf(k.lostTime, verb).filter { it.isNotBlank() }.joinToString(" ")
+        val place = cleanPlace(k.lostPlace)
+        return if (place.isEmpty()) head else "$head · $place"
+    }
+
+    /** 上游偶尔把缺失字段写成字符串 "undefined"/"null"，按段剔掉再拼。 */
+    @JvmStatic
+    fun cleanPlace(raw: String): String =
+        raw.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.equals("undefined", true) && !it.equals("null", true) }
+            .joinToString(",")
+
+    /** 展示用副标题：性别 · 走失时间 · 地点（压缩逗号）。旧口径，新界面走 [detailLine]。 */
     @JvmStatic
     fun subtitle(k: Kid): String {
-        val place = k.lostPlace.replace(",", " ")
+        val place = cleanPlace(k.lostPlace).replace(",", " ")
         return listOf(k.gender, k.lostTime, place).filter { it.isNotBlank() }.joinToString(" · ")
     }
 

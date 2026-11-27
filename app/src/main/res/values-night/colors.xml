@@ -11,6 +11,9 @@
     <color name="bg">#000000</color>
     <color name="card_bg">#1C1C1E</color>
 
+    <!-- 深色下标签底：比卡片亮一点的靛蓝，字用 light 的 primary 才不糊 -->
+    <color name="tag_bg">#1B2A44</color>
+
     <color name="text_primary">#FFFFFF</color>
     <color name="text_body">#EBEBF5</color>
     <color name="text_hint">#8E8E93</color>
