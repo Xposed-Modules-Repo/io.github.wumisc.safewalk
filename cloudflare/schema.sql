@@ -34,3 +34,14 @@ CREATE TABLE IF NOT EXISTS upload_quota (
     n    INTEGER NOT NULL DEFAULT 0,              -- 当日已成功落库次数
     PRIMARY KEY (ip, day)
 );
+
+-- 【136】开发者白名单：登记的机型视为维护者本机，落库打 is_dev = 1，
+-- 统计其他用户问题时默认排除（不然维护者自己的最新构建会把结论带偏）。
+ALTER TABLE diag_reports ADD COLUMN is_dev INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS dev_whitelist (
+    manufacturer TEXT NOT NULL,        -- 厂商（与 diag_reports.manufacturer 同口径）
+    model        TEXT NOT NULL,        -- 机型
+    note         TEXT,                 -- 备注，例如「维护者主力机」
+    PRIMARY KEY (manufacturer, model)
+);

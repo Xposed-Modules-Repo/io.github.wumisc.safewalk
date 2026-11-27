@@ -20,12 +20,25 @@
 //   3. 单机型 + 同日志哈希 10 分钟内去重（挡原地重放 / 端侧重试）。
 //   4. 全表 500 行上限（挡随机编机型名把 5GB 存储撑穿）。
 // 额度计数只在真正落库成功后才 +1，失败不占用户配额。
+//
+// ## 保留策略（136 改）
+//
+// 老做法是「按厂商+机型分组，只留最新 versionCode 的 3 条」——那是错的：
+// 开发者本机永远跑着最新开发版，一上传就把别人在旧正式版上的记录整组删掉，
+// 用户的反馈还没看就没了。现在改成按「厂商 + 机型 + 来源 IP」分组，只留最近 3 条，
+// **不看版本号**。同一台机器刷 3 次就只剩最近 3 次，不同用户的记录互不影响。
+//
+// ## 开发者白名单（136 新增）
+//
+// `dev_whitelist` 表里登记的（厂商, 机型）视为维护者本机，落库时打 `is_dev = 1`。
+// 这些行留着自己验证规则，统计其他用户问题时要显式排除（list 接口默认就不返回它们）。
 
 const MAX_BODY = 64 * 1024;   // 整包上限 64KB（端侧只会发 ≤60KB 日志）
 const MAX_LOG = 60_000;       // 日志正文上限（与端侧一致）
 const MAX_ROWS = 500;         // 全表行数上限
 const IP_DAILY_LIMIT = 5;     // 单 IP 每日上传次数上限
 const DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+const KEEP_PER_SOURCE = 3;    // 同一「厂商+机型+IP」最多留 3 条（与版本号无关）
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -55,11 +68,32 @@ function int(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** 这台机器是不是维护者本机：dev_whitelist 里按（厂商, 机型）登记。查不到就当普通用户。 */
+async function isDeveloper(env, mfr, model) {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT 1 AS hit FROM dev_whitelist WHERE manufacturer = ? AND model = ? LIMIT 1`
+    ).bind(mfr, model).first();
+    return row ? 1 : 0;
+  } catch {
+    // 白名单表缺失/读失败：按普通用户处理，宁可多算一次也不把用户记录当自测
+    return 0;
+  }
+}
+
 async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * 上报短码：log_hash 前 8 位（大写）。用户看到它就能报「我传的那条是 3F2A91C4」，
+ * 不用把整机信息或时间戳念给维护者，也不涉及隐私。
+ */
+function shortCode(hash) {
+  return String(hash).slice(0, 8).toUpperCase();
 }
 
 /** 当天（UTC）日期串，用于按天分桶限额。 */
@@ -117,7 +151,7 @@ export async function onRequestPost({ request, env }) {
          LIMIT 1`
     ).bind(mfr, model, hash, Date.now() - DEDUPE_WINDOW_MS).first();
     if (dup) {
-      return json({ ok: true, deduped: true });
+      return json({ ok: true, deduped: true, code: shortCode(hash) });
     }
 
     // 闸 4：全表行数上限。正常保留策略下真实设备撑不到这个数，
@@ -129,11 +163,13 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: "storage full" }, 429);
     }
 
+    const dev = await isDeveloper(env, mfr, model);
+
     const stmt = env.DB.prepare(
       `INSERT INTO diag_reports
          (ts, package, version_name, version_code, manufacturer, model, device, product,
-          release, sdk, ui, note, log, log_hash, client_ip)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          release, sdk, ui, note, log, log_hash, client_ip, is_dev)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       ts,
       str(app.package),
@@ -149,35 +185,30 @@ export async function onRequestPost({ request, env }) {
       note,
       log,
       hash,
-      ip
+      ip,
+      dev
     );
 
     await stmt.run();
 
-    // 保留策略：按厂商 + 机型分组，只认最新 versionCode 的记录；在最新版本内留最新 3 条。
-    // 旧版本记录一律删除；同最新版本超出 3 条的删最旧的。新上报写入后连带清理。
-    const clean = env.DB.prepare(
+    /*
+     * 保留策略：按「厂商 + 机型 + 来源 IP」分组，只留最近 3 条。
+     *
+     * 刻意不看 versionCode：维护者本机永远是最新开发版，按版本号清会连带删掉
+     * 其他用户在旧正式版上的反馈（用户明确禁止过这种做法）。
+     * 用 IP 分桶而不是「整机型只留 3 条」，是为了让两个不同用户的机器互不挤占。
+     */
+    await env.DB.prepare(
       `DELETE FROM diag_reports
-         WHERE manufacturer = ? AND model = ?
-           AND (
-             version_code <> (
-               SELECT MAX(version_code) FROM diag_reports
-               WHERE manufacturer = ? AND model = ?
-             )
-             OR id NOT IN (
-               SELECT id FROM (
-                 SELECT id FROM diag_reports
-                 WHERE manufacturer = ? AND model = ?
-                   AND version_code = (
-                     SELECT MAX(version_code) FROM diag_reports
-                     WHERE manufacturer = ? AND model = ?
-                   )
-                 ORDER BY ts DESC, id DESC LIMIT 3
-               )
+         WHERE manufacturer = ? AND model = ? AND client_ip = ?
+           AND id NOT IN (
+             SELECT id FROM (
+               SELECT id FROM diag_reports
+                WHERE manufacturer = ? AND model = ? AND client_ip = ?
+                ORDER BY ts DESC, id DESC LIMIT ?
              )
            )`
-    ).bind(mfr, model, mfr, model, mfr, model, mfr, model);
-    await clean.run();
+    ).bind(mfr, model, ip, mfr, model, ip, KEEP_PER_SOURCE).run();
 
     // 落库成功才计数；顺手清掉前一天的桶，避免计数表自己长大。
     await env.DB.prepare(
@@ -188,7 +219,7 @@ export async function onRequestPost({ request, env }) {
       `DELETE FROM upload_quota WHERE day < ?`
     ).bind(day).run();
 
-    return json({ ok: true });
+    return json({ ok: true, code: shortCode(hash) });
   } catch (e) {
     return json({ ok: false, error: "db error" }, 500);
   }

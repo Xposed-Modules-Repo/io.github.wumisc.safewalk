@@ -25,9 +25,13 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     // ========== 磁贴状态 ==========
     private TextView tileEnableStatus, tileSmartStatus, tileWalkStatus;
+    /** 功能页总开关行尾部那颗开关：纯显示，不接收点击（点击范围是整行）。 */
+    private android.widget.Switch swEnableTile;
 
     // ========== 【状态概览条】与「急救卡」合并成一行：左边状态两行字，右边尾部进二级菜单 ==========
-    private TextView statusSummary, statusDetail;
+    /** 置顶条的两份实例（首页、关于页各一条）。同一个布局被 include 两次，id 会重复，
+     *  所以这里自己收集引用，刷新时逐份同步，而不是 findViewById 拿第一个就完事。 */
+    private final java.util.List<View> pinBars = new java.util.ArrayList<>();
     private View tileSmartRow;
 
     /** 独立模式下追加在「智能提醒」摘要末尾的说明；刷新前先剥掉，避免重复叠加。 */
@@ -37,9 +41,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private boolean swEnable, swBattery, swId, swSit, swSocial, swNightTorch, swRearCam;
 
     // ========== 页面导航 ==========
-    private View pageSettings, pageAbout;
+    private View pageSettings, pageFeatures, pageAbout;
     private androidx.compose.ui.platform.ComposeView composeNav;
-    private boolean onPage = false;
+    /** 当前页：0 首页 / 1 功能 / 2 关于。原来是 boolean（只有首页/关于两页），加「功能」页后改成序号。 */
+    private int pageIndex = 0;
     private boolean viewsReady = false;
 
     // ========== 滑动手势 ==========
@@ -493,11 +498,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     private void bindViews() {
         // 磁贴状态文本
-        statusSummary = findViewById(R.id.status_summary);
-        statusDetail = findViewById(R.id.status_detail);
+        bindPinBar(R.id.pin_home);
+        bindPinBar(R.id.pin_about);
         tileSmartRow = findViewById(R.id.tile_smart);
 
         tileEnableStatus = findViewById(R.id.tile_enable_status);
+        swEnableTile = findViewById(R.id.sw_enable_tile);
         tileSmartStatus = findViewById(R.id.tile_smart_status);
         tileWalkStatus = findViewById(R.id.tile_walk_status);
 
@@ -521,13 +527,14 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
         // 底部导航
         pageSettings = findViewById(R.id.page_settings);
+        pageFeatures = findViewById(R.id.page_features);
         pageAbout = findViewById(R.id.page_about);
         // 液态玻璃导航栏（Compose）：首页=0，关于=1。点 tab 切页面。
-        // 注意 onPage=false 表示当前停在**首页**，所以初始值必须是 0；
-        // 原来写成 onPage ? 0 : 1，一进来高亮就落在「关于」上。
+        // 初始高亮必须落在首页（pageIndex=0）；原来写成 onPage ? 0 : 1，
+        // 一进来高亮就落在「关于」上。
         composeNav = findViewById(R.id.compose_nav);
-        MainNav.attach(composeNav, onPage ? 1 : 0, idx -> {
-            switchTab(idx == 0);
+        MainNav.attach(composeNav, pageIndex, idx -> {
+            switchTab(idx);
             return kotlin.Unit.INSTANCE;
         });
 
@@ -699,6 +706,20 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     /**
+     * 绑定一份置顶条：左边状态由 [refreshStatusOverview] 统一刷新，
+     * 右边两个动作各自接线。独立模式下「重启界面」隐藏 —— 没钩子可重启，摆着只会让人白点。
+     */
+    private void bindPinBar(int includeId) {
+        View bar = findViewById(includeId);
+        if (bar == null) return;
+        if (!pinBars.contains(bar)) pinBars.add(bar);
+        View upload = bar.findViewById(R.id.pin_upload);
+        if (upload != null) upload.setOnClickListener(v -> onUploadLog());
+        View restart = bar.findViewById(R.id.pin_restart);
+        if (restart != null) restart.setOnClickListener(v -> restartSystemUiFromMain());
+    }
+
+    /**
      * 【状态概览条】把「框架在不在 / 注入正不正常 / 日志开没开 / 步数能不能拿到」压成一行两句话，
      * 占的就是原来「急救卡」那一行的高度，尾部仍是「急救卡 ›」入口。
      *
@@ -709,7 +730,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
      * 下一次 onResume 就变回「注入正常」。
      */
     private void refreshStatusOverview() {
-        if (statusSummary == null) return;
+        if (pinBars.isEmpty()) return;
         long now = System.currentTimeMillis();
         long last = HookStatusStore.lastTs(this);
         boolean seen = HookStatusStore.everSeen(this);
@@ -721,12 +742,18 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         RuntimeStatusPolicy.Headline h = RuntimeStatusPolicy.headline(
                 seen, age, HookStatusStore.anchors(this), logOn, stepIssue);
 
-        statusSummary.setText(h.getTitle());
-        statusDetail.setText(h.getDetail());
         int color = h.getLevel() == RuntimeStatusPolicy.LEVEL_OK
                 ? COLOR_ON
                 : h.getLevel() == RuntimeStatusPolicy.LEVEL_WARN ? COLOR_OFF : COLOR_RED;
-        statusSummary.setTextColor(color);
+        for (View bar : pinBars) {
+            TextView summary = bar.findViewById(R.id.pin_status);
+            TextView detail = bar.findViewById(R.id.pin_detail);
+            if (summary != null) {
+                summary.setText(h.getTitle());
+                summary.setTextColor(color);
+            }
+            if (detail != null) detail.setText(h.getDetail());
+        }
 
         // 独立模式下「50 步智能提醒」这批钩子侧功能点了也做不成事：入口置灰 + 摘要尾部说明。
         // （步态检测、行走模式、路况小窗、SOS、急救卡、日志上云都在 App 自己进程里跑，实测正常，不禁用。）
@@ -735,6 +762,11 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         if (tileSmartRow != null) {
             tileSmartRow.setAlpha(standalone ? 0.45f : 1f);
             tileSmartRow.setEnabled(!standalone);
+        }
+        // 独立模式没有可重启的钩子：把那颗按钮藏起来，别让人白点一次
+        for (View bar : pinBars) {
+            View restart = bar.findViewById(R.id.pin_restart);
+            if (restart != null) restart.setVisibility(standalone ? View.GONE : View.VISIBLE);
         }
         /*
          * 注意：不能把摘要整句替换掉。那一行同时承担「已开 2/5」的真实状态（二级页开关
@@ -755,6 +787,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 光写「已开启/已关闭」不够：整张卡片可点，用户根本不知道这里能点，
         // 也不知道点下去会发生什么。把动作直接写在状态后面。
         tileEnableStatus.setText(swEnable ? "已开启 · 点击关闭" : "已关闭 · 点击开启");
+        if (swEnableTile != null) swEnableTile.setChecked(swEnable);
         tileEnableStatus.setTextColor(swEnable ? COLOR_ON : COLOR_OFF);
 
         int on = 0;
@@ -897,7 +930,15 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private void refreshUploadTile() {
         if (tvUploadLogHint == null) return;
         boolean agreed = DiagUploader.hasConsented(this);
-        tvUploadLogHint.setText(agreed ? "已同意 · 点此上传（长按撤回）" : "未同意上传");
+        String code = DiagUploader.lastCode(this);
+        if (!agreed) {
+            tvUploadLogHint.setText("未同意上传");
+        } else if (code.isEmpty()) {
+            tvUploadLogHint.setText("已同意 · 点此上传（长按撤回）");
+        } else {
+            // 短码是用户和维护者之间的对号凭据：报告问题时报它，比报机型+时间省事
+            tvUploadLogHint.setText("已同意 · 上次短码 " + code + "（长按撤回）");
+        }
     }
 
     /** 上报入口点击：未配置提示；未同意先弹同意弹窗；已同意直接上传。 */
@@ -1073,10 +1114,13 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                 boolean switched = false;
                 if (ev.getAction() == android.view.MotionEvent.ACTION_UP
                         && Math.abs(dx) > 120 && Math.abs(dx) > Math.abs(dy) * 2) {
-                    if (onPage) {
-                        if (dx > 0) { switchTab(true); logGesture("右滑", "关于→首页"); switched = true; }
-                    } else if (dx < 0) {
-                        switchTab(false); logGesture("左滑", "首页→关于"); switched = true;
+                    // 三页横排：右滑回上一页，左滑去下一页；到头就不动，避免循环绕圈
+                    int target = dx > 0 ? pageIndex - 1 : pageIndex + 1;
+                    if (target >= 0 && target <= 2) {
+                        String from = PAGE_NAMES[pageIndex];
+                        switchTab(target);
+                        logGesture(dx > 0 ? "右滑" : "左滑", from + "→" + PAGE_NAMES[target]);
+                        switched = true;
                     }
                 }
                 if (!switched) {
@@ -1094,17 +1138,28 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     /** 【手势导航联动】分类调试日志：手势方向、切页结果、导航栏目标高亮 */
     private void logGesture(String dir, String fromTo) {
         DiagLog.log("[GESTURE] " + dir + " 切页 " + fromTo
-                + " | 底部导航栏已联动高亮 index=" + (onPage ? 1 : 0));
+                + " | 底部导航栏已联动高亮 index=" + pageIndex);
     }
 
-    private void switchTab(boolean toSettings) {
-        // toSettings=true  → 首页（page_settings，四宫格磁贴），导航栏 index 0
-        // toSettings=false → 关于（page_about），     导航栏 index 1
-        onPage = !toSettings;
-        pageSettings.setVisibility(toSettings ? View.VISIBLE : View.GONE);
-        pageAbout.setVisibility(toSettings ? View.GONE : View.VISIBLE);
-        // 高亮必须在这里同步：滑动切页（dispatchTouchEvent）不经过 Compose 的
-        // onTabSelected，只写界面显隐的话导航栏会一直停在上一个 tab 上。
-        MainNav.select(toSettings ? 0 : 1);
+    /** 三个页面的名字，只用于日志与无障碍播报，保证和导航栏上的文字一致。 */
+    private static final String[] PAGE_NAMES = {"首页", "功能", "关于"};
+
+    /**
+     * 切页：0 首页（page_settings）/ 1 功能（page_features）/ 2 关于（page_about）。
+     *
+     * 高亮必须在这里同步：滑动切页（dispatchTouchEvent）不经过 Compose 的
+     * onTabSelected，只写界面显隐的话导航栏会一直停在上一个 tab 上。
+     */
+    private void switchTab(int index) {
+        if (index < 0 || index > 2) return;
+        pageIndex = index;
+        pageSettings.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
+        pageFeatures.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
+        pageAbout.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
+        MainNav.select(index);
+        // 功能页里有「智能提醒 5 项已开」这类汇总，切进来时算一次，别停在旧数字
+        if (index == 1) refreshTileStatus();
+        if (!viewsReady) return;
+        refreshStatusOverview();
     }
 }

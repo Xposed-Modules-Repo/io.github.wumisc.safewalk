@@ -59,9 +59,9 @@ public class UiShotTest {
             new File(OUT).mkdirs();
             ActivityController<MainActivity> c = Robolectric.buildActivity(MainActivity.class).setup();
             MainActivity a = c.get();
-            java.lang.reflect.Method m = MainActivity.class.getDeclaredMethod("switchTab", boolean.class);
+            java.lang.reflect.Method m = MainActivity.class.getDeclaredMethod("switchTab", int.class);
             m.setAccessible(true);
-            m.invoke(a, true);
+            m.invoke(a, 2);
             View root = a.getWindow().getDecorView();
             int w = 1080, h = 2340;
             root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
@@ -76,6 +76,74 @@ public class UiShotTest {
             System.out.println("SHOT " + f.getAbsolutePath() + " " + f.length() + "B");
         } catch (Throwable t) {
             System.out.println("SHOT-FAIL " + name + " -> " + t);
+        }
+    }
+
+    /**
+     * 三个主页面（首页 / 功能 / 关于）：不走 MainActivity，直接充布局再手动切显隐。
+     * MainActivity 在 Robolectric 里会在 Compose 初始化阶段报配置解析错，这里只要版面。
+     */
+    @Test
+    public void mainPagesByLayout() {
+        for (int idx = 0; idx <= 2; idx++) {
+            try {
+                new File(OUT).mkdirs();
+                ActivityController<android.app.Activity> c =
+                        Robolectric.buildActivity(android.app.Activity.class).setup();
+                android.app.Activity a = c.get();
+                // 不 attach 到窗口：ComposeView 一旦上窗就要 ViewTreeLifecycleOwner，
+                // Robolectric 里给不了。这里只要静态版面，所以悬空充布局再手动画。
+                a.setTheme(R.style.Theme_Safewalk);
+                View root = a.getLayoutInflater().inflate(R.layout.activity_main, null);
+                View nav = root.findViewById(R.id.compose_nav);
+                if (nav != null) nav.setVisibility(View.GONE);
+                int[] pages = {R.id.page_settings, R.id.page_features, R.id.page_about};
+                for (int i = 0; i < pages.length; i++) {
+                    root.findViewById(pages[i]).setVisibility(i == idx ? View.VISIBLE : View.GONE);
+                }
+                int w = 1080, h = 2340;
+                root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
+                root.layout(0, 0, w, h);
+                Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                root.draw(new Canvas(bmp));
+                File f = new File(OUT, "layout_page" + idx + ".png");
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                }
+                System.out.println("SHOT " + f.getAbsolutePath() + " " + f.length() + "B");
+            } catch (Throwable t) {
+                System.out.println("SHOT-FAIL layout_page" + idx + " -> " + t);
+            }
+        }
+    }
+
+    /** 三个主页面（首页 / 功能 / 关于）：改版后靠它看排版是否还成立。 */
+    @Test
+    public void mainPages() {
+        for (int idx = 0; idx <= 2; idx++) {
+            try {
+                new File(OUT).mkdirs();
+                ActivityController<MainActivity> c = Robolectric.buildActivity(MainActivity.class).setup();
+                MainActivity a = c.get();
+                java.lang.reflect.Method m = MainActivity.class.getDeclaredMethod("switchTab", int.class);
+                m.setAccessible(true);
+                m.invoke(a, idx);
+                View root = a.getWindow().getDecorView();
+                int w = 1080, h = 2340;
+                root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
+                root.layout(0, 0, w, h);
+                Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                root.draw(new Canvas(bmp));
+                File f = new File(OUT, "main_page" + idx + ".png");
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                }
+                System.out.println("SHOT " + f.getAbsolutePath() + " " + f.length() + "B");
+            } catch (Throwable t) {
+                System.out.println("SHOT-FAIL main_page" + idx + " -> " + t);
+            }
         }
     }
 

@@ -126,6 +126,11 @@ object MainNav {
         ).build()
 
     private val IconHome = navIcon("Home", "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z")
+    /** 功能页：四格图标，和「一堆开关」的语义最接近 */
+    private val IconFeatures = navIcon(
+        "Features",
+        "M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z"
+    )
     private val IconAbout = navIcon("Info", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z")
 
     @JvmStatic
@@ -155,13 +160,14 @@ object MainNav {
                     onSelect(index)
                 },
                 backdrop = backdrop,
-                tabsCount = 2,
-                modifier = Modifier.width(240.dp),
+                tabsCount = 3,
+                // 三个 tab：每格 110dp（原两格是每格 120dp），总宽 330dp
+                modifier = Modifier.width(330.dp),
                 // 【BUG 修复】拿回动画控制器：点击 / 全局左右滑 / 代码切页
                 // 三条路径从此都能直接驱动液态玻璃滑块特效。
                 onControllerReady = { ctrl -> controller = ctrl },
             ) {
-                val items = listOf(IconHome to "首页", IconAbout to "关于")
+                val items = listOf(IconHome to "首页", IconFeatures to "功能", IconAbout to "关于")
                 items.forEachIndexed { index, (icon, label) ->
                     LiquidBottomTab({ state.intValue = index; onSelect(index) }) {
                         Icon(

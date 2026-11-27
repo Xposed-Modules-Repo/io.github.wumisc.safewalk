@@ -79,3 +79,10 @@ cloudflare/
 ## 国内可达性说明
 
 `*.pages.dev` 在大陆可能被 DNS 污染或 SNI 阻断。端侧已做失败静默降级：上传失败只记本地日志、不阻塞主功能；若可达性不达标，后续可绑自有域名改善。
+
+## 保留策略与三区间分析
+
+- **保留**：按「厂商 + 机型 + 来源 IP」分组，只留最近 3 条，**不看 versionCode**（按版本号清会误删其他用户在旧正式版上的反馈）。
+- **白名单**：`dev_whitelist` 表登记维护者本机，落库打 `is_dev = 1`；`GET /api/diag/list` 默认排除，`?include_dev=1` 才返回。
+- **短码**：上传成功返回 `code`（log_hash 前 8 位），用户报问题时报这个码即可对号，不用念机型和时间。
+- **分析口径**：见 [DIAG-BANDS.md](./DIAG-BANDS.md)，取数用 `tools/bands.sh`（自动取 GitHub 最新正式版 versionCode 作基线，把记录盖成 below / release / dev 三档）。

@@ -43,6 +43,8 @@ object DiagUploader {
     private const val PREFS_NAME = "safewalk_xsp"
     /** 上次「成功」上报的时间戳键；失败不写，避免网络抖动后罚站十分钟。 */
     private const val KEY_LAST_OK_TS = "diag_upload_last_ok_ts"
+    /** 服务端返回的短码（log_hash 前 8 位），用户反馈时报这个码即可对上号。 */
+    private const val KEY_LAST_CODE = "diag_upload_last_code"
 
     /** 同一进程内的并发闸：连点两次不会真的发两个请求。 */
     private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -149,8 +151,13 @@ object DiagUploader {
             c.outputStream.use { it.write(body) }
             when (val code = c.responseCode) {
                 in 200..299 -> {
+                    val short = readShortCode(c, ctx)
                     DiagLog.log("[upload] 诊断日志已上报（env=${env["model"]}）")
-                    true to "诊断日志已上传，感谢反馈"
+                    if (short.isNotEmpty()) {
+                        true to "已上传，短码 $short（反馈时报这个码即可）"
+                    } else {
+                        true to "诊断日志已上传，感谢反馈"
+                    }
                 }
                 else -> {
                     DiagLog.log("[upload] 上报 HTTP $code")
@@ -161,6 +168,25 @@ object DiagUploader {
             c.disconnect()
         }
     }
+
+    /** 读服务端回的短码；任何异常都当没有，不让它影响上传成功这件事。 */
+    private fun readShortCode(c: HttpURLConnection, ctx: Context): String {
+        return try {
+            val text = c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
+            val code = JSONObject(text).optString("code", "")
+            if (code.isEmpty()) "" else code.also { saveLastCode(ctx, it) }
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    private fun saveLastCode(ctx: Context, code: String) {
+        prefs(ctx).edit().putString(KEY_LAST_CODE, code).apply()
+    }
+
+    /** 上一次上传拿到的短码（没传过就是空串），给「关于」页副标显示。 */
+    @JvmStatic
+    fun lastCode(ctx: Context): String = prefs(ctx).getString(KEY_LAST_CODE, "").orEmpty()
 
     private fun buildEnv(): Map<String, String> {
         val rom = try {

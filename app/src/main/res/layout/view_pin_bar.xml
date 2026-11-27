@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【置顶条】首页与关于页共用（被 include 两次，id 会重复，代码里用 findAll 同步刷新）。
+
+     里面是什么：
+      左：主句（框架模式·注入正常 / 独立模式（无框架）…），下一行小字给细节（锚点、心跳、日志、步数）。
+      右：一颗文字按钮「上传日志」+ 一颗实心按钮「重启界面」。独立模式下「重启界面」直接隐藏 ——
+          没有钩子可重启，摆在那里只会让人白点。
+
+     为什么不做成卡片列表里的一行：它回答的是「我现在这台机器处于什么状态」，
+     属于全局信息，不能藏在某一页的某个卡片中间。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pin_bar"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_pin_bar"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="10dp">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/pin_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="检测中…"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/pin_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="正在读取注入状态"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/pin_upload"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:minHeight="48dp"
+        android:minWidth="48dp"
+        android:paddingHorizontal="8dp"
+        android:text="上传日志"
+        android:textColor="@color/primary"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/pin_restart"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:background="@drawable/bg_pin_action"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:minHeight="48dp"
+        android:paddingHorizontal="12dp"
+        android:text="重启界面"
+        android:textColor="@color/on_accent"
+        android:textSize="13sp" />
+</LinearLayout>
