@@ -22,8 +22,11 @@ import java.net.URL
  */
 object MissingKidsRepository {
 
-    /** 数据源隔天更新，24h 检查一次即可及时跟上，又不至于频繁联网。 */
-    const val REFRESH_MS = 24L * 3600_000L
+    /**
+     * 【5.7.16】数据源隔天更新，检查间隔跟着轮换周期放到 48 小时：
+     * 轮换两天才换一批，数据没必要一天拉一次，请求量直接减半。
+     */
+    const val REFRESH_MS = 48L * 3600_000L
 
     /**
      * 【省流量 · 失败退避】一次没取到就别反复试。
@@ -34,7 +37,17 @@ object MissingKidsRepository {
      */
     const val RETRY_BACKOFF_MS = 6L * 3600_000L
 
-    /** 轮换周期（天）：公益卡每 24 小时整对前进，与数据源的隔天更新节奏对齐 */
+    /**
+     * 【5.7.16】轮换周期两天换一批（用户要求：别为了多看几张脸给用户加流量压力）。
+     *
+     * 四条一批、每 48 小时整批前进 4 位：7 条数据两批（4 天）转完一轮。
+     * 轮换本身是纯本地算术，不产生任何请求；配合 [REFRESH_MS] 一起放到 48 小时，
+     * 拉数据的频率也跟着减半 —— 这才是真正省流量的一环。
+     */
+    const val ROTATE_HOURS = 48L
+    private const val ROTATE_MS = ROTATE_HOURS * 3600_000L
+
+    /** 旧口径按天推进，保留常量供旧调用/测试引用 */
     const val ROTATE_DAYS = 1L
 
     private const val RAW = "https://raw.githubusercontent.com/wumisc/antiburn-missing-kids/main/kids.json"
@@ -67,8 +80,8 @@ object MissingKidsRepository {
     /** 缩略图目标边长（px）：卡片照片放大后按 2x 采样到 192px 保持清晰。 */
     private const val PHOTO_TARGET_PX = 192
 
-    /** 首页公益卡展示的孩子条数（一天两条）。 */
-    const val SHOW_COUNT = 2
+    /** 首页公益卡展示的孩子条数（列表四条）。 */
+    const val SHOW_COUNT = 4
 
     /**
      * 最后一级兜底（**只在 assets/kids.json 读取失败时**才会用到，正常永远走内置快照）。
@@ -163,20 +176,23 @@ object MissingKidsRepository {
     )
 
     /**
-     * 轮换下标（纯函数，可单测）：两张卡从 [anchorDay] 起每 [ROTATE_DAYS] 整对前进
-     * [SHOW_COUNT] 位 —— 每天两张卡各换一位，同一天里不重复，条目少于一整对时也
-     * 不会越界（只有 1 条就两张都指向它）。
+     * 列表下标（纯函数，可单测）：从 [anchorDay] 起，每 [ROTATE_HOURS] 小时整批前进
+     * [count] 位，返回 [count] 个**互不重复**的连续下标。
      *
-     * 为什么要有轮换：公益卡的信息价值在于「每天看到的人不一样」。一直钉在第一条，
-     * 用户看到的永远是同一张脸，反而更像一张不会更新的静态图。
+     * · 时间用毫秒，槽号 = floor(now / ROTATE_MS)；
+     *   anchorDay（天序号）换算成同一个槽号，保证老用户已有的锚点继续有效。
+     * · 条目少于 [count] 时按环形取，最多把全部条目轮一遍（size 条就 size 条，不重复）。
      */
     @JvmStatic
-    fun pairIndices(todayDay: Long, anchorDay: Long, size: Int): Pair<Int, Int> {
-        if (size <= 0) return 0 to 0
-        if (size == 1) return 0 to 0
-        val steps = (todayDay - anchorDay).coerceAtLeast(0L)
-        val base = ((steps * ROTATE_DAYS * SHOW_COUNT) % size).toInt()
-        return base to ((base + 1) % size)
+    fun listIndices(nowMs: Long, anchorDay: Long, size: Int, count: Int): List<Int> {
+        if (size <= 0) return emptyList()
+        val take = count.coerceIn(1, size)
+        val slot = nowMs / ROTATE_MS
+        // 先乘后除：ROTATE_MS 比一天长时 DAY_MS / ROTATE_MS 会整除成 0，锚点会被算到第 0 槽
+        val anchorSlot = (anchorDay * DAY_MS) / ROTATE_MS
+        val steps = (slot - anchorSlot).coerceAtLeast(0L)
+        val base = ((steps * take) % size).toInt()
+        return (0 until take).map { (base + it) % size }
     }
 
     /** 纯解析（可单测）：取第一条。失败返回 null。 */
@@ -320,8 +336,7 @@ object MissingKidsRepository {
         } catch (_: Throwable) {
         }
         if (kids.size == 1) return listOf(kids[0])
-        val (a, b) = pairIndices(today, anchor, kids.size)
-        return listOf(kids[a], kids[b])
+        return listIndices(now, anchor, kids.size, SHOW_COUNT).map { kids[it] }
     }
 
     private fun httpGet(u: String): String? = try {

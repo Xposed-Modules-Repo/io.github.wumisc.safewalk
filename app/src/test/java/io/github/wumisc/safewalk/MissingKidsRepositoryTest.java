@@ -34,6 +34,30 @@ public class MissingKidsRepositoryTest {
         assertEquals("https://baobeihuijia.com/x.html", k.getUrl());
     }
 
+    /** 列表轮换：四条互不重复；两天整批前进 4 位；条目不足时只取全部且不重复。 */
+    @Test
+    public void listIndicesRotatesBySlots() {
+        long day = 100L;
+        long anchorMs = day * 24L * 3600_000L;
+        java.util.List<Integer> first = MissingKidsRepository.listIndices(anchorMs, day, 7, 4);
+        assertEquals(4, first.size());
+        assertEquals(java.util.List.of(0, 1, 2, 3), first);
+
+        // 两天后整批前进 4 位
+        java.util.List<Integer> next = MissingKidsRepository.listIndices(
+                anchorMs + 48L * 3600_000L, day, 7, 4);
+        assertEquals(java.util.List.of(4, 5, 6, 0), next);
+
+        // 同一槽内不变（第二天还没到换批的时刻）
+        assertEquals(next, MissingKidsRepository.listIndices(
+                anchorMs + 70L * 3600_000L, day, 7, 4));
+
+        // 条目只有 3 条：取 3 条、不重复
+        java.util.List<Integer> three = MissingKidsRepository.listIndices(anchorMs, day, 3, 4);
+        assertEquals(3, three.size());
+        assertEquals(3, new java.util.HashSet<>(three).size());
+    }
+
     @Test
     public void parseListReturnsTwoItems() {
         java.util.List<MissingKidsRepository.Kid> list = MissingKidsRepository.parseList(JSON);
@@ -59,8 +83,8 @@ public class MissingKidsRepositoryTest {
     }
 
     @Test
-    public void refreshIntervalIs24h() {
-        assertEquals(24L * 3600_000L, MissingKidsRepository.REFRESH_MS);
+    public void refreshIntervalIs48h() {
+        assertEquals(48L * 3600_000L, MissingKidsRepository.REFRESH_MS);
     }
 
     /** 【省流量】取不到数据后必须退避 6 小时，否则每次进首页都会重新打两轮请求。 */
@@ -118,34 +142,6 @@ public class MissingKidsRepositoryTest {
         assertEquals(90L, MissingKidsRepository.anchorDayOf(90L, "v1", 100L, "v1", true));
     }
 
-    /** 【5.6.18 覆盖安装不倒退】两张卡按天整对前进，同一天不重复、不越界。 */
-    @Test
-    public void pairRotatesByDayWithoutDuplicates() {
-        kotlin.Pair<Integer, Integer> d0 = MissingKidsRepository.pairIndices(100L, 100L, 7);
-        assertEquals(0, (int) d0.getFirst());
-        assertEquals(1, (int) d0.getSecond());
-
-        kotlin.Pair<Integer, Integer> d1 = MissingKidsRepository.pairIndices(101L, 100L, 7);
-        assertEquals(2, (int) d1.getFirst());
-        assertEquals(3, (int) d1.getSecond());
-
-        // 第 3 天：4/5；第 4 天：6/0（回绕，仍然成对）
-        kotlin.Pair<Integer, Integer> d3 = MissingKidsRepository.pairIndices(103L, 100L, 7);
-        assertEquals(6, (int) d3.getFirst());
-        assertEquals(0, (int) d3.getSecond());
-
-        // 两条数据（旧兜底）：每天都是同一条，不越界
-        kotlin.Pair<Integer, Integer> two = MissingKidsRepository.pairIndices(103L, 100L, 2);
-        assertEquals(0, (int) two.getFirst());
-        assertEquals(1, (int) two.getSecond());
-
-        // 只有 1 条时两张卡指向同一条
-        kotlin.Pair<Integer, Integer> one = MissingKidsRepository.pairIndices(103L, 100L, 1);
-        assertEquals(0, (int) one.getFirst());
-        assertEquals(0, (int) one.getSecond());
-    }
-
-    /** 【5.6.18】内置快照必须随包更新：assets/kids.json 至少一整轮（7 条）且每条都有照片。 */
     @Test
     public void bundledSnapshotHasFullRotation() throws Exception {
         java.nio.file.Path p = java.nio.file.Paths.get("src/main/assets/kids.json");

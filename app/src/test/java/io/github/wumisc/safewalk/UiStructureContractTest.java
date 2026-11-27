@@ -62,6 +62,21 @@ public class UiStructureContractTest {
         assertTrue("行走模式在急救卡之前", walk < emergency);
     }
 
+    /** 公益卡必须是竖向列表（四条），且卡片统一圆角。 */
+    @Test
+    public void kidCardIsListWithFourRows() throws Exception {
+        String xml = read("src/main/res/layout/activity_main.xml");
+        assertTrue("公益列表要有容器 kid_list", xml.contains("@+id/kid_list"));
+        for (int i = 1; i <= 4; i++) {
+            assertTrue("第 " + i + " 条公益卡必须存在", xml.contains("@+id/kid_card_" + i));
+        }
+        assertTrue("不许再多出第 5 条（布局只有四条）", !xml.contains("@+id/kid_card_5"));
+        // 圆角：卡片背景统一走 bg_card_round，不许再有纯色方块卡片
+        assertTrue("卡片背景必须用圆角 drawable", xml.contains("@drawable/bg_card_round"));
+        assertTrue("卡片不许再直接铺纯色 card_bg", !xml.contains("android:background=\"@color/card_bg\""));
+        assertTrue("圆角容器要裁轮廓，波纹别溢出角上", xml.contains("android:clipToOutline=\"true\""));
+    }
+
     /** 导航必须是三格：两格时候「功能」没地方放。 */
     @Test
     public void navHasThreeTabs() throws Exception {

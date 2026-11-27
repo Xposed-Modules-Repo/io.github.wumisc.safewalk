@@ -595,14 +595,31 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         setupMissingKidsCard();
     }
 
+    /**
+     * 公益列表四行的 id（[姓名, 副标题, 照片, 整行]）。改成列表以后不能再「0 和 1 分别写死」，
+     * 索引直接查表，多一行只要往表里加一行、布局里加一条。
+     */
+    private static final int[][] KID_ROW_IDS = {
+            {R.id.tv_kid_name_1, R.id.tv_kid_info_1, R.id.iv_kid_photo_1, R.id.kid_card_1},
+            {R.id.tv_kid_name_2, R.id.tv_kid_info_2, R.id.iv_kid_photo_2, R.id.kid_card_2},
+            {R.id.tv_kid_name_3, R.id.tv_kid_info_3, R.id.iv_kid_photo_3, R.id.kid_card_3},
+            {R.id.tv_kid_name_4, R.id.tv_kid_info_4, R.id.iv_kid_photo_4, R.id.kid_card_4},
+    };
+
     /** 公益卡片：加载/渲染/点击。任何失败都降级为占位文案，不影响首页。 */
     private void setupMissingKidsCard() {
         android.view.View card = findViewById(R.id.card_missing_kids);
         if (card == null) return;
         MissingKidsRepository.load(this, kids -> {
             if (isFinishing() || isDestroyed()) return kotlin.Unit.INSTANCE;
-            for (int i = 0; i < Math.min(kids.size(), MissingKidsRepository.SHOW_COUNT); i++) {
-                bindKid(i, kids.get(i));
+            for (int i = 0; i < KID_ROW_IDS.length; i++) {
+                if (i < kids.size()) {
+                    bindKid(i, kids.get(i));
+                } else {
+                    // 数据源条数少于布局行数：把多出来的行藏掉，别留一排「加载中…」占位
+                    View row = findViewById(KID_ROW_IDS[i][3]);
+                    if (row != null) row.setVisibility(View.GONE);
+                }
             }
             return kotlin.Unit.INSTANCE;
         });
@@ -610,14 +627,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     /** 绑定第 idx（0 起）条公益卡：姓名/副标题/照片/点击跳官方登记页。 */
     private void bindKid(int idx, MissingKidsRepository.Kid kid) {
-        int nameId, infoId, photoId, cardId;
-        if (idx == 0) {
-            nameId = R.id.tv_kid_name_1; infoId = R.id.tv_kid_info_1;
-            photoId = R.id.iv_kid_photo_1; cardId = R.id.kid_card_1;
-        } else {
-            nameId = R.id.tv_kid_name_2; infoId = R.id.tv_kid_info_2;
-            photoId = R.id.iv_kid_photo_2; cardId = R.id.kid_card_2;
-        }
+        if (idx < 0 || idx >= KID_ROW_IDS.length) return;
+        int[] ids = KID_ROW_IDS[idx];
+        int nameId = ids[0], infoId = ids[1], photoId = ids[2], cardId = ids[3];
         final android.widget.TextView tvName = findViewById(nameId);
         final android.widget.TextView tvInfo = findViewById(infoId);
         final android.widget.ImageView ivPhoto = findViewById(photoId);

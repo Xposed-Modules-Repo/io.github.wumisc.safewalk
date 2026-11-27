@@ -69,7 +69,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:background="@color/card_bg"
+                    android:background="@drawable/bg_card_round"
+                    android:clipToOutline="true"
                     android:clickable="true"
                     android:focusable="true"
                     android:gravity="center_vertical"
@@ -118,7 +119,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="@color/card_bg"
+                    android:background="@drawable/bg_card_round"
+                    android:clipToOutline="true"
                     android:orientation="vertical"
                     android:padding="14dp">
 
@@ -130,99 +132,262 @@
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
+                    <!-- 【5.7.16】改成列表：一列四条（照片在左、文字在右），靠
+                         「每 6 小时整批前进 4 位」轮换，把数据源里的孩子轮着露脸。
+                         静态四条而不是 RecyclerView：整页本来就在 ScrollView 里，
+                         四条不至于需要复用机制，静态写法无障碍顺序也更稳。 -->
                     <LinearLayout
+                        android:id="@+id/kid_list"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:orientation="horizontal">
-
-                        <!-- 第一条 -->
+                        android:layout_marginTop="10dp"
+                        android:orientation="vertical">
                         <LinearLayout
                             android:id="@+id/kid_card_1"
-                            android:layout_width="0dp"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:gravity="center_horizontal"
-                            android:orientation="vertical"
-                            android:padding="6dp">
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingVertical="4dp">
 
                             <ImageView
                                 android:id="@+id/iv_kid_photo_1"
-                                android:layout_width="104dp"
-                                android:layout_height="104dp"
+                                android:layout_width="72dp"
+                                android:layout_height="72dp"
                                 android:background="@color/bg"
-                                android:scaleType="centerCrop"
-                                android:contentDescription="走失儿童照片" />
+                                android:contentDescription="走失儿童照片"
+                                android:scaleType="centerCrop" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tv_kid_name_1"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="加载中…"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_kid_info_1"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="2"
+                                    android:text="数据来自宝贝回家寻子网"
+                                    android:textColor="@color/text_hint"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
 
                             <TextView
-                                android:id="@+id/tv_kid_name_1"
-                                android:layout_width="match_parent"
+                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:gravity="center"
-                                android:text="加载中…"
-                                android:textColor="@color/text_primary"
-                                android:textSize="15sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tv_kid_info_1"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
-                                android:ellipsize="end"
-                                android:gravity="center"
-                                android:maxLines="2"
-                                android:text="数据来自宝贝回家寻子网"
-                                android:textColor="@color/text_hint"
-                                android:textSize="11sp" />
+                                android:layout_marginStart="6dp"
+                                android:importantForAccessibility="no"
+                                android:text="›"
+                                android:textColor="@color/chevron"
+                                android:textSize="18sp" />
                         </LinearLayout>
 
                         <View
-                            android:layout_width="12dp"
-                            android:layout_height="match_parent" />
-
-                        <!-- 第二条 -->
+                            android:layout_width="match_parent"
+                            android:layout_height="1px"
+                            android:layout_marginTop="8dp"
+                            android:layout_marginBottom="8dp"
+                            android:background="@color/stroke" />
                         <LinearLayout
                             android:id="@+id/kid_card_2"
-                            android:layout_width="0dp"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:gravity="center_horizontal"
-                            android:orientation="vertical"
-                            android:padding="6dp">
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingVertical="4dp">
 
                             <ImageView
                                 android:id="@+id/iv_kid_photo_2"
-                                android:layout_width="104dp"
-                                android:layout_height="104dp"
+                                android:layout_width="72dp"
+                                android:layout_height="72dp"
                                 android:background="@color/bg"
-                                android:scaleType="centerCrop"
-                                android:contentDescription="走失儿童照片" />
+                                android:contentDescription="走失儿童照片"
+                                android:scaleType="centerCrop" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tv_kid_name_2"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="加载中…"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_kid_info_2"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="2"
+                                    android:text="数据来自宝贝回家寻子网"
+                                    android:textColor="@color/text_hint"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
 
                             <TextView
-                                android:id="@+id/tv_kid_name_2"
-                                android:layout_width="match_parent"
+                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:gravity="center"
-                                android:text="加载中…"
-                                android:textColor="@color/text_primary"
-                                android:textSize="15sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tv_kid_info_2"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
-                                android:ellipsize="end"
-                                android:gravity="center"
-                                android:maxLines="2"
-                                android:text="数据来自宝贝回家寻子网"
-                                android:textColor="@color/text_hint"
-                                android:textSize="11sp" />
+                                android:layout_marginStart="6dp"
+                                android:importantForAccessibility="no"
+                                android:text="›"
+                                android:textColor="@color/chevron"
+                                android:textSize="18sp" />
                         </LinearLayout>
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1px"
+                            android:layout_marginTop="8dp"
+                            android:layout_marginBottom="8dp"
+                            android:background="@color/stroke" />
+                        <LinearLayout
+                            android:id="@+id/kid_card_3"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingVertical="4dp">
+
+                            <ImageView
+                                android:id="@+id/iv_kid_photo_3"
+                                android:layout_width="72dp"
+                                android:layout_height="72dp"
+                                android:background="@color/bg"
+                                android:contentDescription="走失儿童照片"
+                                android:scaleType="centerCrop" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tv_kid_name_3"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="加载中…"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_kid_info_3"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="2"
+                                    android:text="数据来自宝贝回家寻子网"
+                                    android:textColor="@color/text_hint"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:importantForAccessibility="no"
+                                android:text="›"
+                                android:textColor="@color/chevron"
+                                android:textSize="18sp" />
+                        </LinearLayout>
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1px"
+                            android:layout_marginTop="8dp"
+                            android:layout_marginBottom="8dp"
+                            android:background="@color/stroke" />
+                        <LinearLayout
+                            android:id="@+id/kid_card_4"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingVertical="4dp">
+
+                            <ImageView
+                                android:id="@+id/iv_kid_photo_4"
+                                android:layout_width="72dp"
+                                android:layout_height="72dp"
+                                android:background="@color/bg"
+                                android:contentDescription="走失儿童照片"
+                                android:scaleType="centerCrop" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tv_kid_name_4"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="加载中…"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_kid_info_4"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="2"
+                                    android:text="数据来自宝贝回家寻子网"
+                                    android:textColor="@color/text_hint"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:importantForAccessibility="no"
+                                android:text="›"
+                                android:textColor="@color/chevron"
+                                android:textSize="18sp" />
+                        </LinearLayout>
+
                     </LinearLayout>
 
                     <TextView
@@ -286,7 +451,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="@color/card_bg"
+                    android:background="@drawable/bg_card_round"
+                    android:clipToOutline="true"
                     android:orientation="vertical">
 
                     <!-- 智能提醒 -->
@@ -499,7 +665,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="@color/card_bg"
+                    android:background="@drawable/bg_card_round"
+                    android:clipToOutline="true"
                     android:orientation="vertical">
 
                     <LinearLayout
@@ -578,7 +745,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="@color/card_bg"
+                    android:background="@drawable/bg_card_round"
+                    android:clipToOutline="true"
                     android:orientation="vertical">
 
                     <TextView
@@ -641,7 +809,8 @@
                     android:id="@+id/btn_toggle_log"
                     style="@style/RowStyle"
                     android:layout_marginTop="16dp"
-                    android:background="@color/card_bg">
+                    android:background="@drawable/bg_card_round"
+                    android:clipToOutline="true">
 
                     <TextView
                         android:id="@+id/tv_toggle_log"
