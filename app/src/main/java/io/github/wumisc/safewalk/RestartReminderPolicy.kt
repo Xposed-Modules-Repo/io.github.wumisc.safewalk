@@ -123,6 +123,16 @@ object RestartReminderPolicy {
     const val EXTRA_MODULE_INIT_SOURCE = "module_init_source"
 
     /**
+     * 【状态概览】心跳附带的三项注入现场信息。
+     *
+     * 同一个 action 既当「初次就绪」也当「60 秒心跳」用：App 侧只关心时间戳新鲜度，
+     * 不做两种语义，少一条广播就少一个漏注册的接收器。
+     */
+    const val EXTRA_HOOK_ANCHORS = "hook_anchors"
+    const val EXTRA_HOOK_FRAMEWORK = "hook_framework"
+    const val EXTRA_HOOK_API = "hook_api"
+
+    /**
      * 这个 ready 标记是否代表「当前这次安装」已经由 Hook 跑起来了。
      *
      * 只比 versionCode 不够：同版本覆盖安装时 versionCode 不变，上一次的 ready

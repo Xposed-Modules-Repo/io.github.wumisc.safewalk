@@ -26,6 +26,14 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     // ========== 磁贴状态 ==========
     private TextView tileEnableStatus, tileSmartStatus, tileWalkStatus;
 
+    // ========== 【状态概览条】运行模式 / 注入 / 日志 / 步数源 ==========
+    private TextView statusModeValue, statusInjectValue, statusLogValue, statusStepValue;
+    private TextView statusUnavailable;
+    private View tileSmartRow;
+
+    /** 独立模式下追加在「智能提醒」摘要末尾的说明；刷新前先剥掉，避免重复叠加。 */
+    private static final String SMART_STANDALONE_SUFFIX = " · 独立模式不可用";
+
     // ========== 开关状态（用于汇总显示） ==========
     private boolean swEnable, swBattery, swId, swSit, swSocial, swNightTorch, swRearCam;
 
@@ -92,6 +100,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     // 原来写死成常量，深色模式下这两个颜色对比度不足。
     private int COLOR_ON;
     private int COLOR_OFF;
+    /** 【状态概览】「有问题」那一档的红色，用急救卡的告警红，保证同一套语义同一种颜色 */
+    private int COLOR_RED;
 
 
     @Override
@@ -101,6 +111,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         // 状态色取自资源：深浅色各有一套值
         COLOR_ON = getColor(R.color.accent_green);
         COLOR_OFF = getColor(R.color.text_hint);
+        COLOR_RED = getColor(R.color.seal_red);
         // App 进程日志出口：与 SystemUI 进程的 Hook 日志写同一套规则，
         // 优先 /storage/emulated/0/Android/Travel safely/，写不进自动降级
         DiagLog.init(getApplicationContext());
@@ -448,6 +459,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             loadConfig();
             // 引导弹窗放到权限都拿到之后，避免和系统权限框叠在一起
             if (hasAllPermissions()) checkFirstLaunch();
+            refreshStatusOverview();
         }
         // 【首次安装也提示】重启系统界面这条必须每次进首页都判一次：
         // 首次装完 SystemUI 里没有本模块代码，不重启等于所有开关都点不动；
@@ -467,6 +479,13 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     private void bindViews() {
         // 磁贴状态文本
+        statusModeValue = findViewById(R.id.status_mode_value);
+        statusInjectValue = findViewById(R.id.status_inject_value);
+        statusLogValue = findViewById(R.id.status_log_value);
+        statusStepValue = findViewById(R.id.status_step_value);
+        statusUnavailable = findViewById(R.id.status_unavailable);
+        tileSmartRow = findViewById(R.id.tile_smart);
+
         tileEnableStatus = findViewById(R.id.tile_enable_status);
         tileSmartStatus = findViewById(R.id.tile_smart_status);
         tileWalkStatus = findViewById(R.id.tile_walk_status);
@@ -668,6 +687,74 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         DiagLog.log("[ui] 配置实时落盘（commit + exportConfig），无需手动保存");
     }
 
+    /**
+     * 【状态概览条】把「框架在不在 / 注入新不新鲜 / 日志开没开 / 步数能不能拿到」摊在首页。
+     *
+     * 为什么值得占首页一行：无框架时 App 照样能跑，但只有一部分能力；用户看不出差别，
+     * 只会觉得「这版变差了 / 开关没反应」。这一条就是回答「我现在到底是哪种模式、缺了什么」。
+     *
+     * 判据全部是现算的（Hook 心跳时间戳、SharedPreferences 开关、传感器+权限），
+     * 不做缓存 —— 重启系统界面后钩子回来，这里下一次 onResume 就变回「已注入」。
+     */
+    private void refreshStatusOverview() {
+        if (statusModeValue == null) return;
+        long now = System.currentTimeMillis();
+        long last = HookStatusStore.lastTs(this);
+        boolean seen = HookStatusStore.everSeen(this);
+        long age = last <= 0L ? 0L : Math.max(0L, now - last);
+
+        String mode = RuntimeStatusPolicy.mode(seen, age);
+        boolean logOn = SafePrefs.getBool(xsp(), SafeWalkPrefKey.enableDiagLog, true);
+        String stepIssue = StepSourceProbe.issue(this);
+
+        java.util.List<RuntimeStatusPolicy.Row> rows = RuntimeStatusPolicy.rows(
+                seen,
+                age,
+                HookStatusStore.versionName(this),
+                HookStatusStore.anchors(this),
+                HookStatusStore.framework(this),
+                HookStatusStore.api(this),
+                logOn,
+                stepIssue);
+
+        TextView[] targets = {statusModeValue, statusInjectValue, statusLogValue, statusStepValue};
+        for (int i = 0; i < targets.length && i < rows.size(); i++) {
+            RuntimeStatusPolicy.Row row = rows.get(i);
+            targets[i].setText(row.getValue());
+            targets[i].setTextColor(row.getLevel() == RuntimeStatusPolicy.LEVEL_OK
+                    ? COLOR_ON
+                    : row.getLevel() == RuntimeStatusPolicy.LEVEL_WARN ? COLOR_OFF : COLOR_RED);
+        }
+
+        // 独立模式：把「实测用不了」的几项直接写出来，并按能力禁用入口
+        boolean standalone = RuntimeStatusPolicy.MODE_STANDALONE.equals(mode);
+        if (statusUnavailable != null) {
+            statusUnavailable.setVisibility(standalone ? View.VISIBLE : View.GONE);
+            if (standalone) {
+                statusUnavailable.setText("独立模式不可用：" + RuntimeStatusPolicy.standaloneUnavailable()
+                        + "（其余功能正常）");
+            }
+        }
+        // 智能提醒的判定与通知都在 SystemUI 钩子里跑，独立模式下点进去也做不成事：置灰 + 说明
+        if (tileSmartRow != null) {
+            tileSmartRow.setAlpha(standalone ? 0.45f : 1f);
+            tileSmartRow.setEnabled(!standalone);
+        }
+        /*
+         * 注意：不能把摘要整句替换掉。那一行同时承担「已开 2/5」的真实状态（二级页开关
+         * 改了就要跟着变），也是回归用例的断言对象。这里只追加一个后缀，并在下次刷新时
+         * 先剥掉旧后缀再拼，避免反复 refresh 里越拼越长。
+         */
+        if (tileSmartStatus != null) {
+            String cur = tileSmartStatus.getText().toString();
+            String base = cur.endsWith(SMART_STANDALONE_SUFFIX)
+                    ? cur.substring(0, cur.length() - SMART_STANDALONE_SUFFIX.length())
+                    : cur;
+            tileSmartStatus.setText(standalone ? base + SMART_STANDALONE_SUFFIX : base);
+            if (standalone) tileSmartStatus.setTextColor(COLOR_OFF);
+        }
+    }
+
     private void refreshTileStatus() {
         // 光写「已开启/已关闭」不够：整张卡片可点，用户根本不知道这里能点，
         // 也不知道点下去会发生什么。把动作直接写在状态后面。
@@ -704,6 +791,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         if (!swEnable) walk = "总开关未开（" + (swRearCam ? "已开启" : "未开启") + "）";
         tileWalkStatus.setText(walk);
         tileWalkStatus.setTextColor(swEnable && swRearCam ? COLOR_ON : COLOR_OFF);
+    
+        // 【状态概览】放在最后：独立模式下它要把「智能提醒」那行改成「不可用」，
+        // 必须排在上面那套「已开 N/5」之后，否则刚写的结论又被算回去。
+        refreshStatusOverview();
     }
 
     // ========== 【系统 UI 适配 · 首页入口】 ==========

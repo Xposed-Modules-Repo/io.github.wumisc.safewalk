@@ -54,6 +54,15 @@ class KeepAliveReceiver : BroadcastReceiver() {
             ) ?: ""
             markModuleReady(ctx.applicationContext, runningCode, runningName,
                 intent.getStringExtra(RestartReminderPolicy.EXTRA_MODULE_INIT_SOURCE))
+            // 【状态概览】心跳：60 秒一次，App 首页的「注入状态」靠这条时间戳判新鲜度
+            HookStatusStore.record(
+                ctx.applicationContext,
+                runningName,
+                intent.getIntExtra(RestartReminderPolicy.EXTRA_HOOK_ANCHORS, 0),
+                intent.getStringExtra(RestartReminderPolicy.EXTRA_HOOK_FRAMEWORK) ?: "",
+                intent.getIntExtra(RestartReminderPolicy.EXTRA_HOOK_API, 0),
+                System.currentTimeMillis()
+            )
             return
         }
 

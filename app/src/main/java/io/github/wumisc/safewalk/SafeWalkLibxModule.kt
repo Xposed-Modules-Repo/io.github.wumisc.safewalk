@@ -168,7 +168,11 @@ class SafeWalkLibxModule : XposedModule() {
             hook(m).intercept { chain ->
                 val result = chain.proceed()
                 try {
-                    ctxOf(chain)?.let { core.triggerInit(it, label) }
+                    ctxOf(chain)?.let {
+                        // 【状态概览】先把框架名/API 塞给内核，首页「注入状态」才写得出这行
+                        core.setFrameworkInfo(frameworkName, apiVersion)
+                        core.triggerInit(it, label)
+                    }
                 } catch (t: Throwable) {
                     Log.e(TAG, "锚点回调异常（已忽略，不影响 SystemUI）: $label", t)
                 }

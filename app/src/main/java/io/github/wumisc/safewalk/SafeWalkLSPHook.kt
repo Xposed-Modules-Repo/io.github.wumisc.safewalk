@@ -302,6 +302,20 @@ class SafeWalkLSPHook : SensorEventListener {
     private var initTs = 0L
     private var lastStepLogTs = 0L
     private var lastSummaryTs = 0L
+
+    /**
+     * 【状态概览 · 心跳】上次给 App 发「我还在」广播的时间。
+     *
+     * 复用 [RestartReminderPolicy.ACTION_MODULE_READY]：初次就绪发一次，之后每 60 秒一次。
+     * 有了它，App 首页才能实时显示「框架模式 · 锚点 3/3 · 12 秒前」，
+     * SystemUI 重启后钩子没回来时也能立刻变成「注入失联」而不是一直显示旧的“已就绪”。
+     */
+    private var lastStatusPingTs = 0L
+
+    /** 【状态概览】运行框架名（LSPosed / KernelSU 侧 libxposed 实现名），由模块入口注入。 */
+    private var hookFrameworkName = ""
+    /** 【状态概览】libxposed API 版本号，0 = 未知。 */
+    private var hookApiVersion = 0
     /** 上次尝试拉起兜底计步的时间 */
     private var lastFallbackTryTs = 0L
     /** 本启动会话是否已打过探针结论（每个会话只报一次，不再 45s 复刷） */
@@ -515,6 +529,12 @@ class SafeWalkLSPHook : SensorEventListener {
      * 记下「第一个命中的是谁」——用户反馈"某 ROM 上没反应"时，这一行能立刻说明
      * 是哪个入口活了、还是根本没有入口。
      */
+    /** 模块入口在首次初始化前注入框架信息（本类不是 XposedModule 子类，拿不到那两个属性）。 */
+    internal fun setFrameworkInfo(name: String, api: Int) {
+        hookFrameworkName = name ?: ""
+        hookApiVersion = api
+    }
+
     internal fun triggerInit(appCtx: Context, source: String) {
         if (disposed) return
         if (initSucceeded) return
@@ -748,6 +768,12 @@ class SafeWalkLSPHook : SensorEventListener {
                 putExtra(RestartReminderPolicy.EXTRA_MODULE_VERSION_CODE, BuildConfig.VERSION_CODE)
                 putExtra(RestartReminderPolicy.EXTRA_MODULE_VERSION_NAME, BuildConfig.VERSION_NAME)
                 putExtra(RestartReminderPolicy.EXTRA_MODULE_INIT_SOURCE, initTrigger)
+                // 【状态概览】锚点数 / 框架名 / API 版本：App 首页据此显示「注入状态」
+                putExtra(RestartReminderPolicy.EXTRA_HOOK_ANCHORS, anchorsHooked)
+                // 【状态概览】框名/API 由 SafeWalkLibxModule 在初始化前塞进来：
+                // frameworkName / apiVersion 是 XposedModule 的属性，本内核类不是它的子类，取不到。
+                putExtra(RestartReminderPolicy.EXTRA_HOOK_FRAMEWORK, hookFrameworkName)
+                putExtra(RestartReminderPolicy.EXTRA_HOOK_API, hookApiVersion)
             }
             appCtx.sendBroadcast(i)
             diag("[reload] 已通知 App：模块运行版本=" + BuildConfig.VERSION_NAME
@@ -983,6 +1009,7 @@ class SafeWalkLSPHook : SensorEventListener {
         initTs = 0L
         lastStepLogTs = 0L
         lastSummaryTs = 0L
+        lastStatusPingTs = 0L
         lastFallbackTryTs = 0L
         lastBatteryWarnTs = 0L
         // 重新挂锚点 / 兜底通道的标记也要放开，否则新一代会被旧标记挡住
@@ -1240,6 +1267,12 @@ class SafeWalkLSPHook : SensorEventListener {
         try {
             val now = System.currentTimeMillis()
             refreshConfig()
+
+            // 【状态概览 · 60 秒心跳】只看时间戳，不改任何判定逻辑
+            if (now - lastStatusPingTs >= 60_000L) {
+                lastStatusPingTs = now
+                currentApplication()?.let { notifyModuleReady(it) }
+            }
 
             if (!masterEnabled()) {
                 // 总开关关着就别一直采加速度计了，白耗电
