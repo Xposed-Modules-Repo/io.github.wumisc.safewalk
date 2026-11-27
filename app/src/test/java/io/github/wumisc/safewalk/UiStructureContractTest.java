@@ -31,7 +31,7 @@ public class UiStructureContractTest {
         assertTrue("关于页那份要有 id pin_about", xml.contains("@+id/pin_about"));
     }
 
-    /** 首页只留状态与公益卡：三个功能入口都必须已经搬走，不能两边都留一份。 */
+    /** 首页只留「状态 + 总开关 + 公益卡」：三个二级入口都必须已经搬走，不能两边都留一份。 */
     @Test
     public void featuresMovedOutOfHome() throws Exception {
         String xml = read("src/main/res/layout/activity_main.xml");
@@ -40,26 +40,24 @@ public class UiStructureContractTest {
         int about = xml.indexOf("@+id/page_about");
         assertTrue("三个页面都要在", home > 0 && features > home && about > features);
         String homeBlock = xml.substring(home, features);
+        assertTrue("首页要有总开关（进门第一眼就得知道开没开）", homeBlock.contains("@+id/tile_enable"));
         assertTrue("首页不该再有智能提醒入口", !homeBlock.contains("@+id/tile_smart"));
         assertTrue("首页不该再有行走模式入口", !homeBlock.contains("@+id/tile_walk"));
         assertTrue("首页不该再有急救卡入口", !homeBlock.contains("@+id/tile_emergency"));
         String featureBlock = xml.substring(features, about);
-        assertTrue("功能页要有总开关", featureBlock.contains("@+id/tile_enable"));
+        assertTrue("功能页不该再放一份总开关", !featureBlock.contains("@+id/tile_enable"));
         assertTrue("功能页要有智能提醒", featureBlock.contains("@+id/tile_smart"));
         assertTrue("功能页要有行走模式", featureBlock.contains("@+id/tile_walk"));
         assertTrue("功能页要有急救卡", featureBlock.contains("@+id/tile_emergency"));
     }
 
-    /** 功能页的分层顺序：总开关在最上，其余按 智能提醒 → 行走模式 → 急救卡。 */
+    /** 功能页的分层顺序：智能提醒 → 行走模式 → 急救卡。 */
     @Test
     public void featuresOrder() throws Exception {
         String xml = read("src/main/res/layout/activity_main.xml");
-        int enable = xml.indexOf("@+id/tile_enable\"");
         int smart = xml.indexOf("@+id/tile_smart\"");
         int walk = xml.indexOf("@+id/tile_walk\"");
         int emergency = xml.indexOf("@+id/tile_emergency\"");
-        assertTrue("总开关必须在最上面", enable < smart);
-        assertTrue(enable < walk && enable < emergency);
         assertTrue("智能提醒在行走模式之前", smart < walk);
         assertTrue("行走模式在急救卡之前", walk < emergency);
     }

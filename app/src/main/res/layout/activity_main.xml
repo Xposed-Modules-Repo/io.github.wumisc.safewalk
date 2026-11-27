@@ -62,6 +62,55 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp" />
 
+                <!-- 【5.7.15】总开关回到首页：进门第一眼就该知道「现在到底开没开」，
+                     设不设置是下一层的事。点整行就切换，右侧开关只作状态显示。 -->
+                <LinearLayout
+                    android:id="@+id/tile_enable"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@color/card_bg"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="18dp"
+                    android:paddingVertical="18dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="总开关"
+                            android:textColor="@color/text_primary"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tile_enable_status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="已关闭 · 点击开启"
+                            android:textColor="@color/text_hint"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <!-- 只作状态显示：点击范围仍是整行，两个可点控件会重复触发。 -->
+                    <android.widget.Switch
+                        android:id="@+id/sw_enable_tile"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:importantForAccessibility="no" />
+                </LinearLayout>
+
                 <!-- 【5.6.13 公益】寻找宝贝回家：数据源 wumisc/antiburn-missing-kids（隔天更新）。
                      首页展示前两条，点卡片打开宝贝回家官方登记页。 -->
                 <LinearLayout
@@ -229,7 +278,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:lineSpacingExtra="4dp"
-                    android:text="总开关关掉后，下面每一项的设置都保留但不生效。"
+                    android:text="首页那个总开关关掉后，这里每一项的设置都保留、只是不生效。"
                     android:textColor="@color/text_hint"
                     android:textSize="13sp" />
 
@@ -239,58 +288,6 @@
                     android:layout_marginTop="16dp"
                     android:background="@color/card_bg"
                     android:orientation="vertical">
-
-                    <!-- 总开关 -->
-                    <LinearLayout
-                        android:id="@+id/tile_enable"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="?android:attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="16dp"
-                        android:paddingVertical="14dp">
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="总开关"
-                                android:textColor="@color/text_primary"
-                                android:textSize="16sp" />
-
-                            <TextView
-                                android:id="@+id/tile_enable_status"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="已关闭"
-                                android:textColor="@color/text_hint"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <!-- 只作状态显示：点击范围仍是整行，两个可点控件会重复触发。 -->
-                        <android.widget.Switch
-                            android:id="@+id/sw_enable_tile"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:clickable="false"
-                            android:focusable="false"
-                            android:importantForAccessibility="no" />
-                    </LinearLayout>
-
-                    <View
-                        android:layout_width="match_parent"
-                        android:layout_height="1px"
-                        android:layout_marginLeft="16dp"
-                        android:background="@color/stroke" />
 
                     <!-- 智能提醒 -->
                     <LinearLayout
@@ -656,34 +653,8 @@
                         style="@style/RowChevron" />
                 </LinearLayout>
 
-                <!-- 诊断日志上报：手动触发；首次点击弹同意弹窗，未同意不发任何请求。 -->
-                <LinearLayout
-                    android:id="@+id/btn_upload_log"
-                    style="@style/RowStyle"
-                    android:layout_marginTop="8dp"
-                    android:background="@color/card_bg">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/tv_upload_log"
-                            style="@style/RowTitle"
-                            android:text="上传诊断日志" />
-
-                        <TextView
-                            android:id="@+id/tv_upload_log_hint"
-                            style="@style/RowHint"
-                            android:layout_marginTop="2dp"
-                            android:text="未同意上传" />
-                    </LinearLayout>
-
-                    <TextView
-                        style="@style/RowChevron" />
-                </LinearLayout>
+                <!-- 【5.7.15】这一行删掉了：上传入口统一走置顶条的「上传日志」，
+                     关于页不再重复摆一个。撤回同意放在那颗按钮的长按上（见 MainActivity）。 -->
 
             </LinearLayout>
         </ScrollView>

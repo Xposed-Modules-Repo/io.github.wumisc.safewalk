@@ -63,7 +63,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private TextView tvHideLauncherState, tvHideRecentState;
 
     // ========== 诊断日志上报 ==========
-    private TextView tvUploadLogHint;
 
     // ========== 【系统 UI 适配 · 首页入口】 ==========
     // 4.3 起取代原来的「HyperOS 版本适配」三芯片。旧版让用户选 HyperOS 3 / 4，
@@ -582,27 +581,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     android.widget.Toast.LENGTH_SHORT).show();
         });
 
-        // 诊断日志上报：手动触发，首次点击先弹同意弹窗；未同意不发任何请求。
-        View tileUploadLog = findViewById(R.id.btn_upload_log);
-        tvUploadLogHint = findViewById(R.id.tv_upload_log_hint);
-        refreshUploadTile();
-        tileUploadLog.setOnClickListener(v -> onUploadLog());
-        tileUploadLog.setOnLongClickListener(v -> {
-            if (DiagUploader.hasConsented(this)) {
-                new AlertDialog.Builder(this)
-                        .setTitle("撤回上传同意")
-                        .setMessage("撤回后将不再上传诊断日志；此前已上传的数据仍按服务端保留期处理。")
-                        .setPositiveButton("撤回", (d, w) -> {
-                            DiagUploader.setConsented(this, false);
-                            refreshUploadTile();
-                            Toast.makeText(this, "已撤回上传同意", Toast.LENGTH_SHORT).show();
-                            DiagLog.log("[upload] 已撤回诊断日志上报同意");
-                        })
-                        .setNegativeButton("取消", null)
-                        .show();
-            }
-            return true;
-        });
+        // 诊断日志上报：入口只剩置顶条那颗「上传日志」（关于页那一行 137 删了）。
+        // 首次点击先弹同意弹窗，未同意不发任何请求；长按撤回同意也挂在这颗按钮上，
+        // 否则删了关于页那一行，撤回路径就没了。
 
         // 【5.5.0 隐私】两项本地隐私开关（5.6.13 起布局移入「关于」页，ID 不变，接线不变）
         tvHideLauncherState = findViewById(R.id.tv_hide_launcher_state);
@@ -714,7 +695,24 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         if (bar == null) return;
         if (!pinBars.contains(bar)) pinBars.add(bar);
         View upload = bar.findViewById(R.id.pin_upload);
-        if (upload != null) upload.setOnClickListener(v -> onUploadLog());
+        if (upload != null) {
+            upload.setOnClickListener(v -> onUploadLog());
+            // 长按撤回同意：这是删掉关于页那一行之后，唯一的撤回入口
+            upload.setOnLongClickListener(v -> {
+                if (!DiagUploader.hasConsented(this)) return true;
+                new AlertDialog.Builder(this)
+                        .setTitle("撤回上传同意")
+                        .setMessage("撤回后将不再上传诊断日志；此前已上传的数据仍按服务端保留期处理。")
+                        .setPositiveButton("撤回", (d, w) -> {
+                            DiagUploader.setConsented(this, false);
+                            Toast.makeText(this, "已撤回上传同意", Toast.LENGTH_SHORT).show();
+                            DiagLog.log("[upload] 已撤回诊断日志上报同意");
+                        })
+                        .setNegativeButton("取消", null)
+                        .show();
+                return true;
+            });
+        }
         View restart = bar.findViewById(R.id.pin_restart);
         if (restart != null) restart.setOnClickListener(v -> restartSystemUiFromMain());
     }
@@ -926,21 +924,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         }
     }
 
-    /** 刷新上报入口副标：同意 / 未同意两态。 */
-    private void refreshUploadTile() {
-        if (tvUploadLogHint == null) return;
-        boolean agreed = DiagUploader.hasConsented(this);
-        String code = DiagUploader.lastCode(this);
-        if (!agreed) {
-            tvUploadLogHint.setText("未同意上传");
-        } else if (code.isEmpty()) {
-            tvUploadLogHint.setText("已同意 · 点此上传（长按撤回）");
-        } else {
-            // 短码是用户和维护者之间的对号凭据：报告问题时报它，比报机型+时间省事
-            tvUploadLogHint.setText("已同意 · 上次短码 " + code + "（长按撤回）");
-        }
-    }
-
     /** 上报入口点击：未配置提示；未同意先弹同意弹窗；已同意直接上传。 */
     private void onUploadLog() {
         if (!DiagUploader.isConfigured()) {
@@ -953,7 +936,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     .setMessage(uploadConsentMessage())
                     .setPositiveButton("同意并上传", (d, w) -> {
                         DiagUploader.setConsented(this, true);
-                        refreshUploadTile();
                         doUploadLog();
                     })
                     .setNegativeButton("取消", null)
@@ -1157,8 +1139,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         pageFeatures.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
         pageAbout.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
         MainNav.select(index);
-        // 功能页里有「智能提醒 5 项已开」这类汇总，切进来时算一次，别停在旧数字
-        if (index == 1) refreshTileStatus();
+        // 首页（总开关）与功能页（智能提醒 5 项已开等汇总）都要现算，别停在旧数字
+        if (index == 0 || index == 1) refreshTileStatus();
         if (!viewsReady) return;
         refreshStatusOverview();
     }
