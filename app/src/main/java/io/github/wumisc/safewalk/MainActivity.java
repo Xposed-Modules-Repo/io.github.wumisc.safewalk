@@ -26,9 +26,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     // ========== 磁贴状态 ==========
     private TextView tileEnableStatus, tileSmartStatus, tileWalkStatus;
 
-    // ========== 【状态概览条】运行模式 / 注入 / 日志 / 步数源 ==========
-    private TextView statusModeValue, statusInjectValue, statusLogValue, statusStepValue;
-    private TextView statusUnavailable;
+    // ========== 【状态概览条】与「急救卡」合并成一行：左边状态两行字，右边尾部进二级菜单 ==========
+    private TextView statusSummary, statusDetail;
     private View tileSmartRow;
 
     /** 独立模式下追加在「智能提醒」摘要末尾的说明；刷新前先剥掉，避免重复叠加。 */
@@ -479,11 +478,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
     private void bindViews() {
         // 磁贴状态文本
-        statusModeValue = findViewById(R.id.status_mode_value);
-        statusInjectValue = findViewById(R.id.status_inject_value);
-        statusLogValue = findViewById(R.id.status_log_value);
-        statusStepValue = findViewById(R.id.status_step_value);
-        statusUnavailable = findViewById(R.id.status_unavailable);
+        statusSummary = findViewById(R.id.status_summary);
+        statusDetail = findViewById(R.id.status_detail);
         tileSmartRow = findViewById(R.id.tile_smart);
 
         tileEnableStatus = findViewById(R.id.tile_enable_status);
@@ -688,54 +684,39 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     /**
-     * 【状态概览条】把「框架在不在 / 注入新不新鲜 / 日志开没开 / 步数能不能拿到」摊在首页。
+     * 【状态概览条】把「框架在不在 / 注入正不正常 / 日志开没开 / 步数能不能拿到」压成一行两句话，
+     * 占的就是原来「急救卡」那一行的高度，尾部仍是「急救卡 ›」入口。
      *
-     * 为什么值得占首页一行：无框架时 App 照样能跑，但只有一部分能力；用户看不出差别，
-     * 只会觉得「这版变差了 / 开关没反应」。这一条就是回答「我现在到底是哪种模式、缺了什么」。
+     * 为什么只留一行：首页每多一行都会把下面的功能入口往下推，而用户真正要一眼看到的
+     * 只有「我在哪种模式、现在正不正常」。日志与步数只要不异常就不必单独占位，异常时并进细节句。
      *
-     * 判据全部是现算的（Hook 心跳时间戳、SharedPreferences 开关、传感器+权限），
-     * 不做缓存 —— 重启系统界面后钩子回来，这里下一次 onResume 就变回「已注入」。
+     * 判据全部现算（心跳时间戳、SP 开关、传感器+权限），不缓存：重启系统界面后钩子回来，
+     * 下一次 onResume 就变回「注入正常」。
      */
     private void refreshStatusOverview() {
-        if (statusModeValue == null) return;
+        if (statusSummary == null) return;
         long now = System.currentTimeMillis();
         long last = HookStatusStore.lastTs(this);
         boolean seen = HookStatusStore.everSeen(this);
         long age = last <= 0L ? 0L : Math.max(0L, now - last);
 
-        String mode = RuntimeStatusPolicy.mode(seen, age);
         boolean logOn = SafePrefs.getBool(xsp(), SafeWalkPrefKey.enableDiagLog, true);
         String stepIssue = StepSourceProbe.issue(this);
 
-        java.util.List<RuntimeStatusPolicy.Row> rows = RuntimeStatusPolicy.rows(
-                seen,
-                age,
-                HookStatusStore.versionName(this),
-                HookStatusStore.anchors(this),
-                HookStatusStore.framework(this),
-                HookStatusStore.api(this),
-                logOn,
-                stepIssue);
+        RuntimeStatusPolicy.Headline h = RuntimeStatusPolicy.headline(
+                seen, age, HookStatusStore.anchors(this), logOn, stepIssue);
 
-        TextView[] targets = {statusModeValue, statusInjectValue, statusLogValue, statusStepValue};
-        for (int i = 0; i < targets.length && i < rows.size(); i++) {
-            RuntimeStatusPolicy.Row row = rows.get(i);
-            targets[i].setText(row.getValue());
-            targets[i].setTextColor(row.getLevel() == RuntimeStatusPolicy.LEVEL_OK
-                    ? COLOR_ON
-                    : row.getLevel() == RuntimeStatusPolicy.LEVEL_WARN ? COLOR_OFF : COLOR_RED);
-        }
+        statusSummary.setText(h.getTitle());
+        statusDetail.setText(h.getDetail());
+        int color = h.getLevel() == RuntimeStatusPolicy.LEVEL_OK
+                ? COLOR_ON
+                : h.getLevel() == RuntimeStatusPolicy.LEVEL_WARN ? COLOR_OFF : COLOR_RED;
+        statusSummary.setTextColor(color);
 
-        // 独立模式：把「实测用不了」的几项直接写出来，并按能力禁用入口
-        boolean standalone = RuntimeStatusPolicy.MODE_STANDALONE.equals(mode);
-        if (statusUnavailable != null) {
-            statusUnavailable.setVisibility(standalone ? View.VISIBLE : View.GONE);
-            if (standalone) {
-                statusUnavailable.setText("独立模式不可用：" + RuntimeStatusPolicy.standaloneUnavailable()
-                        + "（其余功能正常）");
-            }
-        }
-        // 智能提醒的判定与通知都在 SystemUI 钩子里跑，独立模式下点进去也做不成事：置灰 + 说明
+        // 独立模式下「50 步智能提醒」这批钩子侧功能点了也做不成事：入口置灰 + 摘要尾部说明。
+        // （步态检测、行走模式、路况小窗、SOS、急救卡、日志上云都在 App 自己进程里跑，实测正常，不禁用。）
+        boolean standalone = RuntimeStatusPolicy.MODE_STANDALONE.equals(
+                RuntimeStatusPolicy.mode(seen, age));
         if (tileSmartRow != null) {
             tileSmartRow.setAlpha(standalone ? 0.45f : 1f);
             tileSmartRow.setEnabled(!standalone);

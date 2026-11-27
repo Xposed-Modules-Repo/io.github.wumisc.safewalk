@@ -208,182 +208,62 @@
                         android:layout_marginLeft="16dp"
                         android:background="@color/bg" />
 
+                    <!-- 【5.7.9】状态概览与急救卡合成一行：左边是实时状态（两行字），
+                         右边尾部就是「急救卡 ›」入口，点整行进救急卡二级菜单。
+                         之所以合成一行，是因为拆成四行会把首页推得很长，而用户真正想知道的
+                         只有「框架在不在、日志开没开」，细节可以进关于页/日志看。 -->
                     <LinearLayout
-                        android:id="@+id/card_status"
+                        android:id="@+id/tile_emergency"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
                         android:paddingHorizontal="16dp"
-                        android:paddingTop="14dp"
-                        android:paddingBottom="4dp">
+                        android:paddingVertical="12dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/status_summary"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="检测中…"
+                                android:textColor="@color/text_primary"
+                                android:textSize="16sp" />
+
+                            <TextView
+                                android:id="@+id/status_detail"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="正在读取注入状态"
+                                android:textColor="@color/text_hint"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/status_emergency_tag"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginLeft="8dp"
+                            android:text="急救卡"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="状态概览"
-                            android:textColor="@color/text_primary"
-                            android:textSize="16sp" />
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:paddingTop="8dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="运行模式"
-                                android:textColor="@color/text_hint"
-                                android:textSize="12sp" />
-
-                            <TextView
-                                android:id="@+id/status_mode_value"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginLeft="12dp"
-                                android:layout_weight="1"
-                                android:gravity="end"
-                                android:text="检测中…"
-                                android:textColor="@color/text_primary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:paddingTop="6dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="注入状态"
-                                android:textColor="@color/text_hint"
-                                android:textSize="12sp" />
-
-                            <TextView
-                                android:id="@+id/status_inject_value"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginLeft="12dp"
-                                android:layout_weight="1"
-                                android:gravity="end"
-                                android:text="—"
-                                android:textColor="@color/text_primary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:paddingTop="6dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="诊断日志"
-                                android:textColor="@color/text_hint"
-                                android:textSize="12sp" />
-
-                            <TextView
-                                android:id="@+id/status_log_value"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginLeft="12dp"
-                                android:layout_weight="1"
-                                android:gravity="end"
-                                android:text="—"
-                                android:textColor="@color/text_primary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:paddingTop="6dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="步数源"
-                                android:textColor="@color/text_hint"
-                                android:textSize="12sp" />
-
-                            <TextView
-                                android:id="@+id/status_step_value"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginLeft="12dp"
-                                android:layout_weight="1"
-                                android:gravity="end"
-                                android:text="—"
-                                android:textColor="@color/text_primary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <!-- 独立模式才出现：实测用不了的功能，一条说清 -->
-                        <TextView
-                            android:id="@+id/status_unavailable"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp"
-                            android:textColor="@color/text_hint"
-                            android:textSize="12sp"
-                            android:visibility="gone"
-                            tools:text="独立模式下不可用：50 步智能提醒、超级岛 / 焦点通知增强、系统 UI 适配选项" />
-
-                        <View
-                            android:layout_width="match_parent"
-                            android:layout_height="1px"
-                            android:layout_marginTop="10dp"
-                            android:background="@color/bg" />
-
-                        <!-- 尾部仍是急救卡入口（二级菜单保留） -->
-                        <LinearLayout
-                            android:id="@+id/tile_emergency"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:background="?android:attr/selectableItemBackground"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal"
-                            android:paddingVertical="12dp">
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="急救卡"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="16sp" />
-
-                                <TextView
-                                    android:id="@+id/tile_emergency_status"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="点击编辑"
-                                    android:textColor="@color/text_hint"
-                                    android:textSize="12sp" />
-                            </LinearLayout>
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="›"
-                                android:textColor="@color/chevron"
-                                android:textSize="20sp" />
-                        </LinearLayout>
-
+                            android:importantForAccessibility="no"
+                            android:text="›"
+                            android:textColor="@color/chevron"
+                            android:textSize="20sp" />
                     </LinearLayout>
 
                 </LinearLayout>

@@ -31,8 +31,6 @@ object RuntimeStatusPolicy {
     const val MODE_FRAMEWORK_STALE = "framework_stale"
     const val MODE_STANDALONE = "standalone"
 
-    data class Row(val label: String, val value: String, val level: Int)
-
     /**
      * @param everSeen  是否曾经收到过 Hook 广播（收到过但超时 = 注入失联；从没收到 = 独立模式）
      * @param hookAgeMs 距上次 Hook 广播的毫秒数
@@ -45,12 +43,14 @@ object RuntimeStatusPolicy {
     }
 
     /**
-     * 独立模式下**实测确认用不了**的能力。
+     * 独立模式下**实测确认用不了**的能力，用于二级页/文案，不用于首页常显。
      *
      * 只列有依据的三项，不猜：
      *  1. 50 步智能提醒：判定与弹通知都在 SystemUI 的钩子里跑（App 侧只有小窗与步态）；
      *  2. 超级岛 / 焦点通知增强：靠注入 SystemUI 才拿得到岛；
      *  3. 系统 UI 适配（HyperOS 版本选择）：本身就是给钩子用的开关，没钩子等于没有。
+     * 反过来，步态检测、行走模式、路况小窗、SOS、急救卡、诊断上报都在 App 自己进程里跑，
+     * 独立模式实测正常，所以不进这个名单。
      */
     @JvmStatic
     fun standaloneUnavailable(): List<String> = listOf(
@@ -59,81 +59,57 @@ object RuntimeStatusPolicy {
         "系统 UI 适配选项"
     )
 
-    /** 首页状态概览的几行。 */
+    /**
+     * 首页那**一行**状态条的全部内容：标题（16sp）+ 细节（12sp）+ 颜色级。
+     *
+     * 为什么只有两行字而不是四行表格：首页每多一行都会把下面的功能入口往下推，
+     * 而用户真正需要一眼看到的只有「框架在不在、正常不正常」。日志与步数这类
+     * 只要不是异常就不必占位，异常时塞进细节句里就够。
+     */
+    data class Headline(val title: String, val detail: String, val level: Int)
+
+    /**
+     * @param everSeen  是否曾经收到过 Hook 广播（收到过但超时 = 注入失联；从没收到 = 独立模式）
+     * @param hookAgeMs 距上次 Hook 广播的毫秒数
+     * @param anchors   钩子挂上的锚点数量
+     */
     @JvmStatic
-    fun rows(
+    fun headline(
         everSeen: Boolean,
         hookAgeMs: Long,
-        hookVersionName: String,
         anchors: Int,
-        framework: String,
-        api: Int,
         logEnabled: Boolean,
         stepIssue: String
-    ): List<Row> {
+    ): Headline {
         val m = mode(everSeen, hookAgeMs)
-        val out = ArrayList<Row>(5)
+        val step = when (stepIssue) {
+            StepSensorPolicy.OK -> "步数正常"
+            StepSensorPolicy.NO_SENSOR -> "无计步器"
+            else -> "缺活动权限"
+        }
+        val log = if (logEnabled) "日志开" else "日志关"
 
-        out.add(
-            Row(
-                "运行模式",
-                when (m) {
-                    MODE_FRAMEWORK -> "框架模式 · 已注入"
-                    MODE_FRAMEWORK_STALE -> "框架模式 · 注入失联"
-                    else -> "独立模式（未检测到框架）"
-                },
-                if (m == MODE_FRAMEWORK) LEVEL_OK else if (m == MODE_FRAMEWORK_STALE) LEVEL_BAD else LEVEL_WARN
-            )
-        )
-
-        out.add(
-            Row(
-                "注入状态",
-                when (m) {
-                    MODE_FRAMEWORK -> buildString {
-                        append(framework.ifBlank { "SystemUI" })
-                        append(" · 锚点 ").append(anchors).append("/3")
-                        if (hookVersionName.isNotBlank()) append(" · v").append(hookVersionName)
-                        if (api > 0) append(" · API ").append(api)
-                        append(" · ").append(ago(hookAgeMs))
-                    }
-                    MODE_FRAMEWORK_STALE -> "上次注入 ${ago(hookAgeMs)}前，可能已失效（重启系统界面可恢复）"
-                    else -> "未注入（没装 LSPosed 或模块没启用）"
-                },
-                if (m == MODE_FRAMEWORK) LEVEL_OK else if (m == MODE_FRAMEWORK_STALE) LEVEL_BAD else LEVEL_WARN
-            )
-        )
-
-        out.add(
-            Row(
-                "诊断日志",
-                if (logEnabled) "已开启" else "已关闭（出问题时先打开）",
-                if (logEnabled) LEVEL_OK else LEVEL_WARN
-            )
-        )
-
-        out.add(
-            Row(
-                "步数源",
-                when (stepIssue) {
-                    StepSensorPolicy.OK -> "可用（自动跟随正常）"
-                    StepSensorPolicy.NO_SENSOR -> "无计步器（自动跟随已关闭，磁贴改手动）"
-                    else -> "未授权「身体活动」（授权后自动恢复）"
-                },
-                if (stepIssue == StepSensorPolicy.OK) LEVEL_OK else LEVEL_WARN
-            )
-        )
-
-        if (m == MODE_STANDALONE) {
-            out.add(
-                Row(
-                    "不可用",
-                    standaloneUnavailable().joinToString("、"),
-                    LEVEL_BAD
+        return when (m) {
+            MODE_FRAMEWORK -> {
+                val all = anchors >= 3
+                Headline(
+                    "框架模式 · 注入正常",
+                    "锚点 $anchors/3 · ${ago(hookAgeMs)}前 · $log",
+                    // 锚点不足三个说明只挂上了一部分（SystemUI 版本变化），值得提醒但不致命
+                    if (all && logEnabled) LEVEL_OK else LEVEL_WARN
                 )
+            }
+            MODE_FRAMEWORK_STALE -> Headline(
+                "框架模式 · 注入失联",
+                "${ago(hookAgeMs)}无心跳，重启系统界面可恢复",
+                LEVEL_BAD
+            )
+            else -> Headline(
+                "独立模式（无框架）",
+                "$log · $step · 50 步提醒等 3 项不可用",
+                LEVEL_WARN
             )
         }
-        return out
     }
 
     /** 把毫秒差写成「12 秒 / 3 分钟 / 2 小时」。 */
