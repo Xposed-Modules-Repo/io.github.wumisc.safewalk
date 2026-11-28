@@ -89,6 +89,17 @@ public class UpdateCheckerTest {
     }
 
     @Test
+    public void atomFeedScanPicksLatestTag() {
+        String xml = "<entry><link href=\"https://github.com/X/X/releases/tag/140-5.7.18-lx102\"/></entry>"
+                + "<entry><link href=\"https://github.com/X/X/releases/tag/v5.5.0\"/></entry>";
+        UpdateChecker.Release r = UpdateChecker.parseAtom(xml);
+        assertNotNull("Atom 里必须能扫出版本", r);
+        assertEquals(140, r.getVersionCode());
+        assertEquals("5.7.18-lx102", r.getVersionName());
+        assertNull(UpdateChecker.parseAtom("<html>无链接</html>"));
+    }
+
+    @Test
     public void checkOrderIsGithubThenPan123() throws IOException {
         String checker = read("src/main/java/io/github/wumisc/safewalk/UpdateChecker.kt");
         int gh = checker.indexOf("private fun fetchGithub()");
@@ -97,7 +108,9 @@ public class UpdateCheckerTest {
         assertTrue("必须有 GitHub 查版函数", gh > 0);
         assertTrue("必须有 123 云盘备选查版函数", pan > 0);
         assertTrue("检查链必须先 GitHub", chain > 0 && chain < pan);
-        assertTrue("GitHub 失败才落到 123", checker.contains("return fetchPan123()"));
+        assertTrue("api 失败先换 Atom（不限流）",
+                checker.contains("fetchAtom()?.let { return it }") && checker.contains("releases.atom"));
+        assertTrue("两条 GitHub 路都不通才落到 123", checker.contains("return fetchPan123()"));
         assertTrue("弹窗两个渠道都列出",
                 checker.contains("setPositiveButton(\"GitHub\"") && checker.contains("setNeutralButton(\"123 云盘\""));
     }

@@ -29,6 +29,16 @@ object UpdateChecker {
     const val LATEST_API =
         "https://api.github.com/repos/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest"
 
+    /**
+     * GitHub Releases Atom 源：**不限流**。
+     *
+     * api.github.com 按 IP 限 60 次/小时，国内运营商 CGNAT 下几千人共用一个出口，
+     * 常常一查就 403（实测本机命中过）。Atom 是静态 feed，没这个限额，
+     * 条目里的 link 直接带 `releases/tag/<版本>`，拿它当第二道正好。
+     */
+    const val ATOM_FEED =
+        "https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases.atom"
+
     /** GitHub 下载页：Release 列表页，用户能看到更新说明与全部历史版本 */
     const val GITHUB_PAGE =
         "https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk/releases/latest"
@@ -131,17 +141,36 @@ object UpdateChecker {
     }
 
     /**
-     * 版本检查链：先 GitHub，再 123 云盘。
+     * 版本检查链：GitHub API → GitHub Atom（不限流）→ 123 云盘分享页。
      *
-     * GitHub 是原产地（版本号最准）；国内网络打不开 api.github.com 的概率不低，
-     * 这时退到 123 云盘分享页扫文件名 —— 那里存的就是全部正式包，
-     * `SafeWalk_5.7.18-lx102_140.apk` 的尾巴就是 versionCode。
-     * 两条都不行就返回 null：宁可不提示，也不猜。
+     * GitHub 是原产地（版本号最准）；api.github.com 在共享 IP 下会 403，
+     * 于是换同一个仓库的 Atom feed 再试一次；两者都打不开时退到 123 云盘扫包名
+     * —— 那里存的就是全部正式包，`SafeWalk_5.7.18-lx102_140.apk` 的尾巴就是 versionCode。
+     * 三条都不行就返回 null：宁可不提示，也不猜。
      */
     private fun fetch(): Release? {
         fetchGithub()?.let { return it }
-        DiagLog.log("[update] GitHub 不可达，改走 123 云盘分享页")
+        DiagLog.log("[update] api.github.com 不可用，改走 Atom")
+        fetchAtom()?.let { return it }
+        DiagLog.log("[update] GitHub 两路都不通，改走 123 云盘分享页")
         return fetchPan123()
+    }
+
+    /** 从 Atom feed 里取最新 tag（纯函数，可单测）：`releases/tag/140-5.7.18-lx102` */
+    @JvmStatic
+    fun parseAtom(xml: String): Release? {
+        val re = Regex("""releases/tag/([0-9]{2,4}-[0-9A-Za-z.\-]+)""")
+        return re.findAll(xml)
+            .mapNotNull { parseRelease(it.groupValues[1]) }
+            .maxByOrNull { it.versionCode }
+    }
+
+    private fun fetchAtom(): Release? = try {
+        val xml = httpText(ATOM_FEED) ?: return null
+        parseAtom(xml)
+    } catch (t: Throwable) {
+        DiagLog.log("[update] Atom 检查异常: ${t.javaClass.simpleName}")
+        null
     }
 
     /**
