@@ -409,6 +409,30 @@
                     android:clipToOutline="true"
                     android:orientation="vertical">
 
+                    <!-- 【5.7.18 更新提示】手动查版入口：右侧显示上次检查结果，
+                         点一下强制查一次（不看 24 小时冷却）。 -->
+                    <LinearLayout
+                        android:id="@+id/btn_check_update"
+                        style="@style/RowStyle">
+
+                        <TextView
+                            style="@style/RowTitle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="检查更新" />
+
+                        <TextView
+                            android:id="@+id/tv_update_state"
+                            style="@style/RowHint"
+                            android:layout_marginEnd="8dp"
+                            android:text="未检查" />
+
+                        <TextView
+                            style="@style/RowChevron" />
+                    </LinearLayout>
+
+                    <View style="@style/RowDivider" />
+
                     <LinearLayout
                         android:id="@+id/btn_github"
                         style="@style/RowStyle">

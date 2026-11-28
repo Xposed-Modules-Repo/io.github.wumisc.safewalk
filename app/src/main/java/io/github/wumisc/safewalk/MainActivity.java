@@ -544,6 +544,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         } catch (Throwable ignored) {}
         // 权限与无障碍入口已上移到「智能提醒」页顶部（用户要求放在最靠前），
         // 关于页不再重复。绑定逻辑见 SmartReminderActivity。
+        // 【5.7.18 更新提示】一行「检查更新」+ 右侧结果；点一下强制查（忽略 24 小时冷却）。
+        // 自动查在进桌面时静默跑（setupUpdateCheck 末尾），只在真有新版时弹提示。
+        setupUpdateCheck();
+
         // GitHub 项目地址
         findViewById(R.id.btn_github).setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Xposed-Modules-Repo/io.github.wumisc.safewalk"));
@@ -593,6 +597,57 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
 
         // 【5.6.13 公益】寻找宝贝回家卡片：异步加载最新一条，点卡片打开官方登记页。
         setupMissingKidsCard();
+    }
+
+    /**
+     * 【5.7.18 更新提示】关于页「检查更新」一行 + 启动时静默检查。
+     *
+     * 两条下载通道（123 云盘 / GitHub）由 [UpdateChecker.showPrompt] 提供；
+     * 这里只管三件事：把结果写到右侧小字、手动检查时强制联网、自动检查只提示不打扰。
+     */
+    private void setupUpdateCheck() {
+        int local = UpdateChecker.INSTANCE.localVersionCode(this);
+        TextView state = findViewById(R.id.tv_update_state);
+        if (state == null) return; // 老布局兜底，绝不因为一行入口崩掉整页
+        // 启动时先显示上次查到的结论，避免「未检查」一直挂着像没这功能
+        UpdateChecker.Release known = UpdateChecker.INSTANCE.lastKnown(this);
+        state.setText(describe(local, known));
+
+        findViewById(R.id.btn_check_update).setOnClickListener(v -> {
+            state.setText("检查中…");
+            UpdateChecker.INSTANCE.check(this, true, rel -> {
+                onUpdateResult(state, local, rel, true);
+                return kotlin.Unit.INSTANCE;
+            });
+        });
+
+        // 自动检查：24 小时内只查一次（冷却在 UpdateChecker 里），没网/失败一律不吭声
+        UpdateChecker.INSTANCE.check(this, false, rel -> {
+            onUpdateResult(state, local, rel, false);
+            return kotlin.Unit.INSTANCE;
+        });
+    }
+
+    /** 检查结果落 UI：新版弹提示，旧版只写一句话；手动检查失败才明说「检查失败」 */
+    private void onUpdateResult(TextView state, int local, UpdateChecker.Release rel, boolean manual) {
+        if (rel == null) {
+            if (manual) state.setText("检查失败");
+            return;
+        }
+        if (UpdateChecker.INSTANCE.isNewer(local, rel.getVersionCode())) {
+            state.setText("有新版本 " + rel.getVersionName());
+            UpdateChecker.INSTANCE.showPrompt(this, rel, local);
+        } else {
+            state.setText("已是最新");
+        }
+    }
+
+    /** 右侧小字文案：未检查 / 有新版本 x / 已是最新 */
+    private String describe(int local, UpdateChecker.Release rel) {
+        if (rel == null) return "未检查";
+        return UpdateChecker.INSTANCE.isNewer(local, rel.getVersionCode())
+                ? "有新版本 " + rel.getVersionName()
+                : "已是最新";
     }
 
     /** 公益卡片：加载/渲染/点击。任何失败都降级为占位文案，不影响首页。 */

@@ -50,6 +50,18 @@ object MissingKidsRepository {
     /** 旧口径按天推进，保留常量供旧调用/测试引用 */
     const val ROTATE_DAYS = 1L
 
+    /**
+     * 【5.7.18】国内可达镜像（Cloudflare Pages 边缘节点）。
+     *
+     * 真机日志里 `[kids] JSON 下载异常` 与 `[kids] 失败退避中` 反复出现：raw 与
+     * jsDelivr 在国内网络被 reset，App 只能一直吃包内快照，用户看到的永远是同一批脸。
+     * 镜像由边缘去取上游、按 1 小时缓存，国内直连可达；营业主持久性也不依赖 GitHub 是否被墙。
+     */
+    private const val MIRROR = "https://safewalk-diag.pages.dev/api/kids"
+
+    /** 照片同样的镜像入口（只代理白名单主机，见 cloudflare/functions/api/kidimg.js） */
+    private const val MIRROR_IMG = "https://safewalk-diag.pages.dev/api/kidimg?u="
+
     private const val RAW = "https://raw.githubusercontent.com/wumisc/antiburn-missing-kids/main/kids.json"
     private const val CDN = "https://cdn.jsdelivr.net/gh/wumisc/antiburn-missing-kids@main/kids.json"
     private const val CACHE = "missing_kids.json"
@@ -283,7 +295,7 @@ object MissingKidsRepository {
     /**
      * 阻塞加载（后台线程）：一级级往下退，任何一级都不抛。
      *
-     * 顺序：24h 内缓存 → 失败退避期用本地 → 联网（raw → CDN）→ 本地 → 内置快照。
+     * 顺序：48h 内缓存 → 失败退避期用本地 → 联网（Pages 镜像 → raw → CDN）→ 本地 → 内置快照。
      *
      * 【5.6.18 BUG 修复 · 覆盖安装后又回到「第一次」】
      * 旧实现最后一级是**写死在代码里的两条老数据**，而国内网络下 raw / jsDelivr 常年
@@ -314,7 +326,7 @@ object MissingKidsRepository {
             )
             return rotated(ctx, local, now)
         }
-        for (u in listOf(RAW, CDN)) {
+        for (u in listOf(MIRROR, RAW, CDN)) {
             val body = httpGet(u) ?: continue
             val snap = parseSnapshot(body) ?: continue
             // 【省流量 · 先取到再替换】只有拿到有效新数据才覆盖旧缓存；
@@ -451,18 +463,9 @@ object MissingKidsRepository {
             DiagLog.log("[kids] 缓存照片解码失败，重新下载: ${cache.name}")
         }
 
-        val raw = try {
-            val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 6000
-            c.readTimeout = 6000
-            c.setRequestProperty("User-Agent", "SafeWalk/5.6")
-            if (c.responseCode != 200) {
-                DiagLog.log("[kids] 照片下载 HTTP ${c.responseCode}: $url")
-                return decodeScaled(cache)
-            }
-            c.inputStream.use { it.readBytes() }
-        } catch (t: Throwable) {
-            DiagLog.log("[kids] 照片下载异常: ${t.javaClass.simpleName} ${t.message}")
+        // 先直连图片源；被墙/超时再走 Pages 镜像（同一张图，边缘缓存 7 天）
+        val raw = downloadBytes(url) ?: downloadBytes(mirrorOf(url)) ?: run {
+            DiagLog.log("[kids] 照片两条路都没取到: $url")
             return decodeScaled(cache)
         }
 
@@ -485,6 +488,26 @@ object MissingKidsRepository {
         DiagLog.log("[kids] 照片加载成功: ${bmp.width}x${bmp.height}（${raw.size}B）")
         return bmp
     }
+
+    /** 一次 GET，成功返回字节；非 200 或异常返回 null（不抛、不阻塞别的逻辑） */
+    private fun downloadBytes(u: String): ByteArray? = try {
+        val c = URL(u).openConnection() as HttpURLConnection
+        c.connectTimeout = 6000
+        c.readTimeout = 8000
+        c.setRequestProperty("User-Agent", "SafeWalk/5.6")
+        if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else {
+            DiagLog.log("[kids] 照片下载 HTTP ${c.responseCode}: $u")
+            null
+        }
+    } catch (t: Throwable) {
+        DiagLog.log("[kids] 照片下载异常: ${t.javaClass.simpleName} ${t.message}")
+        null
+    }
+
+    /** 原始图片地址 → 镜像地址（参数整体 URL 编码，地址里的 & 与中文都不会破坏查询串） */
+    @JvmStatic
+    fun mirrorOf(photoUrl: String): String =
+        MIRROR_IMG + java.net.URLEncoder.encode(photoUrl, "UTF-8")
 
     private fun decodeScaled(file: File): Bitmap? = try {
         BitmapFactory.decodeFile(file.absolutePath)
